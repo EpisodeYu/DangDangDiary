@@ -118,6 +118,7 @@ GET /api/v1/pets
       "internal_deworming_cycle_days": 30,
       "external_deworming_cycle_days": 30,
       "is_owner": true,
+      "my_role": "owner",
       "created_at": "2024-01-01T00:00:00"
     },
     {
@@ -127,8 +128,9 @@ GET /api/v1/pets
       "breed": "柴犬",
       "birthday": "2022-08-20",
       "avatar_url": null,
-      "invite_code": "B5Y2M8",
-      "is_owner": true,
+      "invite_code": null,
+      "is_owner": false,
+      "my_role": "member",
       "created_at": "2024-01-02T00:00:00"
     }
   ]
@@ -138,7 +140,8 @@ GET /api/v1/pets
 业务逻辑:
 - 通过 pet_members 表查询当前用户关联的所有宠物档案
 - 包含 is_owner 字段标识用户是否为档案创建者
-- 按创建时间正序排列
+- 包含 `my_role` 字段，便于前端判断当前用户是 `owner` 还是 `member`
+- 按创建时间倒序排列（最新创建的在前）
 - invite_code 只在 is_owner=true 时返回 (Phase 2 中使用)
 
 ### 2.3 获取单个宠物档案详情
@@ -186,7 +189,7 @@ Content-Type: multipart/form-data
 成功响应 (200):
 ```json
 {
-  "avatar_url": "http://minio-server:9000/avatars/pet_1_avatar.jpg"
+  "avatar_url": "http://YOUR_SERVER_IP/media/avatars/pet_1_avatar.jpg"
 }
 ```
 
@@ -247,10 +250,11 @@ class PetResponse(BaseModel):
     breed: str | None
     birthday: date | None
     avatar_url: str | None
-    invite_code: str
+    invite_code: str | None
     internal_deworming_cycle_days: int | None
     external_deworming_cycle_days: int | None
     is_owner: bool
+    my_role: MemberRole
     created_at: datetime
 
     class Config:

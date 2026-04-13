@@ -34,6 +34,12 @@ Flutter 保存 Token → 进入主页
 
 ## 2. 后端 API 规格
 
+本步骤默认沿用 Step 1 中的全局约定:
+- 接口字段统一使用 `snake_case`
+- 业务错误统一为 `code` + `message` + `details`
+- 输入不合法统一返回 `400`
+- 客户端通过统一入口访问 `/api/...`
+
 ### 2.1 发送验证码
 
 ```
@@ -51,7 +57,6 @@ Content-Type: application/json
 成功响应 (200):
 ```json
 {
-  "message": "验证码已发送",
   "expire_seconds": 300
 }
 ```
@@ -59,16 +64,19 @@ Content-Type: application/json
 错误响应 (429 - 60秒内重复请求):
 ```json
 {
-  "detail": "请求过于频繁，请60秒后再试"
+  "code": "SMS_RATE_LIMITED",
+  "message": "请求过于频繁，请60秒后再试",
+  "details": {
+    "retry_after_seconds": 60
+  }
 }
 ```
 
 业务逻辑:
 - 验证手机号格式 (中国大陆手机号, 11位数字, 1开头)
 - 检查 Redis 中是否有 60 秒内发送过的记录 (防刷)
-- 生成 6 位随机数字验证码
-- 调用阿里云 SMS API 发送短信
-- 将验证码存入 Redis，key 为 `sms:verify:{phone}`，过期时间 5 分钟
+- 调用阿里云 Dypnsapi `SendSmsVerifyCode` API 发送短信 (验证码由 API 自动生成)
+- API 返回验证码明文 (ReturnVerifyCode=true)，将验证码存入 Redis，key 为 `sms:verify:{phone}`，过期时间 5 分钟
 - 同时设置频率限制 key `sms:limit:{phone}`，过期时间 60 秒
 - **开发阶段**: 如果阿里云 SMS 未配置，将验证码打印到控制台，方便测试
 
@@ -102,10 +110,12 @@ Content-Type: application/json
 }
 ```
 
-错误响应 (401):
+错误响应 (400):
 ```json
 {
-  "detail": "验证码错误或已过期"
+  "code": "INVALID_VERIFY_CODE",
+  "message": "验证码错误或已过期",
+  "details": null
 }
 ```
 
@@ -144,7 +154,29 @@ Content-Type: application/json
 - 生成新的 Access Token
 - 返回新 Token
 
-### 2.4 获取当前用户信息
+### 2.4 退出登录
+
+```
+POST /api/v1/auth/logout
+Authorization: Bearer {access_token}
+Content-Type: application/json
+```
+
+请求体:
+```json
+{
+  "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
+}
+```
+
+成功响应 (204): No Content
+
+业务逻辑:
+- 校验当前 access_token
+- 将本次登录对应的 refresh_token 加入 Redis 黑名单，直到其自然过期
+- 仅作废当前设备提交的 refresh_token，不影响其他设备
+
+### 2.5 获取当前用户信息
 
 ```
 GET /api/v1/auth/me
@@ -161,7 +193,7 @@ Authorization: Bearer {access_token}
 }
 ```
 
-### 2.5 更新用户信息
+### 2.6 更新用户信息
 
 ```
 PUT /api/v1/auth/me
@@ -237,60 +269,148 @@ async def get_current_user(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="无效的认证凭据",
+            detail={
+                "code": "INVALID_ACCESS_TOKEN",
+                "message": "无效的认证凭据",
+                "details": None,
+            },
         )
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用户不存在",
+            detail={
+                "code": "USER_NOT_FOUND",
+                "message": "用户不存在",
+                "details": None,
+            },
         )
     return user
 ```
 
-### 3.3 阿里云 SMS 服务 (`app/services/sms.py`)
+### 3.3 阿里云短信认证服务 (`app/services/sms.py`)
+
+使用阿里云**号码认证服务 (Dypnsapi)** 的 `SendSmsVerifyCode` API 发送验证码短信。
+
+**API 关键信息:**
+- **接口**: `SendSmsVerifyCode` (号码认证服务 Dypnsapi 2017-05-25)
+- **Endpoint**: `dypnsapi.aliyuncs.com`
+- **AccessKey**: 通过环境变量注入，例如 `YOUR_ALIYUN_ACCESS_KEY_ID` / `YOUR_ALIYUN_ACCESS_KEY_SECRET`
+- **签名名称**: `速通互联验证码` (系统赠送签名，必须搭配系统赠送模板)
+- **模板 CODE**: `100001` (系统赠送模板)
+- **验证码生成**: TemplateParam 中使用 `##code##` 占位符，由 API 自动生成验证码
+- **返回验证码**: 设置 `ReturnVerifyCode=true`，响应中会返回生成的验证码
+
+**请求参数说明:**
+
+| 参数 | 值 | 说明 |
+|------|------|------|
+| PhoneNumber | 用户手机号 | 必填 |
+| SignName | 速通互联验证码 | 系统赠送签名 |
+| TemplateCode | 100001 | 系统赠送模板 |
+| TemplateParam | `{"code":"##code##"}` | ##code## 由系统自动替换为验证码 |
+| CodeType | 1 | 纯数字验证码 |
+| CodeLength | 6 | 6位验证码 |
+| ValidTime | 300 | 验证码有效期300秒(5分钟) |
+| Interval | 60 | 发送间隔60秒(频控) |
+| DuplicatePolicy | 1 | 覆盖旧验证码 |
+| ReturnVerifyCode | true | 响应中返回验证码明文 |
+
+**成功响应示例:**
+```json
+{
+  "Code": "OK",
+  "Message": "成功",
+  "Success": true,
+  "Model": {
+    "VerifyCode": "423256",
+    "BizId": "112231421412414124123^4",
+    "RequestId": "a3671ccf-0102-4c8e-8797-a3678e091d09"
+  }
+}
+```
+
+**常见错误码:**
+
+| HTTP Status | 错误码 | 说明 |
+|---|---|---|
+| 400 | MOBILE_NUMBER_ILLEGAL | 手机号格式错误 |
+| 400 | BUSINESS_LIMIT_CONTROL | 触发号码天级流控 |
+| 400 | FREQUENCY_FAIL | 频控校验未通过 (60秒内重发) |
+| 400 | INVALID_PARAMETERS | 非法参数 |
+| 400 | FUNCTION_NOT_OPENED | 没有开通融合认证功能 |
+
+**实现代码:**
 
 ```python
-from alibabacloud_dysmsapi20170525.client import Client
+from alibabacloud_dypnsapi20170525.client import Client
 from alibabacloud_tea_openapi.models import Config
-from alibabacloud_dysmsapi20170525.models import SendSmsRequest
+from alibabacloud_dypnsapi20170525.models import SendSmsVerifyCodeRequest
 from app.config import settings
 import json
 
 class SMSService:
     def __init__(self):
-        if settings.ALIYUN_SMS_ACCESS_KEY_ID:
+        if settings.ALIYUN_ACCESS_KEY_ID and settings.ALIYUN_ACCESS_KEY_SECRET:
             config = Config(
-                access_key_id=settings.ALIYUN_SMS_ACCESS_KEY_ID,
-                access_key_secret=settings.ALIYUN_SMS_ACCESS_KEY_SECRET,
-                endpoint="dysmsapi.aliyuncs.com",
+                access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
+                access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
+                endpoint="dypnsapi.aliyuncs.com",
             )
             self.client = Client(config)
         else:
             self.client = None
 
-    async def send_verification_code(self, phone: str, code: str) -> bool:
+    async def send_verification_code(self, phone: str) -> tuple[bool, str | None]:
+        """
+        发送短信验证码。
+        返回 (是否成功, 验证码明文 or None)。
+        验证码由阿里云 API 自动生成，通过 ReturnVerifyCode=true 返回。
+        """
         if self.client is None:
-            # 开发模式: 打印验证码到控制台
+            import random
+            code = str(random.randint(100000, 999999))
             print(f"[DEV SMS] 手机号: {phone}, 验证码: {code}")
-            return True
+            return True, code
 
-        request = SendSmsRequest(
-            phone_numbers=phone,
+        request = SendSmsVerifyCodeRequest(
+            phone_number=phone,
             sign_name=settings.ALIYUN_SMS_SIGN_NAME,
             template_code=settings.ALIYUN_SMS_TEMPLATE_CODE,
-            template_param=json.dumps({"code": code}),
+            template_param=json.dumps({"code": "##code##"}),
+            code_type=1,          # 纯数字
+            code_length=6,        # 6位
+            valid_time=300,       # 5分钟有效
+            interval=60,          # 60秒频控
+            duplicate_policy=1,   # 覆盖旧验证码
+            return_verify_code=True,
         )
-        response = self.client.send_sms(request)
-        return response.body.code == "OK"
+
+        try:
+            response = self.client.send_sms_verify_code(request)
+            if response.body.code == "OK" and response.body.success:
+                verify_code = response.body.model.verify_code
+                return True, verify_code
+            else:
+                print(f"[SMS Error] Code: {response.body.code}, Message: {response.body.message}")
+                return False, None
+        except Exception as e:
+            print(f"[SMS Exception] {e}")
+            return False, None
 
 sms_service = SMSService()
 ```
 
-注意: 需要额外安装 `alibabacloud-dysmsapi20170525` 包:
+**注意**: 需要安装阿里云号码认证服务 SDK:
 ```
-pip install alibabacloud-dysmsapi20170525
+pip install alibabacloud-dypnsapi20170525
 ```
+
+**与之前方案的区别:**
+- 使用 `Dypnsapi` (号码认证服务) 而非 `Dysmsapi` (短信服务)
+- 验证码由 API 自动生成，不需要后端手动生成
+- API 内置频控 (Interval=60秒)，但后端仍需用 Redis 做频控以防绕过
+- API 返回验证码明文，后端存入 Redis 用于后续校验
 
 ### 3.4 Redis 工具
 
@@ -316,6 +436,12 @@ async def check_sms_rate_limit(phone: str) -> bool:
         return False
     await redis_client.set(key, "1", ex=60)  # 60秒限流
     return True
+
+async def blacklist_refresh_token(token: str, expires_seconds: int):
+    await redis_client.set(f"auth:refresh:blacklist:{token}", "1", ex=expires_seconds)
+
+async def is_refresh_token_blacklisted(token: str) -> bool:
+    return bool(await redis_client.exists(f"auth:refresh:blacklist:{token}"))
 ```
 
 ### 3.5 Pydantic Schema (`app/schemas/auth.py`)
@@ -346,6 +472,9 @@ class LoginRequest(BaseModel):
         return v
 
 class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+class LogoutRequest(BaseModel):
     refresh_token: str
 
 class TokenResponse(BaseModel):
@@ -411,15 +540,14 @@ class UpdateUserRequest(BaseModel):
 ```dart
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../config/app_config.dart';
 
 class ApiClient {
-  static const String baseUrl = 'http://YOUR_SERVER_IP:8000/api/v1';
-
   late Dio _dio;
 
   ApiClient() {
     _dio = Dio(BaseOptions(
-      baseUrl: baseUrl,
+      baseUrl: '${AppConfig.baseUrl}/api/v1',
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 10),
     ));
@@ -458,7 +586,7 @@ class ApiClient {
       final refreshToken = prefs.getString('refresh_token');
       if (refreshToken == null) return false;
 
-      final response = await Dio(BaseOptions(baseUrl: baseUrl)).post(
+      final response = await Dio(BaseOptions(baseUrl: '${AppConfig.baseUrl}/api/v1')).post(
         '/auth/refresh',
         data: {'refresh_token': refreshToken},
       );
@@ -501,10 +629,11 @@ redirect: (context, state) {
 
 ## 5. 开发阶段的测试方式
 
-由于阿里云 SMS 需要审核，开发阶段:
-1. 后端未配置 SMS Key 时，验证码打印到控制台
-2. 可以硬编码一个万能验证码 (如 `000000`)，方便测试
+开发阶段:
+1. 后端未配置 SMS AccessKey Secret 时，验证码在控制台打印 (开发模式)
+2. 建议通过环境变量开关启用开发模式，不要把万能验证码直接写死到正式逻辑中
 3. 后端 Swagger 文档 (`/docs`) 可以直接测试 API
+4. 阿里云签名和模板使用系统赠送的，无需等待审核
 
 ---
 
@@ -518,13 +647,14 @@ redirect: (context, state) {
 - `backend/app/api/v1/auth.py` - 认证路由 (新建)
 - `backend/app/api/v1/router.py` - 添加 auth 路由
 - `backend/app/dependencies.py` - 添加认证依赖
-- `backend/requirements.txt` - 添加 `alibabacloud-dysmsapi20170525`
+- `backend/requirements.txt` - 添加 `alibabacloud-dypnsapi20170525`
 
 ### 前端
 - `frontend/lib/services/api_client.dart` - API 客户端 (新建)
 - `frontend/lib/services/auth_service.dart` - 认证服务 (新建)
 - `frontend/lib/providers/auth_provider.dart` - 认证状态 (新建)
 - `frontend/lib/screens/auth/login_screen.dart` - 登录页 (新建)
+- `frontend/lib/config/app_config.dart` - 开发环境配置入口 (新建)
 - `frontend/lib/config/router.dart` - 添加路由守卫
 - `frontend/lib/models/user.dart` - 用户模型 (新建)
 
@@ -539,6 +669,7 @@ redirect: (context, state) {
 - [ ] 登录返回 access_token 和 refresh_token
 - [ ] 后端 `GET /api/v1/auth/me` 需要有效 Token 才能访问
 - [ ] 后端 `POST /api/v1/auth/refresh` 能刷新 Token
+- [ ] 后端 `POST /api/v1/auth/logout` 能作废当前设备的 refresh_token
 - [ ] Flutter 登录页面 UI 正确展示
 - [ ] Flutter 输入手机号+验证码可以成功登录
 - [ ] 登录后 Token 持久化到本地

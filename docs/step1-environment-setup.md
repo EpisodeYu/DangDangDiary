@@ -20,11 +20,54 @@
 ## 本步骤目标
 
 1. 在 Ubuntu 上安装所有开发环境依赖
-2. 创建 Docker Compose 编排文件，一键启动 PostgreSQL + Redis + MinIO
-3. 搭建 FastAPI 后端项目骨架
-4. 搭建 Flutter 前端项目骨架
-5. 创建数据库模型与迁移脚本
-6. 验证所有服务正常运行
+2. 创建 Docker Compose 编排文件，一键启动 Nginx + PostgreSQL + Redis + MinIO
+3. 搭建 FastAPI 后端项目骨架，并约定统一的配置与错误响应基线
+4. 搭建 Flutter 前端项目骨架，包含主题、路由、状态管理、API 客户端骨架与 5 个 Tab 占位页
+5. 创建 Phase 1 核心数据库模型与 Alembic 初始迁移
+6. 验证真机可以通过统一入口访问后端，前端可以正常启动
+
+---
+
+## 项目级默认约定
+
+以下约定从 Step 1 开始生效，后续所有步骤默认遵守，除非某个步骤明确说明例外。
+
+### 统一入口与客户端访问
+
+- 真机只访问一个统一入口，不直接访问 FastAPI 或 MinIO 内部地址
+- 统一入口由 Nginx 提供，推荐使用 `http://YOUR_SERVER_IP`
+- 路径约定:
+  - `/api/...` -> FastAPI
+  - `/media/...` -> 媒体访问路径
+- 面向手机客户端返回的 URL 不得使用 `minio:9000`、`minio-server:9000` 等内部地址
+
+### 配置与敏感信息
+
+- 后端与前端都必须有清晰的配置入口，不允许把地址和敏感值散落写死在代码中
+- `.env.example` 只能保留占位符，不得出现真实 AccessKey、Secret 或固定密码
+
+### API 约定
+
+- 接口字段统一使用 `snake_case`
+- 列表接口保留业务语义 key，例如 `pets`、`photos`、`weights`
+- 分页统一使用 `page` + `page_size`
+- 创建/更新成功默认返回最新完整对象
+- 删除成功统一返回 `204 No Content`
+- 列表筛选为空时返回 `200 + 空数组`
+
+### 错误响应约定
+
+- 业务错误统一为结构化格式: `code` + `message` + `details`
+- 输入不合法统一归类为 `400`
+- 无权限访问统一使用 `403`
+- 如果使用 FastAPI / Pydantic 默认校验，需要注册统一异常处理器，将 `RequestValidationError` 转换为 `400` 结构化错误
+
+### 媒体与时间约定
+
+- HEIC/HEIF 由前端先转为 JPEG 后再上传
+- 后端稳定支持 JPG / PNG / WEBP
+- 列表接口直接返回可显示的缩略图 URL，大图查看时再单独请求原图 URL
+- 时间戳统一按 UTC 存储；生日、拍摄日期、记录日期等仅表示日期的字段继续使用 `date`
 
 ---
 
@@ -91,26 +134,39 @@ mkdir -p ~/Android/Sdk/cmdline-tools
 
 ## 2. Docker Compose 编排
 
-### 创建文件: `dangdang-diary/docker-compose.yml`
+### 创建文件: `DangDangDiary/docker-compose.yml`
 
 ```yaml
 version: '3.8'
 
 services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: dangdang-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - postgres
+      - redis
+      - minio
+
   postgres:
     image: postgres:16-alpine
     container_name: dangdang-postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: dangdang
-      POSTGRES_USER: dangdang
-      POSTGRES_PASSWORD: dangdang_dev_2024
+      POSTGRES_USER: YOUR_DB_USER
+      POSTGRES_PASSWORD: YOUR_DB_PASSWORD
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dangdang"]
+      test: ["CMD-SHELL", "pg_isready -U YOUR_DB_USER"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -130,8 +186,8 @@ services:
     container_name: dangdang-minio
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: dangdang_minio
-      MINIO_ROOT_PASSWORD: dangdang_minio_2024
+      MINIO_ROOT_USER: YOUR_MINIO_ROOT_USER
+      MINIO_ROOT_PASSWORD: YOUR_MINIO_ROOT_PASSWORD
     ports:
       - "9000:9000"   # S3 API
       - "9001:9001"   # Web Console
@@ -147,10 +203,51 @@ volumes:
 
 启动命令:
 ```bash
-cd dangdang-diary
+cd ~/DangDangDiary
 docker compose up -d
 docker compose ps  # 确认所有服务正常
 ```
+
+创建文件: `DangDangDiary/nginx/nginx.conf`
+
+```nginx
+events {}
+
+http {
+  server {
+    listen 80;
+    client_max_body_size 20m;
+
+    location /api/ {
+      proxy_pass http://host.docker.internal:8000/api/;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /docs {
+      proxy_pass http://host.docker.internal:8000/docs;
+      proxy_set_header Host $host;
+    }
+
+    location /openapi.json {
+      proxy_pass http://host.docker.internal:8000/openapi.json;
+      proxy_set_header Host $host;
+    }
+
+    location /media/ {
+      proxy_pass http://host.docker.internal:9000/;
+      proxy_set_header Host $host;
+    }
+  }
+}
+```
+
+说明:
+- 开发阶段后端仍然直接在宿主机运行 `uvicorn`，Nginx 只负责给真机提供统一入口
+- 面向真机时，推荐只暴露 `http://YOUR_SERVER_IP`，而不是把 `:8000` 和 `:9000` 直接写进前端配置
+- 如果你的 Docker 环境不支持 `host.docker.internal`，可以改为宿主机局域网 IP 或通过 `extra_hosts` 显式映射
 
 MinIO 初始化 (创建 bucket):
 ```bash
@@ -160,7 +257,7 @@ chmod +x mc
 sudo mv mc /usr/local/bin/
 
 # 配置并创建 bucket
-mc alias set dangdang http://localhost:9000 dangdang_minio dangdang_minio_2024
+mc alias set dangdang http://127.0.0.1:9000 YOUR_MINIO_ROOT_USER YOUR_MINIO_ROOT_PASSWORD
 mc mb dangdang/pet-photos
 mc mb dangdang/pet-thumbnails
 mc mb dangdang/avatars
@@ -174,7 +271,7 @@ mc mb dangdang/ai-photos
 ### 3.1 目录结构
 
 ```
-dangdang-diary/backend/
+DangDangDiary/backend/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI 应用入口
@@ -244,6 +341,8 @@ python-multipart==0.0.12
 httpx==0.27.0
 apscheduler==3.10.4
 pillow==10.4.0
+alibabacloud-dypnsapi20170525>=3.0.0
+alibabacloud-imagerecog20190930>=3.0.0
 ```
 
 ### 3.3 核心文件内容
@@ -256,17 +355,18 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     APP_NAME: str = "当当日记"
     DEBUG: bool = True
+    PUBLIC_BASE_URL: str = "http://YOUR_SERVER_IP"
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://dangdang:dangdang_dev_2024@localhost:5432/dangdang"
+    DATABASE_URL: str = "postgresql+asyncpg://YOUR_DB_USER:YOUR_DB_PASSWORD@127.0.0.1:5432/dangdang"
 
     # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
-    # MinIO
-    MINIO_ENDPOINT: str = "localhost:9000"
-    MINIO_ACCESS_KEY: str = "dangdang_minio"
-    MINIO_SECRET_KEY: str = "dangdang_minio_2024"
+    # MinIO (服务内部访问)
+    MINIO_ENDPOINT: str = "127.0.0.1:9000"
+    MINIO_ACCESS_KEY: str = "YOUR_MINIO_ACCESS_KEY"
+    MINIO_SECRET_KEY: str = "YOUR_MINIO_SECRET_KEY"
     MINIO_SECURE: bool = False
     MINIO_BUCKET_PHOTOS: str = "pet-photos"
     MINIO_BUCKET_THUMBNAILS: str = "pet-thumbnails"
@@ -278,21 +378,28 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
-    # SMS (阿里云)
-    ALIYUN_SMS_ACCESS_KEY_ID: str = ""
-    ALIYUN_SMS_ACCESS_KEY_SECRET: str = ""
-    ALIYUN_SMS_SIGN_NAME: str = "当当日记"
-    ALIYUN_SMS_TEMPLATE_CODE: str = ""
+    # 阿里云 AccessKey (短信认证 + 场景识别共用)
+    ALIYUN_ACCESS_KEY_ID: str = ""
+    ALIYUN_ACCESS_KEY_SECRET: str = ""
 
-    # JPush
-    JPUSH_APP_KEY: str = ""
-    JPUSH_MASTER_SECRET: str = ""
+    # SMS (阿里云号码认证服务 Dypnsapi - SendSmsVerifyCode)
+    ALIYUN_SMS_SIGN_NAME: str = "速通互联验证码"
+    ALIYUN_SMS_TEMPLATE_CODE: str = "100001"
+
+    # 图片识别 (阿里云视觉智能 - 场景识别 RecognizeScene)
+    ALIYUN_IMAGERECOG_ENDPOINT: str = "imagerecog.cn-shanghai.aliyuncs.com"
+    ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
     class Config:
         env_file = ".env"
 
 settings = Settings()
 ```
+
+补充约定:
+- 客户端可见的 URL 统一基于 `PUBLIC_BASE_URL` 生成
+- 后端内部访问 MinIO 时使用 `MINIO_ENDPOINT`
+- 需要写入数据库的时间戳统一按 UTC 处理
 
 #### `app/database.py`
 
@@ -348,18 +455,19 @@ async def health_check():
 ### 3.4 `.env.example`
 
 ```
-DATABASE_URL=postgresql+asyncpg://dangdang:dangdang_dev_2024@localhost:5432/dangdang
-REDIS_URL=redis://localhost:6379/0
-MINIO_ENDPOINT=localhost:9000
-MINIO_ACCESS_KEY=dangdang_minio
-MINIO_SECRET_KEY=dangdang_minio_2024
-JWT_SECRET_KEY=change-this-to-random-string
-ALIYUN_SMS_ACCESS_KEY_ID=
-ALIYUN_SMS_ACCESS_KEY_SECRET=
-ALIYUN_SMS_SIGN_NAME=当当日记
-ALIYUN_SMS_TEMPLATE_CODE=
-JPUSH_APP_KEY=
-JPUSH_MASTER_SECRET=
+PUBLIC_BASE_URL=http://YOUR_SERVER_IP
+DATABASE_URL=postgresql+asyncpg://YOUR_DB_USER:YOUR_DB_PASSWORD@127.0.0.1:5432/dangdang
+REDIS_URL=redis://127.0.0.1:6379/0
+MINIO_ENDPOINT=127.0.0.1:9000
+MINIO_ACCESS_KEY=YOUR_MINIO_ACCESS_KEY
+MINIO_SECRET_KEY=YOUR_MINIO_SECRET_KEY
+JWT_SECRET_KEY=CHANGE_THIS_TO_A_RANDOM_STRING
+ALIYUN_ACCESS_KEY_ID=YOUR_ALIYUN_ACCESS_KEY_ID
+ALIYUN_ACCESS_KEY_SECRET=YOUR_ALIYUN_ACCESS_KEY_SECRET
+ALIYUN_SMS_SIGN_NAME=速通互联验证码
+ALIYUN_SMS_TEMPLATE_CODE=100001
+ALIYUN_IMAGERECOG_ENDPOINT=imagerecog.cn-shanghai.aliyuncs.com
+ALIYUN_IMAGERECOG_REGION=cn-shanghai
 ```
 
 ---
@@ -391,10 +499,10 @@ class User(Base):
 ### `app/models/pet.py`
 
 ```python
+from datetime import date, datetime
 import enum
 from sqlalchemy import BigInteger, String, Date, DateTime, Integer, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from datetime import datetime
 from app.database import Base
 
 class PetType(str, enum.Enum):
@@ -413,7 +521,7 @@ class Pet(Base):
     name: Mapped[str] = mapped_column(String(50), nullable=False)
     pet_type: Mapped[PetType] = mapped_column(Enum(PetType), nullable=False)
     breed: Mapped[str] = mapped_column(String(50), nullable=True)
-    birthday: Mapped[datetime] = mapped_column(Date, nullable=True)
+    birthday: Mapped[date] = mapped_column(Date, nullable=True)
     avatar_url: Mapped[str] = mapped_column(String(500), nullable=True)
     invite_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     internal_deworming_cycle_days: Mapped[int] = mapped_column(Integer, nullable=True)
@@ -551,7 +659,7 @@ alembic upgrade head
 ### 6.1 创建项目
 
 ```bash
-cd dangdang-diary
+cd ~/DangDangDiary
 flutter create --org com.dangdang --project-name dangdang_diary frontend
 cd frontend
 ```
@@ -749,14 +857,15 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ## 8. 验收标准
 
-- [ ] `docker compose up -d` 可以正常启动 PostgreSQL、Redis、MinIO
+- [ ] `docker compose up -d` 可以正常启动 Nginx、PostgreSQL、Redis、MinIO
 - [ ] 访问 `http://localhost:9001` 可以打开 MinIO Web 控制台
 - [ ] PostgreSQL 中已创建所有数据表 (通过 Alembic 迁移)
 - [ ] `uvicorn app.main:app --reload` 启动后端，访问 `http://localhost:8000/health` 返回 `{"status": "ok"}`
-- [ ] 访问 `http://localhost:8000/docs` 可以看到 Swagger API 文档
-- [ ] `flutter run` 可以在 Android 模拟器/设备上启动 APP
+- [ ] 真机访问 `http://YOUR_SERVER_IP/api/v1/...` 与 `http://YOUR_SERVER_IP/docs` 链路正常
+- [ ] `flutter run` 可以在 Android 真机上启动 APP
 - [ ] APP 显示底部导航栏，可以切换 5 个 Tab (AI Tab 显示占位页)
 - [ ] 整体 UI 风格为暖色调 (橘粉+暖白)
+- [ ] `.env.example` 中不包含真实密钥或固定生产密码
 
 ---
 
@@ -764,5 +873,5 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 - `.env` 文件不要提交到 git，只提交 `.env.example`
 - 开发阶段后端直接在本地跑 (不放 Docker)，方便热重载
-- Flutter 开发时使用 `flutter run` 连接真机或模拟器
+- Flutter 开发时使用 `flutter run` 连接真机
 - 先不要接入短信和推送服务，那是后续步骤的事

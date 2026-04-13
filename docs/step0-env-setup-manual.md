@@ -188,7 +188,7 @@ sdkmanager "cmdline-tools;latest"
 ## 七、启动基础服务 (Docker Compose)
 
 ```bash
-cd ~/dangdang-diary
+cd ~/DangDangDiary
 
 # docker-compose.yml 已由后续步骤生成
 # 此处仅验证 Docker 能正常拉取和运行容器
@@ -238,7 +238,7 @@ git config --global init.defaultBranch main
 ## 九、创建项目并初始化 Git
 
 ```bash
-cd ~/dangdang-diary
+cd ~/DangDangDiary
 git init
 ```
 
@@ -313,7 +313,7 @@ adb devices                    # 应显示已连接的设备
 ### 方案 C: 编译 APK 后传到手机安装
 ```bash
 # 在 Flutter 项目中
-cd ~/dangdang-diary/frontend
+cd ~/DangDangDiary/frontend
 flutter build apk --debug
 # APK 路径: build/app/outputs/flutter-apk/app-debug.apk
 # 通过 scp 或其他方式传到手机安装

@@ -59,7 +59,7 @@ Authorization: Bearer {access_token}
       "photos": [...]
     }
   ],
-  "total_photos": 150,
+  "total": 150,
   "page": 1,
   "page_size": 40,
   "has_more": true,
@@ -75,7 +75,7 @@ Authorization: Bearer {access_token}
 - 按 taken_at 降序排列
 - 返回按月分组的照片列表
 - `date_range` 返回最早和最新照片日期，供前端时间轴滚动条使用
-- 缩略图使用 MinIO 预签名 URL (1小时过期)
+- 缩略图直接返回固定的 `/media/...` 路径，便于时间轴滚动时复用与缓存
 
 ### 1.2 获取照片原图
 
@@ -87,7 +87,7 @@ Authorization: Bearer {access_token}
 成功响应 (200):
 ```json
 {
-  "url": "http://minio:9000/pet-photos/1/xxx.jpg?X-Amz-...",
+  "url": "http://YOUR_SERVER_IP/media/pet-photos/1/xxx.jpg?X-Amz-...",
   "expires_in": 3600
 }
 ```
@@ -335,15 +335,21 @@ Navigator.push(
   ),
 );
 
-// PhotoViewerScreen 使用 PageView + PhotoView
+// PhotoViewerScreen 打开后按需请求原图 URL，再交给 PhotoView 显示
 PageView.builder(
   controller: PageController(initialPage: initialIndex),
   itemCount: photos.length,
   itemBuilder: (context, index) {
-    return PhotoView(
-      imageProvider: NetworkImage(photos[index].fullUrl),
-      minScale: PhotoViewComputedScale.contained,
-      maxScale: PhotoViewComputedScale.covered * 2,
+    return FutureBuilder<String>(
+      future: photoService.getPhotoUrl(photos[index].id),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+        return PhotoView(
+          imageProvider: NetworkImage(snapshot.data!),
+          minScale: PhotoViewComputedScale.contained,
+          maxScale: PhotoViewComputedScale.covered * 2,
+        );
+      },
     );
   },
 )
@@ -356,8 +362,8 @@ PageView.builder(
 1. **缩略图缓存**: 使用 `cached_network_image`，设置合理的缓存大小
 2. **分页加载**: 每次加载 40 张，滚动到底部自动加载
 3. **图片占位**: 加载中显示灰色占位方块，避免布局跳动
-4. **预签名 URL 缓存**: 缩略图 URL 在前端缓存，避免频繁请求签名
-5. **懒加载原图**: 只在用户点击查看大图时才请求原图 URL
+4. **缩略图缓存**: `/media/...` 缩略图路径可直接结合 `cached_network_image` 缓存
+5. **懒加载原图**: 只在用户点击查看大图时才请求原图签名 URL
 6. **列表回收**: 使用 Sliver 系列组件，确保离屏图片被回收
 
 ---

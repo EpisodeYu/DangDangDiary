@@ -12,7 +12,7 @@ todos:
     content: "Phase 1 步骤 3: 宠物档案管理 - CRUD API + 档案管理页面 + 档案选择器"
     status: pending
   - id: photo-record
-    content: "Phase 1 步骤 4: 照片记录 - 上传 API + MinIO 存储 + 记录页面 + EXIF 日期"
+    content: "Phase 1 步骤 4: 照片记录 - 上传 API + 宠物图片校验(场景识别) + MinIO 存储 + 记录页面 + EXIF 日期"
     status: pending
   - id: health-mgmt
     content: "Phase 1 步骤 5: 健康管理 - 体重/驱虫/疫苗 API + 健康页面 + 驱虫倒计时"
@@ -21,7 +21,7 @@ todos:
     content: "Phase 1 步骤 6: 时间轴 - 分页查询 API + 时间轴页面 + 多档案筛选"
     status: pending
   - id: push-notify
-    content: "Phase 1 步骤 7: 推送提醒 - JPush 集成 + 定时任务"
+    content: "Phase 1 步骤 7: 推送提醒 - Flutter 本地推送 + 驱虫到期通知调度"
     status: pending
   - id: polish
     content: "Phase 1 步骤 8: 整合调试 + UI 打磨"
@@ -49,21 +49,27 @@ graph TB
     end
 
     subgraph thirdParty [第三方服务]
-        AliyunSMS["阿里云 SMS"]
-        JPush["极光推送 JPush"]
+        AliyunSMS["阿里云短信认证 (Dypnsapi)"]
+        AliyunScene["阿里云场景识别 (imagerecog)"]
         TongyiVL["通义千问-VL (Phase 2)"]
         TongyiWX["通义万相 (Phase 2)"]
         WeChatAPI["微信开放平台 (Phase 2)"]
     end
 
-    AndroidAPP -->|HTTPS REST API| Nginx
-    iOSAPP -->|HTTPS REST API| Nginx
+    subgraph localService [APP 本地服务]
+        LocalPush["Flutter 本地推送 (驱虫提醒)"]
+    end
+
+    AndroidAPP -->|"HTTP/HTTPS REST API"| Nginx
+    iOSAPP -->|"HTTP/HTTPS REST API"| Nginx
+    AndroidAPP --> LocalPush
+    iOSAPP --> LocalPush
     Nginx --> FastAPI
     FastAPI --> PostgreSQL
     FastAPI --> Redis
     FastAPI --> MinIO
     FastAPI --> AliyunSMS
-    FastAPI --> JPush
+    FastAPI --> AliyunScene
     FastAPI --> TongyiVL
     FastAPI --> TongyiWX
     FastAPI --> WeChatAPI
@@ -80,8 +86,9 @@ graph TB
 - **缓存**: Redis - 存储验证码、JWT Token 黑名单、会话缓存
 - **对象存储**: MinIO (开发阶段自建) -> 后期迁移阿里云 OSS - S3 兼容协议，迁移无痛
 - **反向代理**: Nginx - 处理 HTTPS、静态资源、负载均衡
-- **推送**: 极光推送 (JPush) - 国内覆盖率高、有免费额度
-- **短信**: 阿里云短信服务 - 稳定、价格低
+- **推送**: Flutter 本地推送 (flutter_local_notifications) - APP 开启/后台时本地触发，无需外部推送服务，零成本
+- **短信**: 阿里云号码认证服务 (Dypnsapi SendSmsVerifyCode) - 短信认证一体化，系统赠送签名+模板
+- **图片识别**: 阿里云视觉智能开放平台 - 场景识别 (RecognizeScene) - 判断上传图片是否包含宠物
 - **容器化**: Docker + Docker Compose - 一键部署所有服务
 
 ## 三、数据库设计
@@ -179,7 +186,7 @@ erDiagram
 ## 四、项目目录结构
 
 ```
-dangdang-diary/
+DangDangDiary/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py                # FastAPI 入口
@@ -236,6 +243,7 @@ dangdang-diary/
 - `POST /api/v1/auth/send-code` - 发送短信验证码
 - `POST /api/v1/auth/login` - 手机号+验证码登录(自动注册)
 - `POST /api/v1/auth/refresh` - 刷新 Token
+- `POST /api/v1/auth/logout` - 当前设备退出登录并作废当前 refresh token
 
 ### 宠物档案模块
 - `POST /api/v1/pets` - 创建宠物档案
@@ -266,20 +274,29 @@ dangdang-diary/
 ## 六、关键技术实现要点
 
 ### 1. 认证流程
-- 短信验证码登录，验证码存 Redis (5分钟过期，60秒内不可重发)
+- 使用阿里云号码认证服务 (Dypnsapi) 的 `SendSmsVerifyCode` API 发送短信验证码
+- 阿里云 AccessKey (短信认证 + 场景识别共用): 通过 `.env` 注入，例如 `YOUR_ALIYUN_ACCESS_KEY_ID` / `YOUR_ALIYUN_ACCESS_KEY_SECRET`
+- 签名名称: `速通互联验证码` (系统赠送签名)
+- 模板 CODE: `100001` (系统赠送模板)
+- 验证码由 API 自动生成 (TemplateParam 使用 `##code##` 占位符)
+- 验证码存 Redis (5分钟过期，60秒内不可重发)
 - JWT Token 双 Token 机制：Access Token (2小时) + Refresh Token (30天)
+- 提供 `logout`，仅作废当前设备的 refresh token
 - 首次登录自动创建用户账号
 
 ### 2. 照片上传流程
-- APP 端压缩生成缩略图 -> 上传原图+缩略图到后端
-- 后端存储到 MinIO，数据库存储 storage_key
+- APP 端处理 EXIF 日期；若用户选择 HEIC/HEIF，则先在前端转换为 JPEG 后再上传
+- **宠物图片校验**: 后端调用阿里云视觉智能开放平台「场景识别 (RecognizeScene)」API，检测图片中是否包含猫/狗。未识别到宠物则拒绝上传，提示"未识别到宠物，请换一张图片试试吧！"
+- 后端存储到 MinIO，负责生成缩略图，数据库存储 storage_key / thumbnail_key
 - 使用 EXIF 信息提取拍摄日期 (APP 端通过 `image_picker` + `exif` 包处理)
-- 时间轴加载使用分页 + 缩略图，点击查看时加载原图
+- 列表接口直接返回缩略图 URL；点击查看时再请求原图 URL
 
-### 3. 驱虫推送提醒
-- 后端使用 APScheduler 定时任务，每天 10:00 扫描需要提醒的宠物
-- 计算下次驱虫日期 = 最后一次驱虫日期 + 周期天数
-- 到期前3天开始推送，过期后每天推送，直到记录新的驱虫
+### 3. 驱虫推送提醒 (本地推送)
+- 使用 Flutter `flutter_local_notifications` 插件实现本地推送
+- APP 启动或进入后台时，计算所有宠物的驱虫到期状态
+- 调度本地通知：到期前3天开始提醒，过期后每天提醒
+- 不依赖外部推送服务（如极光推送），无需后端定时任务推送
+- 用户记录新驱虫后，重新计算并更新本地通知调度
 
 ### 4. 图片 EXIF 日期提取
 - Flutter 端使用 `exif` 包读取照片的 DateTimeOriginal 字段
@@ -291,6 +308,16 @@ dangdang-diary/
 - 数据库表预留 Phase 2 所需字段 (invite_code, deworming_cycle 等)
 - MinIO 使用 S3 协议，后期可无缝迁移到阿里云 OSS
 - 用户模型预留微信登录字段 (wechat_openid, wechat_unionid)
+
+## 六点五、全局默认约定
+
+- 真机开发阶段采用统一入口方案，手机客户端只访问一个入口地址，不直接访问 FastAPI 或 MinIO 内部地址
+- 统一入口推荐由 Nginx 提供，路径约定为 `/api/...` 与 `/media/...`
+- 接口字段统一使用 `snake_case`
+- 业务错误统一为 `code` + `message` + `details`
+- 列表接口统一使用 `page` + `page_size` 分页，时间类记录默认按最新在前排序
+- 时间戳统一按 UTC 存储；生日、拍摄日期、记录日期等继续使用 `date`
+- `.env.example` 与技术文档只能保留占位符，不得出现真实或疑似真实 AccessKey / Secret / 固定生产密码
 
 ## 七、开发阶段划分
 
@@ -314,6 +341,7 @@ dangdang-diary/
 
 **步骤 4: 照片记录** (~8$)
 - 照片上传 API (含 MinIO 存储)
+- 宠物图片校验 (阿里云场景识别 RecognizeScene API)
 - Flutter 记录页面 (选档案、选照片、日期选择)
 - EXIF 日期提取
 
@@ -328,8 +356,8 @@ dangdang-diary/
 - Flutter 时间轴页面 (瀑布流/网格 + 滚动条定位 + 多档案筛选)
 
 **步骤 7: 推送提醒** (~5$)
-- JPush 集成 (Android)
-- 后端定时任务 + 推送逻辑
+- Flutter 本地推送集成 (flutter_local_notifications)
+- APP 端驱虫到期计算 + 本地通知调度
 
 **步骤 8: 整合调试 + UI 打磨** (~4$)
 - 整体流程测试
@@ -349,9 +377,11 @@ dangdang-diary/
 ### 需要注册的账号与 API
 
 **Phase 1 必需:**
-1. **阿里云账号** - 开通短信服务 (SMS)，购买短信套餐包 (测试阶段几块钱即可)，需要配置短信签名和模板 (需审核，约1-2个工作日)
-2. **极光推送 (JPush) 账号** - 免费注册，创建应用获取 AppKey 和 Master Secret
-3. **域名** (可选，开发阶段可用 IP 直连) - 如需 HTTPS 则需要域名+SSL 证书
+1. **阿里云账号** - 已就绪，AccessKey 通过 `.env` 注入，例如 `YOUR_ALIYUN_ACCESS_KEY_ID` / `YOUR_ALIYUN_ACCESS_KEY_SECRET`
+   - 已开通号码认证服务 (Dypnsapi)，签名「速通互联验证码」、模板 CODE `100001`。API 详见 `docs/发送短信验证码.md`
+   - 已开通视觉智能开放平台 - 场景识别 (RecognizeScene)，用于宠物图片校验。API 详见 `docs/本文档为您介绍场景识别常用语言和常见情况的示例代码.md`
+2. **域名** (可选，开发阶段可用 IP 直连) - 如需 HTTPS 则需要域名+SSL 证书
+3. ~~极光推送~~ - 已改为 APP 本地推送，无需外部推送服务账号
 
 **Phase 2 需要:**
 4. **阿里云 DashScope 账号** - 开通通义千问-VL 和通义万相 API (开通即有免费额度)
@@ -362,7 +392,7 @@ dangdang-diary/
 1. **APP Logo** - 需要提供以下尺寸: 1024x1024 (应用商店)、192x192、144x144、96x96、72x72、48x48 (Android 各密度)，建议提供 SVG 或 1024x1024 PNG，我可以帮你用代码裁剪
 2. **底边栏图标 x5** - 记录、健康、时间轴、AI、我的，每个图标需要「选中」和「未选中」两种状态，建议 SVG 格式或 48x48 PNG
 3. **APP 名称确认** - "当当日记" 作为显示名称
-4. **短信签名名称** - 阿里云短信签名 (如 "当当日记")
+4. **短信签名名称** - 使用系统赠送签名「速通互联验证码」(已确定，无需自定义签名)
 5. **启动页 Logo** (可选) - 可复用 APP Logo
 
 ### 开发环境搭建 (Ubuntu)
