@@ -4,7 +4,7 @@ class AppConstants {
   /// Base URL for API calls — point to Nginx unified entry
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'http://10.0.2.2', // Android emulator → host machine
+    defaultValue: 'http://REDACTED_IP', // Android emulator → host machine
   );
 
   static const String apiPrefix = '/api/v1';
