@@ -1,0 +1,44 @@
+name: dangdang_diary
+description: "当当日记 - 宠物日记APP"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  # Routing
+  go_router: ^14.0.0
+  # State management
+  flutter_riverpod: ^2.5.0
+  # Networking
+  dio: ^5.7.0
+  # Local storage (token persistence)
+  shared_preferences: ^2.3.0
+  # Image picker
+  image_picker: ^1.1.0
+  # Image compression
+  flutter_image_compress: ^2.3.0
+  # EXIF reading
+  exif: ^3.3.0
+  # Image caching
+  cached_network_image: ^3.4.0
+  # Date formatting
+  intl: ^0.19.0
+  # Pull to refresh
+  pull_to_refresh: ^2.0.0
+  # Permission handling
+  permission_handler: ^11.3.0
+  # Photo viewer
+  photo_view: ^0.15.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

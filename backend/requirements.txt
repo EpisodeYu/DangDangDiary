@@ -1,0 +1,17 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+sqlalchemy==2.0.35
+asyncpg==0.29.0
+alembic==1.13.0
+pydantic==2.9.0
+pydantic-settings==2.5.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+redis==5.1.0
+minio==7.2.9
+python-multipart==0.0.12
+httpx==0.27.0
+apscheduler==3.10.4
+pillow==10.4.0
+alibabacloud-dypnsapi20170525>=2.0.0
+alibabacloud-imagerecog20190930>=2.0.0
