@@ -2,92 +2,226 @@
 
 ## 项目背景
 
-「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤在 Step 1 的项目骨架基础上实现手机号登录认证。
+「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤在 Step 1 已完成的项目骨架之上，落地 Phase 1 的认证基础能力，并为 Step 3 之后的所有受保护接口提供统一登录态。
 
-**前置依赖**: Step 1 已完成，项目骨架已搭建，数据库已创建。
+本步骤完成后，客户端应具备以下能力：
+
+1. 用手机号获取短信验证码。
+2. 用手机号 + 验证码登录，首次登录自动注册用户。
+3. 持久化 `access_token` 与 `refresh_token`。
+4. 访问受保护接口时自动携带 token。
+5. `access_token` 过期后自动刷新一次并重试原请求。
+6. 支持获取当前用户信息、更新昵称、单设备退出登录。
 
 ---
 
-## 本步骤目标
+## 0. 前置依赖与当前基础
 
-1. 后端实现短信验证码发送与验证 API
-2. 后端实现 JWT Token 认证机制
-3. 后端实现登录/自动注册逻辑
-4. Flutter 实现登录页面 UI
-5. Flutter 实现 Token 持久化与自动登录
+### 0.1 前置依赖
+
+- Step 1 已完成。
+- PostgreSQL、Redis、Nginx 已可用。
+- FastAPI 与 Flutter 骨架已建立。
+- `users` 表与初始迁移已存在。
+- 全局约定继续遵循 `docs/00-global-rules.md`。
+
+### 0.2 当前仓库状态
+
+本步骤不是从零新建认证模块，而是在已有骨架上补全实现。
+
+后端当前状态：
+
+- `backend/app/api/v1/auth.py` 已存在，但仍是占位路由。
+- `backend/app/schemas/auth.py` 已存在，但只有最基础的请求/响应模型。
+- `backend/app/config.py` 已包含 JWT、Redis、阿里云短信相关配置项。
+- `backend/app/dependencies.py` 已预留给通用依赖注入，但认证依赖尚未实现。
+- `backend/app/services/` 与 `backend/app/utils/` 目标目录在 Step 1 文档中已规划；如果当前仓库里尚未创建，本步骤需要先补齐目录，再放入实现文件。
+
+前端当前状态：
+
+- `frontend/lib/services/api_client.dart` 已有 Dio 与 token 注入逻辑，但 `401 -> refresh` 仍未实现。
+- `frontend/lib/config/router.dart` 已有主导航结构，但还没有登录态守卫。
+- `frontend/lib/screens/auth/login_screen.dart` 仍是占位页面。
+- `frontend/lib/config/constants.dart` 已作为统一配置入口存在；本步骤应沿用或等价替换它，不要再引入第二套并存的 `base_url` 配置。
+
+### 0.3 本步骤的实现边界
+
+本步骤必须完成：
+
+- `POST /api/v1/auth/send-code`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
+- `PUT /api/v1/auth/me`
+- Flutter 登录页
+- token 持久化
+- 冷启动恢复登录
+- 401 后自动刷新一次 access token
+- 后端重点自动化测试
+
+本步骤不做：
+
+- 微信登录
+- 多设备会话管理界面
+- 头像上传
+- 并发 `401` 的单飞刷新优化
+
+说明：
+
+- `PUT /api/v1/auth/me` 在 Step 2 只要求支持更新 `nickname`。
+- `avatar_url` 可以在用户信息中返回，但不要求在 Step 2 提供上传或编辑能力。
+- 并发 `401` 时只允许“简单方案”：每个失败请求各自尝试刷新一次。更稳健的单飞刷新机制留到后续优化，不在本步骤验收范围内。
 
 ---
 
 ## 1. 认证流程
 
-```
-用户输入手机号 → 请求发送验证码 → 后端调用阿里云SMS发送 → Redis存储验证码(5分钟过期)
-    ↓
-用户输入验证码 → 请求登录 → 后端验证Redis中的验证码
-    ↓ 验证成功
-检查手机号是否已注册 → 未注册则自动创建用户 → 生成JWT Token对返回
-    ↓
-Flutter 保存 Token → 进入主页
+```text
+用户输入手机号
+  -> 请求发送验证码
+  -> 后端校验手机号与频控
+  -> 调用阿里云 Dypnsapi 发送验证码
+  -> Redis 保存验证码与频控标记
+
+用户输入验证码
+  -> 请求登录
+  -> 后端校验 Redis 中的验证码
+  -> 首次登录自动创建 users 记录
+  -> 生成 access_token + refresh_token
+  -> Flutter 持久化 token 与用户信息
+  -> 进入主流程页面
+
+后续接口访问
+  -> 自动携带 access_token
+  -> 若返回 401，则尝试调用 /auth/refresh
+  -> 刷新成功后重试原请求一次
+  -> 刷新失败则清空本地登录态并回到 /login
 ```
 
 ---
 
-## 2. 后端 API 规格
+## 2. 实施顺序建议
 
-本步骤默认沿用 Step 1 中的全局约定:
-- 接口字段统一使用 `snake_case`
-- 业务错误统一为 `code` + `message` + `details`
-- 输入不合法统一返回 `400`
-- 客户端通过统一入口访问 `/api/...`
+为了降低联调复杂度，本步骤建议严格按以下顺序推进：
 
-### 2.1 发送验证码
+1. 先补全后端认证链路与自动化测试。
+2. 用 FastAPI Swagger `/docs` 验证接口行为与错误格式。
+3. 再补全 Flutter 登录页、认证状态管理、路由守卫与自动刷新。
+4. 最后做真机或模拟器联调。
 
+不要一开始同时改后端和前端，否则很容易在短信、Redis、路由守卫三处同时卡住。
+
+---
+
+## 3. 后端 API 规格
+
+### 3.1 通用约定
+
+- 所有接口前缀都是 `/api/v1/auth`。
+- 所有字段使用 `snake_case`。
+- 业务错误统一返回：
+
+```json
+{
+  "code": "ERROR_CODE",
+  "message": "面向用户或调用方的错误描述",
+  "details": null
+}
 ```
-POST /api/v1/auth/send-code
-Content-Type: application/json
-```
 
-请求体:
+- `RequestValidationError` 继续复用 Step 1 已有的统一错误转换逻辑，返回 `400`。
+- 需要认证的接口通过 `Authorization: Bearer {access_token}` 传递 access token。
+- 中国大陆手机号校验规则：`^1[3-9]\\d{9}$`
+- 验证码校验规则：6 位数字。
+
+### 3.2 Token 约定
+
+- `access_token` 有效期：2 小时。
+- `refresh_token` 有效期：30 天。
+- JWT 至少包含以下字段：
+  - `sub`: 用户 ID，字符串形式。
+  - `exp`: 过期时间。
+  - `type`: `access` 或 `refresh`。
+- `refresh_token` 黑名单写入 Redis，TTL 应与该 token 的剩余有效期一致。
+
+### 3.3 Redis key 约定
+
+- 验证码：`sms:verify:{phone}`
+- 验证码频控：`sms:limit:{phone}`
+- refresh token 黑名单：`auth:refresh:blacklist:{refresh_token}`
+
+如果实现时决定对 refresh token 做哈希后再落 Redis，也可以，但必须保持以下语义不变：
+
+- `logout` 仅拉黑当前提交的 refresh token。
+- 被拉黑的 refresh token 后续不能再用于 `/auth/refresh`。
+- 其他设备的 refresh token 不受影响。
+
+### 3.4 短信服务约定
+
+本步骤运行时默认接入真实阿里云 Dypnsapi，不再以内置 mock 或控制台打印验证码作为默认方案。
+
+实现要求：
+
+- 使用阿里云号码认证服务 `SendSmsVerifyCode`。
+- 从环境变量读取：
+  - `ALIYUN_ACCESS_KEY_ID`
+  - `ALIYUN_ACCESS_KEY_SECRET`
+  - `ALIYUN_SMS_SIGN_NAME`
+  - `ALIYUN_SMS_TEMPLATE_CODE`
+- 默认签名与模板继续沿用 Step 1 / 技术方案中的系统赠送值：
+  - `速通互联验证码`
+  - `100001`
+- 请求参数应设置：
+  - `CodeType=1`
+  - `CodeLength=6`
+  - `ValidTime=300`
+  - `Interval=60`
+  - `DuplicatePolicy=1`
+  - `ReturnVerifyCode=true`
+
+如果运行环境缺少阿里云必需配置，不要偷偷降级为本地 mock；应直接报错并提示环境未配置完成。
+
+自动化测试中可以 mock 阿里云 SDK，但运行时联调必须接真实阿里云。
+
+### 3.5 `POST /api/v1/auth/send-code`
+
+请求体：
+
 ```json
 {
   "phone": "13800138000"
 }
 ```
 
-成功响应 (200):
+成功响应 `200`：
+
 ```json
 {
   "expire_seconds": 300
 }
 ```
 
-错误响应 (429 - 60秒内重复请求):
-```json
-{
-  "code": "SMS_RATE_LIMITED",
-  "message": "请求过于频繁，请60秒后再试",
-  "details": {
-    "retry_after_seconds": 60
-  }
-}
-```
+失败场景：
 
-业务逻辑:
-- 验证手机号格式 (中国大陆手机号, 11位数字, 1开头)
-- 检查 Redis 中是否有 60 秒内发送过的记录 (防刷)
-- 调用阿里云 Dypnsapi `SendSmsVerifyCode` API 发送短信 (验证码由 API 自动生成)
-- API 返回验证码明文 (ReturnVerifyCode=true)，将验证码存入 Redis，key 为 `sms:verify:{phone}`，过期时间 5 分钟
-- 同时设置频率限制 key `sms:limit:{phone}`，过期时间 60 秒
-- **开发阶段**: 如果阿里云 SMS 未配置，将验证码打印到控制台，方便测试
+- `400 INVALID_PHONE`：手机号格式不合法。
+- `429 SMS_RATE_LIMITED`：60 秒内重复请求。
+- `502 SMS_SEND_FAILED`：调用阿里云失败，或阿里云返回非成功状态。
 
-### 2.2 手机号登录
+业务逻辑：
 
-```
-POST /api/v1/auth/login
-Content-Type: application/json
-```
+1. 校验手机号格式。
+2. 检查 `sms:limit:{phone}` 是否存在。
+3. 调用阿里云发送验证码。
+4. 从阿里云响应中取回验证码明文。
+5. 将验证码写入 `sms:verify:{phone}`，TTL 300 秒。
+6. 将频控 key 写入 `sms:limit:{phone}`，TTL 60 秒。
+7. 返回 `expire_seconds=300`。
 
-请求体:
+### 3.6 `POST /api/v1/auth/login`
+
+请求体：
+
 ```json
 {
   "phone": "13800138000",
@@ -95,7 +229,8 @@ Content-Type: application/json
 }
 ```
 
-成功响应 (200):
+成功响应 `200`：
+
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -110,37 +245,34 @@ Content-Type: application/json
 }
 ```
 
-错误响应 (400):
-```json
-{
-  "code": "INVALID_VERIFY_CODE",
-  "message": "验证码错误或已过期",
-  "details": null
-}
-```
+失败场景：
 
-业务逻辑:
-- 从 Redis 获取验证码并验证
-- 验证成功后删除 Redis 中的验证码 (一次性使用)
-- 查询 users 表，手机号存在则登录，不存在则自动创建用户
-- 生成 Access Token (2小时过期) 和 Refresh Token (30天过期)
-- 返回 Token 和用户信息
+- `400 INVALID_PHONE`：手机号格式不合法。
+- `400 INVALID_VERIFY_CODE`：验证码错误、缺失或已过期。
 
-### 2.3 刷新 Token
+业务逻辑：
 
-```
-POST /api/v1/auth/refresh
-Content-Type: application/json
-```
+1. 校验手机号与验证码格式。
+2. 从 Redis 读取 `sms:verify:{phone}`。
+3. 对比验证码，不匹配则返回错误。
+4. 验证成功后立即删除验证码 key，保证一次性使用。
+5. 按手机号查询 `users` 表。
+6. 若用户不存在，则自动创建用户记录。
+7. 生成 access token 与 refresh token。
+8. 返回 token 对与用户信息。
 
-请求体:
+### 3.7 `POST /api/v1/auth/refresh`
+
+请求体：
+
 ```json
 {
   "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
 
-成功响应 (200):
+成功响应 `200`：
+
 ```json
 {
   "access_token": "eyJhbGciOiJIUzI1NiIs...",
@@ -148,530 +280,359 @@ Content-Type: application/json
 }
 ```
 
-业务逻辑:
-- 验证 Refresh Token 有效性
-- 检查 Token 是否在黑名单中 (Redis)
-- 生成新的 Access Token
-- 返回新 Token
+失败场景：
 
-### 2.4 退出登录
+- `401 INVALID_REFRESH_TOKEN`：refresh token 无效、过期、类型错误或已被拉黑。
 
-```
-POST /api/v1/auth/logout
+业务逻辑：
+
+1. 校验 refresh token。
+2. 检查是否在 Redis 黑名单中。
+3. 解析出用户 ID。
+4. 确认用户仍存在。
+5. 生成新的 access token。
+6. 不轮换 refresh token，本步骤保持简单实现。
+
+### 3.8 `POST /api/v1/auth/logout`
+
+请求头：
+
+```text
 Authorization: Bearer {access_token}
-Content-Type: application/json
 ```
 
-请求体:
+请求体：
+
 ```json
 {
   "refresh_token": "eyJhbGciOiJIUzI1NiIs..."
 }
 ```
 
-成功响应 (204): No Content
+成功响应：
 
-业务逻辑:
-- 校验当前 access_token
-- 将本次登录对应的 refresh_token 加入 Redis 黑名单，直到其自然过期
-- 仅作废当前设备提交的 refresh_token，不影响其他设备
+- `204 No Content`
 
-### 2.5 获取当前用户信息
+失败场景：
 
-```
-GET /api/v1/auth/me
+- `401 INVALID_ACCESS_TOKEN`：access token 无效或过期。
+- `401 INVALID_REFRESH_TOKEN`：refresh token 无效、过期或类型错误。
+- `400 REFRESH_TOKEN_MISMATCH`：提交的 refresh token 不属于当前 access token 对应用户。
+
+业务逻辑：
+
+1. 先通过 access token 获取当前用户。
+2. 校验请求体中的 refresh token。
+3. 确认 refresh token 里的用户 ID 与当前用户一致。
+4. 将该 refresh token 加入 Redis 黑名单，TTL 为剩余有效期。
+5. 只作废这一个 refresh token，不影响其他设备。
+
+### 3.9 `GET /api/v1/auth/me`
+
+请求头：
+
+```text
 Authorization: Bearer {access_token}
 ```
 
-成功响应 (200):
+成功响应 `200`：
+
 ```json
 {
   "id": 1,
   "phone": "13800138000",
-  "nickname": "用户昵称",
-  "avatar_url": "https://..."
+  "nickname": "当当妈妈",
+  "avatar_url": null
 }
 ```
 
-### 2.6 更新用户信息
+失败场景：
 
-```
-PUT /api/v1/auth/me
+- `401 INVALID_ACCESS_TOKEN`
+- `401 USER_NOT_FOUND`
+
+### 3.10 `PUT /api/v1/auth/me`
+
+请求头：
+
+```text
 Authorization: Bearer {access_token}
-Content-Type: application/json
 ```
 
-请求体:
+请求体：
+
 ```json
 {
   "nickname": "新昵称"
 }
 ```
 
----
+成功响应 `200`：
 
-## 3. 后端实现要点
-
-### 3.1 JWT 工具 (`app/utils/security.py`)
-
-```python
-from datetime import datetime, timedelta
-from jose import jwt, JWTError
-from app.config import settings
-
-def create_access_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    payload = {
-        "sub": str(user_id),
-        "exp": expire,
-        "type": "access"
-    }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-
-def create_refresh_token(user_id: int) -> str:
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {
-        "sub": str(user_id),
-        "exp": expire,
-        "type": "refresh"
-    }
-    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
-
-def verify_token(token: str, token_type: str = "access") -> int | None:
-    """验证 Token 并返回 user_id，无效返回 None"""
-    try:
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        if payload.get("type") != token_type:
-            return None
-        user_id = int(payload.get("sub"))
-        return user_id
-    except (JWTError, ValueError):
-        return None
-```
-
-### 3.2 认证依赖注入 (`app/dependencies.py`)
-
-```python
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_db
-from app.utils.security import verify_token
-from app.models.user import User
-
-security = HTTPBearer()
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    user_id = verify_token(credentials.credentials)
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "INVALID_ACCESS_TOKEN",
-                "message": "无效的认证凭据",
-                "details": None,
-            },
-        )
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "code": "USER_NOT_FOUND",
-                "message": "用户不存在",
-                "details": None,
-            },
-        )
-    return user
-```
-
-### 3.3 阿里云短信认证服务 (`app/services/sms.py`)
-
-使用阿里云**号码认证服务 (Dypnsapi)** 的 `SendSmsVerifyCode` API 发送验证码短信。
-
-**API 关键信息:**
-- **接口**: `SendSmsVerifyCode` (号码认证服务 Dypnsapi 2017-05-25)
-- **Endpoint**: `dypnsapi.aliyuncs.com`
-- **AccessKey**: 通过环境变量注入，例如 `YOUR_ALIYUN_ACCESS_KEY_ID` / `YOUR_ALIYUN_ACCESS_KEY_SECRET`
-- **签名名称**: `速通互联验证码` (系统赠送签名，必须搭配系统赠送模板)
-- **模板 CODE**: `100001` (系统赠送模板)
-- **验证码生成**: TemplateParam 中使用 `##code##` 占位符，由 API 自动生成验证码
-- **返回验证码**: 设置 `ReturnVerifyCode=true`，响应中会返回生成的验证码
-
-**请求参数说明:**
-
-| 参数 | 值 | 说明 |
-|------|------|------|
-| PhoneNumber | 用户手机号 | 必填 |
-| SignName | 速通互联验证码 | 系统赠送签名 |
-| TemplateCode | 100001 | 系统赠送模板 |
-| TemplateParam | `{"code":"##code##"}` | ##code## 由系统自动替换为验证码 |
-| CodeType | 1 | 纯数字验证码 |
-| CodeLength | 6 | 6位验证码 |
-| ValidTime | 300 | 验证码有效期300秒(5分钟) |
-| Interval | 60 | 发送间隔60秒(频控) |
-| DuplicatePolicy | 1 | 覆盖旧验证码 |
-| ReturnVerifyCode | true | 响应中返回验证码明文 |
-
-**成功响应示例:**
 ```json
 {
-  "Code": "OK",
-  "Message": "成功",
-  "Success": true,
-  "Model": {
-    "VerifyCode": "423256",
-    "BizId": "112231421412414124123^4",
-    "RequestId": "a3671ccf-0102-4c8e-8797-a3678e091d09"
-  }
+  "id": 1,
+  "phone": "13800138000",
+  "nickname": "新昵称",
+  "avatar_url": null
 }
 ```
 
-**常见错误码:**
+失败场景：
 
-| HTTP Status | 错误码 | 说明 |
-|---|---|---|
-| 400 | MOBILE_NUMBER_ILLEGAL | 手机号格式错误 |
-| 400 | BUSINESS_LIMIT_CONTROL | 触发号码天级流控 |
-| 400 | FREQUENCY_FAIL | 频控校验未通过 (60秒内重发) |
-| 400 | INVALID_PARAMETERS | 非法参数 |
-| 400 | FUNCTION_NOT_OPENED | 没有开通融合认证功能 |
+- `401 INVALID_ACCESS_TOKEN`
+- `400 INVALID_NICKNAME`
 
-**实现代码:**
+约束说明：
 
-```python
-from alibabacloud_dypnsapi20170525.client import Client
-from alibabacloud_tea_openapi.models import Config
-from alibabacloud_dypnsapi20170525.models import SendSmsVerifyCodeRequest
-from app.config import settings
-import json
-
-class SMSService:
-    def __init__(self):
-        if settings.ALIYUN_ACCESS_KEY_ID and settings.ALIYUN_ACCESS_KEY_SECRET:
-            config = Config(
-                access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
-                access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
-                endpoint="dypnsapi.aliyuncs.com",
-            )
-            self.client = Client(config)
-        else:
-            self.client = None
-
-    async def send_verification_code(self, phone: str) -> tuple[bool, str | None]:
-        """
-        发送短信验证码。
-        返回 (是否成功, 验证码明文 or None)。
-        验证码由阿里云 API 自动生成，通过 ReturnVerifyCode=true 返回。
-        """
-        if self.client is None:
-            import random
-            code = str(random.randint(100000, 999999))
-            print(f"[DEV SMS] 手机号: {phone}, 验证码: {code}")
-            return True, code
-
-        request = SendSmsVerifyCodeRequest(
-            phone_number=phone,
-            sign_name=settings.ALIYUN_SMS_SIGN_NAME,
-            template_code=settings.ALIYUN_SMS_TEMPLATE_CODE,
-            template_param=json.dumps({"code": "##code##"}),
-            code_type=1,          # 纯数字
-            code_length=6,        # 6位
-            valid_time=300,       # 5分钟有效
-            interval=60,          # 60秒频控
-            duplicate_policy=1,   # 覆盖旧验证码
-            return_verify_code=True,
-        )
-
-        try:
-            response = self.client.send_sms_verify_code(request)
-            if response.body.code == "OK" and response.body.success:
-                verify_code = response.body.model.verify_code
-                return True, verify_code
-            else:
-                print(f"[SMS Error] Code: {response.body.code}, Message: {response.body.message}")
-                return False, None
-        except Exception as e:
-            print(f"[SMS Exception] {e}")
-            return False, None
-
-sms_service = SMSService()
-```
-
-**注意**: 需要安装阿里云号码认证服务 SDK:
-```
-pip install alibabacloud-dypnsapi20170525
-```
-
-**与之前方案的区别:**
-- 使用 `Dypnsapi` (号码认证服务) 而非 `Dysmsapi` (短信服务)
-- 验证码由 API 自动生成，不需要后端手动生成
-- API 内置频控 (Interval=60秒)，但后端仍需用 Redis 做频控以防绕过
-- API 返回验证码明文，后端存入 Redis 用于后续校验
-
-### 3.4 Redis 工具
-
-```python
-import redis.asyncio as aioredis
-from app.config import settings
-
-redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-
-async def set_verify_code(phone: str, code: str):
-    await redis_client.set(f"sms:verify:{phone}", code, ex=300)  # 5分钟
-
-async def get_verify_code(phone: str) -> str | None:
-    return await redis_client.get(f"sms:verify:{phone}")
-
-async def delete_verify_code(phone: str):
-    await redis_client.delete(f"sms:verify:{phone}")
-
-async def check_sms_rate_limit(phone: str) -> bool:
-    """返回 True 表示可以发送，False 表示被限流"""
-    key = f"sms:limit:{phone}"
-    if await redis_client.exists(key):
-        return False
-    await redis_client.set(key, "1", ex=60)  # 60秒限流
-    return True
-
-async def blacklist_refresh_token(token: str, expires_seconds: int):
-    await redis_client.set(f"auth:refresh:blacklist:{token}", "1", ex=expires_seconds)
-
-async def is_refresh_token_blacklisted(token: str) -> bool:
-    return bool(await redis_client.exists(f"auth:refresh:blacklist:{token}"))
-```
-
-### 3.5 Pydantic Schema (`app/schemas/auth.py`)
-
-```python
-from pydantic import BaseModel, field_validator
-import re
-
-class SendCodeRequest(BaseModel):
-    phone: str
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v):
-        if not re.match(r"^1[3-9]\d{9}$", v):
-            raise ValueError("手机号格式不正确")
-        return v
-
-class LoginRequest(BaseModel):
-    phone: str
-    code: str
-
-    @field_validator("code")
-    @classmethod
-    def validate_code(cls, v):
-        if not re.match(r"^\d{6}$", v):
-            raise ValueError("验证码必须是6位数字")
-        return v
-
-class RefreshTokenRequest(BaseModel):
-    refresh_token: str
-
-class LogoutRequest(BaseModel):
-    refresh_token: str
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-    user: "UserResponse"
-
-class UserResponse(BaseModel):
-    id: int
-    phone: str
-    nickname: str | None
-    avatar_url: str | None
-
-    class Config:
-        from_attributes = True
-
-class UpdateUserRequest(BaseModel):
-    nickname: str | None = None
-```
+- Step 2 只要求更新 `nickname`。
+- `nickname` 建议去除首尾空格。
+- 空字符串应视为非法输入并返回 `400`。
 
 ---
 
-## 4. Flutter 登录页面
+## 4. 后端实现要求
 
-### 4.1 登录流程 UI
+### 4.1 目录与文件
 
-```
-┌─────────────────────────────────┐
-│                                 │
-│         🐾 当当日记              │
-│       记录毛孩子的每一天          │
-│                                 │
-│  ┌─────────────────────────┐    │
-│  │ 📱 请输入手机号           │    │
-│  └─────────────────────────┘    │
-│                                 │
-│  ┌──────────────┐ ┌────────┐   │
-│  │ 请输入验证码   │ │获取验证码│   │
-│  └──────────────┘ └────────┘   │
-│       (获取后显示 59s 倒计时)     │
-│                                 │
-│  ┌─────────────────────────┐    │
-│  │         登  录            │    │
-│  └─────────────────────────┘    │
-│                                 │
-│   登录即表示同意《用户协议》       │
-│                                 │
-└─────────────────────────────────┘
-```
+本步骤应优先沿用 Step 1 规划的目录结构。如果目标目录不存在，先创建目录，再补齐实现。
 
-### 4.2 页面设计要点
+重点文件如下：
 
-- 顶部留白，展示 APP Logo 和 slogan
-- 手机号输入框: 限制11位数字，自动格式化显示 (138 0013 8000)
-- 验证码输入框 + 获取验证码按钮在同一行
-- 获取验证码按钮: 点击后变为灰色，显示 60 秒倒计时
-- 登录按钮: 手机号和验证码都填写后才可点击 (主题色)
-- 整体风格: 圆角输入框，温暖色调
+| 路径 | 操作 | 说明 |
+| ---- | ---- | ---- |
+| `backend/app/api/v1/auth.py` | 补全 | 把占位路由改成真实认证接口 |
+| `backend/app/api/v1/router.py` | 核对 | 确认 `auth` 路由已正确挂载 |
+| `backend/app/schemas/auth.py` | 补全 | 增加校验、响应模型、`LogoutRequest`、`UserResponse`、`UpdateUserRequest` |
+| `backend/app/dependencies.py` | 补全 | 实现 `get_current_user` |
+| `backend/app/utils/security.py` | 新增或补全 | JWT 生成、校验、过期时间处理 |
+| `backend/app/services/sms.py` | 新增或补全 | 封装阿里云 Dypnsapi |
+| `backend/app/services/redis.py` | 新增 | 验证码、频控、黑名单相关操作 |
+| `backend/app/services/auth.py` | 新增或补全 | 登录、刷新、退出等业务逻辑集中处理 |
+| `backend/tests/` 下的认证测试文件 | 新增 | 后端重点自动化测试 |
 
-### 4.3 API 调用服务 (`services/api_client.dart`)
+### 4.2 Schema 要求
 
-```dart
-import 'package:dio/dio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../config/app_config.dart';
+`backend/app/schemas/auth.py` 至少应包含：
 
-class ApiClient {
-  late Dio _dio;
+- `SendCodeRequest`
+- `SendCodeResponse`
+- `LoginRequest`
+- `TokenResponse`
+- `RefreshRequest`
+- `RefreshResponse`
+- `LogoutRequest`
+- `UserResponse`
+- `UpdateUserRequest`
 
-  ApiClient() {
-    _dio = Dio(BaseOptions(
-      baseUrl: '${AppConfig.baseUrl}/api/v1',
-      connectTimeout: const Duration(seconds: 10),
-      receiveTimeout: const Duration(seconds: 10),
-    ));
+要求：
 
-    _dio.interceptors.add(InterceptorsWrapper(
-      onRequest: (options, handler) async {
-        // 自动注入 Token
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('access_token');
-        if (token != null) {
-          options.headers['Authorization'] = 'Bearer $token';
-        }
-        handler.next(options);
-      },
-      onError: (error, handler) async {
-        // 401 时尝试刷新 Token
-        if (error.response?.statusCode == 401) {
-          final success = await _refreshToken();
-          if (success) {
-            // 重试原请求
-            final retryResponse = await _dio.fetch(error.requestOptions);
-            handler.resolve(retryResponse);
-            return;
-          }
-          // 刷新失败，跳转登录页
-          // 通过全局事件通知跳转
-        }
-        handler.next(error);
-      },
-    ));
-  }
+- 手机号格式校验放在 schema 层。
+- 验证码格式校验放在 schema 层。
+- `UserResponse` 使用 ORM 模式，直接从 `User` 模型转换。
+- `UpdateUserRequest` 在 Step 2 只暴露 `nickname`。
 
-  Future<bool> _refreshToken() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final refreshToken = prefs.getString('refresh_token');
-      if (refreshToken == null) return false;
+### 4.3 认证依赖
 
-      final response = await Dio(BaseOptions(baseUrl: '${AppConfig.baseUrl}/api/v1')).post(
-        '/auth/refresh',
-        data: {'refresh_token': refreshToken},
-      );
-      final newAccessToken = response.data['access_token'];
-      await prefs.setString('access_token', newAccessToken);
-      return true;
-    } catch (_) {
-      return false;
-    }
-  }
+`get_current_user` 需要做到：
 
-  Dio get dio => _dio;
-}
-```
+1. 解析 Bearer token。
+2. 校验 token 类型必须是 `access`。
+3. 解析出 user ID。
+4. 查询数据库中的用户。
+5. 按项目统一错误格式返回 `401`。
 
-### 4.4 认证状态管理 (`providers/auth_provider.dart`)
+### 4.4 错误处理
 
-使用 Riverpod 管理认证状态:
-- `authStateProvider`: 监听认证状态 (未认证/已认证)
-- `loginProvider`: 处理登录逻辑
-- 应用启动时检查本地 Token 是否存在且有效
-- Token 过期自动刷新，刷新失败跳转登录页
+不要在认证接口里直接返回 FastAPI 默认错误结构。必须继续遵循项目统一格式。
 
-### 4.5 路由守卫
+特别注意：
 
-```dart
-// 未登录时所有页面重定向到登录页
-// 已登录时登录页重定向到首页
-redirect: (context, state) {
-  final isLoggedIn = ref.read(authStateProvider);
-  final isLoginRoute = state.matchedLocation == '/login';
-
-  if (!isLoggedIn && !isLoginRoute) return '/login';
-  if (isLoggedIn && isLoginRoute) return '/record';
-  return null;
-}
-```
+- `RequestValidationError` 已在 Step 1 中统一处理，本步骤不要绕开它。
+- 如果使用 `HTTPException(detail=...)`，需要保证最终响应体仍是 `code` / `message` / `details`。
+- 阿里云异常不要原样抛给前端；应转换为项目内部错误码，例如 `SMS_SEND_FAILED`。
 
 ---
 
-## 5. 开发阶段的测试方式
+## 5. Flutter 实现要求
 
-开发阶段:
-1. 后端未配置 SMS AccessKey Secret 时，验证码在控制台打印 (开发模式)
-2. 建议通过环境变量开关启用开发模式，不要把万能验证码直接写死到正式逻辑中
-3. 后端 Swagger 文档 (`/docs`) 可以直接测试 API
-4. 阿里云签名和模板使用系统赠送的，无需等待审核
+### 5.1 登录页
+
+登录页目标：
+
+- 展示 Logo、标题、slogan。
+- 提供手机号输入框。
+- 提供验证码输入框。
+- 提供“获取验证码”按钮与 60 秒倒计时。
+- 提供登录按钮。
+- 登录成功后进入主流程页。
+
+交互要求：
+
+- 手机号输入框只允许 11 位数字，可做友好格式化显示。
+- 验证码输入框只允许 6 位数字。
+- 手机号格式不合法时，不能发起发送验证码请求。
+- 手机号与验证码都合法后，登录按钮才可点击。
+
+### 5.2 认证状态管理
+
+建议使用 Riverpod 管理认证状态，至少包含：
+
+- 是否已登录。
+- 当前用户信息。
+- 登录中、发送验证码中、恢复登录中的加载状态。
+- 登录失败、发送失败时的错误提示。
+
+冷启动恢复登录建议流程：
+
+1. 读取本地 `access_token` 与 `refresh_token`。
+2. 若任一缺失，则视为未登录。
+3. 若两者都存在，则调用 `/auth/me` 恢复当前用户。
+4. 若 `/auth/me` 因 access token 失效返回 `401`，触发一次 `/auth/refresh`。
+5. 刷新成功后重试 `/auth/me`。
+6. 若仍失败，则清空本地登录态并回到 `/login`。
+
+### 5.3 API 客户端
+
+`frontend/lib/services/api_client.dart` 需要补全：
+
+- 请求前自动注入 `Authorization`。
+- 收到 `401` 时，如果本次请求不是 `/auth/refresh` 且尚未重试过，则尝试刷新一次 token。
+- 刷新成功后重试原请求一次。
+- 刷新失败后清空本地 token，并通知上层回到登录页。
+
+本步骤采用简单方案：
+
+- 不要求处理并发 `401` 竞争。
+- 不要求实现全局刷新锁。
+- 只要求“单个失败请求 -> refresh -> 重试一次”闭环可用。
+
+### 5.4 路由守卫
+
+`frontend/lib/config/router.dart` 需要补全登录态重定向：
+
+- 未登录时，除 `/login` 外的页面都跳到 `/login`。
+- 已登录时，访问 `/login` 自动跳到 `/record`。
+
+### 5.5 配置入口
+
+前端必须继续保持单一配置入口。
+
+要求：
+
+- 优先沿用 `frontend/lib/config/constants.dart` 里的 `baseUrl`。
+- 如果要改名成 `app_config.dart`，必须替换旧入口，而不是让两套配置并存。
+- 文档与代码里都不要鼓励写死真实服务器 IP。
+- 真机联调优先通过 `--dart-define=BASE_URL=http://YOUR_SERVER_IP` 注入。
 
 ---
 
-## 6. 需要创建/修改的文件清单
+## 6. 需要补全或新增的文件
 
 ### 后端
-- `backend/app/utils/security.py` - JWT 工具 (新建)
-- `backend/app/services/sms.py` - 短信服务 (新建)
-- `backend/app/services/redis.py` - Redis 工具 (新建)
-- `backend/app/schemas/auth.py` - 认证 Schema (新建)
-- `backend/app/api/v1/auth.py` - 认证路由 (新建)
-- `backend/app/api/v1/router.py` - 添加 auth 路由
-- `backend/app/dependencies.py` - 添加认证依赖
-- `backend/requirements.txt` - 添加 `alibabacloud-dypnsapi20170525`
+
+- `backend/app/api/v1/auth.py`
+- `backend/app/api/v1/router.py`
+- `backend/app/schemas/auth.py`
+- `backend/app/dependencies.py`
+- `backend/app/utils/security.py`
+- `backend/app/services/auth.py`
+- `backend/app/services/sms.py`
+- `backend/app/services/redis.py`
+- `backend/tests/` 下的认证测试文件
 
 ### 前端
-- `frontend/lib/services/api_client.dart` - API 客户端 (新建)
-- `frontend/lib/services/auth_service.dart` - 认证服务 (新建)
-- `frontend/lib/providers/auth_provider.dart` - 认证状态 (新建)
-- `frontend/lib/screens/auth/login_screen.dart` - 登录页 (新建)
-- `frontend/lib/config/app_config.dart` - 开发环境配置入口 (新建)
-- `frontend/lib/config/router.dart` - 添加路由守卫
-- `frontend/lib/models/user.dart` - 用户模型 (新建)
+
+- `frontend/lib/services/api_client.dart`
+- `frontend/lib/services/auth_service.dart`
+- `frontend/lib/providers/auth_provider.dart`
+- `frontend/lib/models/user.dart`
+- `frontend/lib/screens/auth/login_screen.dart`
+- `frontend/lib/config/router.dart`
+- `frontend/lib/config/constants.dart` 或等价单一配置入口
 
 ---
 
-## 7. 验收标准
+## 7. 测试要求
 
-- [ ] 后端 `POST /api/v1/auth/send-code` 能发送验证码 (开发模式下打印到控制台)
-- [ ] 60 秒内重复请求返回 429
+### 7.1 后端自动化测试
+
+Step 2 必须补充后端重点自动化测试，推荐使用 `pytest`。
+
+自动化测试至少覆盖以下场景：
+
+1. `send-code` 成功返回 `200`，并写入验证码与频控 key。
+2. 非法手机号返回 `400`。
+3. 60 秒内重复发送返回 `429`。
+4. 正确验证码可以登录。
+5. 错误或过期验证码返回 `400`。
+6. 首次登录会创建用户记录。
+7. `refresh` 对合法 refresh token 返回新的 access token。
+8. 已拉黑的 refresh token 不能再次刷新。
+9. `logout` 会拉黑当前 refresh token。
+10. `GET /auth/me` 没有有效 access token 时返回 `401`。
+11. `PUT /auth/me` 可以更新昵称。
+
+测试约束：
+
+- 自动化测试可以 mock 阿里云 SDK，不要求真实发短信。
+- 自动化测试不应依赖真实公网短信服务。
+- 自动化测试必须验证项目统一错误结构，而不仅是状态码。
+
+### 7.2 Swagger 验证
+
+后端实现完成后，需要通过 `/docs` 手工验证：
+
+1. `send-code`
+2. `login`
+3. `refresh`
+4. `logout`
+5. `me`
+
+重点检查：
+
+- 请求与响应字段名是否为 `snake_case`
+- 错误结构是否统一
+- 401/429/400 是否符合预期
+
+### 7.3 Flutter 联调验证
+
+至少完成以下联调：
+
+1. 登录页可以发送验证码。
+2. 输入正确验证码后可以登录进入主页面。
+3. 登录后重启 APP 仍能恢复登录态。
+4. 当 access token 失效时，能自动 refresh 并重试原请求。
+5. refresh 失败时会清空本地登录态并回到登录页。
+
+---
+
+## 8. 验收标准
+
+- [ ] 后端 `POST /api/v1/auth/send-code` 已接入真实阿里云 Dypnsapi
+- [ ] `send-code` 成功时返回 `200` 和 `expire_seconds`
+- [ ] 60 秒内重复请求返回 `429`
+- [ ] 非法手机号返回 `400`
 - [ ] 后端 `POST /api/v1/auth/login` 能用正确验证码登录
 - [ ] 首次登录自动创建用户记录
-- [ ] 登录返回 access_token 和 refresh_token
-- [ ] 后端 `GET /api/v1/auth/me` 需要有效 Token 才能访问
-- [ ] 后端 `POST /api/v1/auth/refresh` 能刷新 Token
-- [ ] 后端 `POST /api/v1/auth/logout` 能作废当前设备的 refresh_token
-- [ ] Flutter 登录页面 UI 正确展示
-- [ ] Flutter 输入手机号+验证码可以成功登录
-- [ ] 登录后 Token 持久化到本地
-- [ ] 重启 APP 自动登录 (Token 有效时)
-- [ ] Token 过期自动尝试刷新
+- [ ] 登录返回 `access_token`、`refresh_token`、`token_type`、`user`
+- [ ] 后端 `POST /api/v1/auth/refresh` 能刷新 access token
+- [ ] 被登出的 refresh token 不能再次调用 `refresh`
+- [ ] 后端 `POST /api/v1/auth/logout` 只作废当前提交的 refresh token
+- [ ] 后端 `GET /api/v1/auth/me` 需要有效 access token 才能访问
+- [ ] 后端 `PUT /api/v1/auth/me` 能更新昵称
+- [ ] 已补充后端重点自动化测试
+- [ ] Flutter 登录页面已从占位页补全为真实表单
+- [ ] Flutter 可以完成发送验证码、登录、退出登录
+- [ ] 登录后 token 已持久化到本地
+- [ ] 重启 APP 可以恢复登录态
+- [ ] access token 过期后会自动刷新一次并重试原请求
+- [ ] refresh 失败后会清空本地登录态并回到 `/login`
+
+---
+
+## 9. 给后续 Agent 的提醒
+
+- 先看本文件，再看 `docs/00-global-rules.md` 和 Step 1 文档中的骨架约定。
+- 遇到阿里云账号、短信签名、模板、联调环境不一致时，先停下来确认，不要私自改成 mock 流程。
+- 这一步的目标是“稳定可跑通的 MVP 认证闭环”，不要把精力扩散到头像上传、微信登录、复杂会话管理或并发刷新优化。
