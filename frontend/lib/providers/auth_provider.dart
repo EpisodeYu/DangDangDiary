@@ -81,12 +81,11 @@ class AuthNotifier extends StateNotifier<AuthState> {
   }
 
   Future<void> sendCode(String phone) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = state.copyWith(clearError: true);
     try {
       await _authService.sendCode(phone);
-      state = state.copyWith(isLoading: false);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: _extractError(e));
+      state = state.copyWith(error: _extractError(e));
     }
   }
 

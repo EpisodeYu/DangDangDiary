@@ -39,7 +39,7 @@ def _do_send(phone: str):
         phone_number=phone,
         sign_name=settings.ALIYUN_SMS_SIGN_NAME,
         template_code=settings.ALIYUN_SMS_TEMPLATE_CODE,
-        template_param=json.dumps({"code": "##code##"}),
+        template_param=json.dumps({"code": "##code##", "min": "5"}),
         code_type=1,
         code_length=6,
         valid_time=300,

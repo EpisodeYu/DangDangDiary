@@ -56,12 +56,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final error = ref.read(authProvider).error;
     if (mounted) {
       setState(() => _isSendingCode = false);
-      if (error != null) {
-        _showSnack(error);
-      } else {
-        _startCountdown();
-        _showSnack('验证码已发送');
-      }
+      _startCountdown();
+      _showSnack(error ?? '验证码已发送');
     }
   }
 
@@ -170,7 +166,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(strokeWidth: 2))
-                            : Text(_countdown > 0 ? '${_countdown}s' : '获取验证码'),
+                            : Text(
+                                _countdown > 0
+                                    ? '重新获取(${_countdown}s)'
+                                    : '获取验证码',
+                              ),
                       ),
                     ),
                   ],
