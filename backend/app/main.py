@@ -5,14 +5,17 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.exceptions import AppException
 from app.api.v1.router import api_v1_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: initialize services (MinIO bucket check, scheduled tasks, etc.)
+    from app.services.redis import init_redis, close_redis
+
+    await init_redis()
     yield
-    # Shutdown: cleanup resources
+    await close_redis()
 
 
 app = FastAPI(
@@ -22,14 +25,41 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(AppException)
+async def app_exception_handler(request: Request, exc: AppException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"code": exc.code, "message": exc.message, "details": exc.details},
+    )
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    for error in errors:
+        loc = error.get("loc", ())
+        field_names = {str(part) for part in loc}
+        if "phone" in field_names:
+            return JSONResponse(
+                status_code=400,
+                content={"code": "INVALID_PHONE", "message": "手机号格式不正确", "details": None},
+            )
+        if "code" in field_names:
+            return JSONResponse(
+                status_code=400,
+                content={"code": "INVALID_VERIFY_CODE", "message": "验证码格式不正确", "details": None},
+            )
+        if "nickname" in field_names:
+            return JSONResponse(
+                status_code=400,
+                content={"code": "INVALID_NICKNAME", "message": "昵称不合法", "details": None},
+            )
     return JSONResponse(
         status_code=400,
         content={
             "code": "VALIDATION_ERROR",
             "message": "请求参数校验失败",
-            "details": exc.errors(),
+            "details": errors,
         },
     )
 

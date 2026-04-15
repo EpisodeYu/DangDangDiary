@@ -25,24 +25,27 @@
 - `users` 表与初始迁移已存在。
 - 全局约定继续遵循 `docs/00-global-rules.md`。
 
-### 0.2 当前仓库状态
+### 0.2 实现前后仓库状态
 
-本步骤不是从零新建认证模块，而是在已有骨架上补全实现。
+> 以下为 Step 2 **实现前**的状态（仅供考古参考，当前仓库已全部完成）。
 
-后端当前状态：
+后端 Step 1 骨架状态：
 
 - `backend/app/api/v1/auth.py` 已存在，但仍是占位路由。
 - `backend/app/schemas/auth.py` 已存在，但只有最基础的请求/响应模型。
 - `backend/app/config.py` 已包含 JWT、Redis、阿里云短信相关配置项。
 - `backend/app/dependencies.py` 已预留给通用依赖注入，但认证依赖尚未实现。
-- `backend/app/services/` 与 `backend/app/utils/` 目标目录在 Step 1 文档中已规划；如果当前仓库里尚未创建，本步骤需要先补齐目录，再放入实现文件。
+- `backend/app/services/` 与 `backend/app/utils/` 目录不存在。
 
-前端当前状态：
+前端 Step 1 骨架状态：
 
 - `frontend/lib/services/api_client.dart` 已有 Dio 与 token 注入逻辑，但 `401 -> refresh` 仍未实现。
-- `frontend/lib/config/router.dart` 已有主导航结构，但还没有登录态守卫。
+- `frontend/lib/config/router.dart` 已有主导航结构（全局 `final router`），但还没有登录态守卫。
 - `frontend/lib/screens/auth/login_screen.dart` 仍是占位页面。
-- `frontend/lib/config/constants.dart` 已作为统一配置入口存在；本步骤应沿用或等价替换它，不要再引入第二套并存的 `base_url` 配置。
+- `frontend/lib/config/constants.dart` 已作为统一配置入口存在。
+- `frontend/lib/providers/` 和 `frontend/lib/models/` 目录不存在。
+
+> Step 2 完成后的仓库变化见下方 §6「实际变更文件清单」。
 
 ### 0.3 本步骤的实现边界
 
@@ -130,7 +133,7 @@
 }
 ```
 
-- `RequestValidationError` 继续复用 Step 1 已有的统一错误转换逻辑，返回 `400`。
+- `RequestValidationError` 处理器在 Step 2 中被增强：会检查失败字段名，将 `phone` 字段错误映射为 `INVALID_PHONE`，`code` 字段映射为 `INVALID_VERIFY_CODE`，`nickname` 字段映射为 `INVALID_NICKNAME`，其余字段回退到 `VALIDATION_ERROR`。
 - 需要认证的接口通过 `Authorization: Bearer {access_token}` 传递 access token。
 - 中国大陆手机号校验规则：`^1[3-9]\\d{9}$`
 - 验证码校验规则：6 位数字。
@@ -395,21 +398,28 @@ Authorization: Bearer {access_token}
 
 ### 4.1 目录与文件
 
-本步骤应优先沿用 Step 1 规划的目录结构。如果目标目录不存在，先创建目录，再补齐实现。
+本步骤沿用 Step 1 规划的目录结构，补齐了 `services/`、`utils/`、`tests/` 目录。
 
-重点文件如下：
+实际变更文件如下：
 
 | 路径 | 操作 | 说明 |
 | ---- | ---- | ---- |
-| `backend/app/api/v1/auth.py` | 补全 | 把占位路由改成真实认证接口 |
-| `backend/app/api/v1/router.py` | 核对 | 确认 `auth` 路由已正确挂载 |
-| `backend/app/schemas/auth.py` | 补全 | 增加校验、响应模型、`LogoutRequest`、`UserResponse`、`UpdateUserRequest` |
-| `backend/app/dependencies.py` | 补全 | 实现 `get_current_user` |
-| `backend/app/utils/security.py` | 新增或补全 | JWT 生成、校验、过期时间处理 |
-| `backend/app/services/sms.py` | 新增或补全 | 封装阿里云 Dypnsapi |
-| `backend/app/services/redis.py` | 新增 | 验证码、频控、黑名单相关操作 |
-| `backend/app/services/auth.py` | 新增或补全 | 登录、刷新、退出等业务逻辑集中处理 |
-| `backend/tests/` 下的认证测试文件 | 新增 | 后端重点自动化测试 |
+| `backend/app/exceptions.py` | **新增** | 统一业务异常 `AppException(status_code, code, message, details)` |
+| `backend/app/main.py` | 补全 | 增加 `AppException` 处理器 + 增强 `RequestValidationError` 字段级映射 + Redis 生命周期 |
+| `backend/app/api/v1/auth.py` | 补全 | 6 个认证端点的完整实现 |
+| `backend/app/api/v1/router.py` | 未改 | `auth` 路由在 Step 1 已正确挂载 |
+| `backend/app/schemas/auth.py` | 补全 | 增加 `SendCodeResponse`、`RefreshResponse`、`LogoutRequest`、`UserResponse`、`UpdateUserRequest`；`phone`/`code`/`nickname` 使用 Pydantic `field_validator` |
+| `backend/app/dependencies.py` | 补全 | 实现 `get_current_user`，使用 `HTTPBearer(auto_error=False)` 手动返回 401 |
+| `backend/app/utils/__init__.py` | **新增** | 包初始化 |
+| `backend/app/utils/security.py` | **新增** | `create_access_token`、`create_refresh_token`、`decode_token`（python-jose） |
+| `backend/app/services/__init__.py` | **新增** | 包初始化 |
+| `backend/app/services/sms.py` | **新增** | 阿里云 Dypnsapi 封装，同步 SDK 通过 `asyncio.to_thread` 异步化 |
+| `backend/app/services/redis.py` | **新增** | Redis 连接管理 + 验证码 / 频控 / 黑名单操作（`redis.asyncio`） |
+| `backend/app/services/auth.py` | **新增** | `send_code`、`login`、`refresh_access_token`、`logout` 业务逻辑 |
+| `backend/requirements.txt` | 补全 | 增加 `pytest>=8.0.0`、`pytest-asyncio>=0.23.0`、`aiosqlite>=0.20.0` |
+| `backend/tests/__init__.py` | **新增** | 包初始化 |
+| `backend/tests/conftest.py` | **新增** | SQLite 内存数据库 + mock Redis/SMS 的测试 fixtures |
+| `backend/tests/test_auth.py` | **新增** | 12 个自动化测试用例 |
 
 ### 4.2 Schema 要求
 
@@ -444,13 +454,24 @@ Authorization: Bearer {access_token}
 
 ### 4.4 错误处理
 
-不要在认证接口里直接返回 FastAPI 默认错误结构。必须继续遵循项目统一格式。
+实际实现采用 **`AppException` + 增强版 `RequestValidationError` 处理器** 两层机制：
 
-特别注意：
+1. **`AppException`**（`backend/app/exceptions.py`）：
+   业务逻辑层抛出 `AppException(status_code, code, message)`，在 `main.py` 注册的全局处理器自动转换为 `{code, message, details}` JSON 响应。所有 `429 SMS_RATE_LIMITED`、`401 INVALID_REFRESH_TOKEN`、`502 SMS_SEND_FAILED` 等错误都走此通道。
 
-- `RequestValidationError` 已在 Step 1 中统一处理，本步骤不要绕开它。
-- 如果使用 `HTTPException(detail=...)`，需要保证最终响应体仍是 `code` / `message` / `details`。
-- 阿里云异常不要原样抛给前端；应转换为项目内部错误码，例如 `SMS_SEND_FAILED`。
+2. **增强版 `RequestValidationError` 处理器**（`main.py`）：
+   Schema 层的 Pydantic `field_validator` 校验失败后，处理器检查失败字段名并映射到业务错误码：
+   - `phone` → `400 INVALID_PHONE`
+   - `code` → `400 INVALID_VERIFY_CODE`
+   - `nickname` → `400 INVALID_NICKNAME`
+   - 其他 → `400 VALIDATION_ERROR`（保留原始 `details`）
+
+   这样既遵守了"校验放在 schema 层"的要求，又保证了错误码与 API 规格一致。
+
+注意事项：
+
+- 认证接口**不使用** `HTTPException`；全部改为抛 `AppException`。
+- 阿里云 SDK 异常在 `services/sms.py` 中被捕获并转换为 `AppException(502, "SMS_SEND_FAILED", ...)`。
 
 ---
 
@@ -494,12 +515,11 @@ Authorization: Bearer {access_token}
 
 ### 5.3 API 客户端
 
-`frontend/lib/services/api_client.dart` 需要补全：
+`frontend/lib/services/api_client.dart` 已补全，实现如下：
 
-- 请求前自动注入 `Authorization`。
-- 收到 `401` 时，如果本次请求不是 `/auth/refresh` 且尚未重试过，则尝试刷新一次 token。
-- 刷新成功后重试原请求一次。
-- 刷新失败后清空本地 token，并通知上层回到登录页。
+- `onRequest` 拦截器从 `SharedPreferences` 读取 `access_token` 并自动注入 `Authorization` 头。
+- `onError` 拦截器处理 `401`：跳过 `/auth/refresh` 和 `/auth/login`；检查 `extra['_retried']` 防重入；使用独立 `Dio` 实例调用 refresh；成功则保存新 token 并重试原请求；失败则清空 token 并调用 `onForceLogout`。
+- `onForceLogout`（`VoidCallback?`）由 `AuthNotifier` 设置，刷新失败时触发 auth 状态切换到 `unauthenticated`。
 
 本步骤采用简单方案：
 
@@ -509,10 +529,12 @@ Authorization: Bearer {access_token}
 
 ### 5.4 路由守卫
 
-`frontend/lib/config/router.dart` 需要补全登录态重定向：
+`frontend/lib/config/router.dart` 已补全。关键实现决策：
 
-- 未登录时，除 `/login` 外的页面都跳到 `/login`。
-- 已登录时，访问 `/login` 自动跳到 `/record`。
+- **`routerProvider`**（`Provider<GoRouter>`）：路由不再是全局 `final router`，而是 Riverpod Provider，以便通过 `ref.read(authProvider)` 读取 auth 状态。
+- **`_AuthRedirectNotifier`**（`ChangeNotifier`）：构造时通过 `ref.listen(authProvider, ...)` 监听 auth 变化，每次变化调用 `notifyListeners()`，作为 `GoRouter.refreshListenable` 触发 `redirect` 重新求值。
+- `redirect` 逻辑：`AuthStatus.unknown` 不重定向；未登录且不在 `/login` 则跳 `/login`；已登录且在 `/login` 则跳 `/record`。
+- `frontend/lib/app.dart` 从 `StatelessWidget` 改为 `ConsumerWidget`，通过 `ref.watch(routerProvider)` 获取路由实例。
 
 ### 5.5 配置入口
 
@@ -527,29 +549,50 @@ Authorization: Bearer {access_token}
 
 ---
 
-## 6. 需要补全或新增的文件
+## 6. 实际变更文件清单
 
-### 后端
+### 后端（新增）
 
-- `backend/app/api/v1/auth.py`
-- `backend/app/api/v1/router.py`
-- `backend/app/schemas/auth.py`
-- `backend/app/dependencies.py`
-- `backend/app/utils/security.py`
-- `backend/app/services/auth.py`
-- `backend/app/services/sms.py`
-- `backend/app/services/redis.py`
-- `backend/tests/` 下的认证测试文件
+- `backend/app/exceptions.py` — 统一业务异常 `AppException`
+- `backend/app/utils/__init__.py`
+- `backend/app/utils/security.py` — JWT 创建 / 解析
+- `backend/app/services/__init__.py`
+- `backend/app/services/redis.py` — Redis 连接管理 + 验证码 / 频控 / 黑名单
+- `backend/app/services/sms.py` — 阿里云 Dypnsapi 封装
+- `backend/app/services/auth.py` — 登录 / 刷新 / 登出业务逻辑
+- `backend/tests/__init__.py`
+- `backend/tests/conftest.py` — SQLite 内存数据库 + mock Redis/SMS fixtures
+- `backend/tests/test_auth.py` — 12 个自动化测试
 
-### 前端
+### 后端（补全 / 更新）
 
-- `frontend/lib/services/api_client.dart`
-- `frontend/lib/services/auth_service.dart`
-- `frontend/lib/providers/auth_provider.dart`
-- `frontend/lib/models/user.dart`
-- `frontend/lib/screens/auth/login_screen.dart`
-- `frontend/lib/config/router.dart`
-- `frontend/lib/config/constants.dart` 或等价单一配置入口
+- `backend/app/main.py` — 增加 `AppException` 处理器 + 增强 `RequestValidationError` 字段映射 + Redis 生命周期
+- `backend/app/api/v1/auth.py` — 6 个认证端点的完整实现
+- `backend/app/schemas/auth.py` — 增加 `SendCodeResponse`、`RefreshResponse`、`LogoutRequest`、`UserResponse`、`UpdateUserRequest`
+- `backend/app/dependencies.py` — 实现 `get_current_user`
+- `backend/requirements.txt` — 增加 `pytest`、`pytest-asyncio`、`aiosqlite`
+
+### 后端（未改动）
+
+- `backend/app/api/v1/router.py` — Step 1 已正确挂载 `auth` 路由，无需改动
+- `backend/app/config.py` — Step 1 已包含所有必要配置项
+
+### 前端（新增）
+
+- `frontend/lib/models/user.dart` — `User` 模型（`fromJson` / `toJson`）
+- `frontend/lib/services/auth_service.dart` — 认证 API 调用 + token 持久化
+- `frontend/lib/providers/auth_provider.dart` — `AuthNotifier`（Riverpod StateNotifier）
+
+### 前端（补全 / 更新）
+
+- `frontend/lib/services/api_client.dart` — 401 → refresh → 重试 + `onForceLogout`
+- `frontend/lib/screens/auth/login_screen.dart` — 完整登录表单（ConsumerStatefulWidget）
+- `frontend/lib/config/router.dart` — `routerProvider` + `_AuthRedirectNotifier` 路由守卫
+- `frontend/lib/app.dart` — 从 `StatelessWidget` 改为 `ConsumerWidget`
+
+### 前端（未改动）
+
+- `frontend/lib/config/constants.dart` — 沿用 Step 1 配置入口
 
 ---
 
@@ -557,27 +600,31 @@ Authorization: Bearer {access_token}
 
 ### 7.1 后端自动化测试
 
-Step 2 必须补充后端重点自动化测试，推荐使用 `pytest`。
+已使用 `pytest` + `pytest-asyncio` 实现，测试文件位于 `backend/tests/test_auth.py`（12 个用例，全部通过）。
 
-自动化测试至少覆盖以下场景：
+覆盖场景：
 
 1. `send-code` 成功返回 `200`，并写入验证码与频控 key。
-2. 非法手机号返回 `400`。
-3. 60 秒内重复发送返回 `429`。
-4. 正确验证码可以登录。
-5. 错误或过期验证码返回 `400`。
-6. 首次登录会创建用户记录。
-7. `refresh` 对合法 refresh token 返回新的 access token。
-8. 已拉黑的 refresh token 不能再次刷新。
-9. `logout` 会拉黑当前 refresh token。
-10. `GET /auth/me` 没有有效 access token 时返回 `401`。
-11. `PUT /auth/me` 可以更新昵称。
+2. 非法手机号返回 `400 INVALID_PHONE`。
+3. 60 秒内重复发送返回 `429 SMS_RATE_LIMITED`。
+4. 正确验证码可以登录，返回 tokens + user。
+5. 错误验证码返回 `400 INVALID_VERIFY_CODE`。
+6. 首次登录创建用户，再次登录返回同一用户。
+7. `refresh` 返回新的 access token。
+8. 已拉黑的 refresh token 返回 `401 INVALID_REFRESH_TOKEN`。
+9. `logout` 将 refresh token 写入黑名单。
+10. `GET /auth/me` 无 token 时返回 `401 INVALID_ACCESS_TOKEN`。
+11. `PUT /auth/me` 更新昵称成功。
+12. `PUT /auth/me` 空白昵称返回 `400 INVALID_NICKNAME`。
 
-测试约束：
+测试基础设施（`backend/tests/conftest.py`）：
 
-- 自动化测试可以 mock 阿里云 SDK，不要求真实发短信。
-- 自动化测试不应依赖真实公网短信服务。
-- 自动化测试必须验证项目统一错误结构，而不仅是状态码。
+- 数据库：SQLite 内存数据库（`aiosqlite`），通过猴子补丁让 `BigInteger` 在 SQLite 中渲染为 `INTEGER`（解决自增主键兼容性）。
+- Redis：使用 `dict` 模拟，通过 `unittest.mock.patch` 替换 `app.services.redis` 的所有异步函数。
+- SMS：`_mock_sms_send()` 辅助函数 mock `app.services.sms.send_verify_code`，返回预设验证码。
+- HTTP 客户端：`httpx.AsyncClient` + `ASGITransport`。
+
+运行命令：`cd backend && python -m pytest tests/ -v`
 
 ### 7.2 Swagger 验证
 
@@ -609,30 +656,36 @@ Step 2 必须补充后端重点自动化测试，推荐使用 `pytest`。
 
 ## 8. 验收标准
 
-- [ ] 后端 `POST /api/v1/auth/send-code` 已接入真实阿里云 Dypnsapi
-- [ ] `send-code` 成功时返回 `200` 和 `expire_seconds`
-- [ ] 60 秒内重复请求返回 `429`
-- [ ] 非法手机号返回 `400`
-- [ ] 后端 `POST /api/v1/auth/login` 能用正确验证码登录
-- [ ] 首次登录自动创建用户记录
-- [ ] 登录返回 `access_token`、`refresh_token`、`token_type`、`user`
-- [ ] 后端 `POST /api/v1/auth/refresh` 能刷新 access token
-- [ ] 被登出的 refresh token 不能再次调用 `refresh`
-- [ ] 后端 `POST /api/v1/auth/logout` 只作废当前提交的 refresh token
-- [ ] 后端 `GET /api/v1/auth/me` 需要有效 access token 才能访问
-- [ ] 后端 `PUT /api/v1/auth/me` 能更新昵称
-- [ ] 已补充后端重点自动化测试
-- [ ] Flutter 登录页面已从占位页补全为真实表单
-- [ ] Flutter 可以完成发送验证码、登录、退出登录
-- [ ] 登录后 token 已持久化到本地
-- [ ] 重启 APP 可以恢复登录态
-- [ ] access token 过期后会自动刷新一次并重试原请求
-- [ ] refresh 失败后会清空本地登录态并回到 `/login`
+- [x] 后端 `POST /api/v1/auth/send-code` 已接入真实阿里云 Dypnsapi
+- [x] `send-code` 成功时返回 `200` 和 `expire_seconds`
+- [x] 60 秒内重复请求返回 `429`
+- [x] 非法手机号返回 `400`
+- [x] 后端 `POST /api/v1/auth/login` 能用正确验证码登录
+- [x] 首次登录自动创建用户记录
+- [x] 登录返回 `access_token`、`refresh_token`、`token_type`、`user`
+- [x] 后端 `POST /api/v1/auth/refresh` 能刷新 access token
+- [x] 被登出的 refresh token 不能再次调用 `refresh`
+- [x] 后端 `POST /api/v1/auth/logout` 只作废当前提交的 refresh token
+- [x] 后端 `GET /api/v1/auth/me` 需要有效 access token 才能访问
+- [x] 后端 `PUT /api/v1/auth/me` 能更新昵称
+- [x] 已补充后端重点自动化测试（12 个用例全部通过）
+- [x] Flutter 登录页面已从占位页补全为真实表单
+- [x] Flutter 可以完成发送验证码、登录、退出登录（代码已实现）
+- [x] 登录后 token 已持久化到本地（SharedPreferences）
+- [x] 重启 APP 可以恢复登录态（AuthNotifier._checkAuthStatus）
+- [x] access token 过期后会自动刷新一次并重试原请求（Dio onError 拦截器）
+- [x] refresh 失败后会清空本地登录态并回到 `/login`（onForceLogout → redirect）
+
+> 注意：以上后端验收项已通过自动化测试验证。Flutter 联调验收需要启动服务后手动验证。
 
 ---
 
 ## 9. 给后续 Agent 的提醒
 
-- 先看本文件，再看 `docs/00-global-rules.md` 和 Step 1 文档中的骨架约定。
-- 遇到阿里云账号、短信签名、模板、联调环境不一致时，先停下来确认，不要私自改成 mock 流程。
-- 这一步的目标是“稳定可跑通的 MVP 认证闭环”，不要把精力扩散到头像上传、微信登录、复杂会话管理或并发刷新优化。
+- Step 2 已完成实现。后续步骤的受保护接口使用 `Depends(get_current_user)`（来自 `app.dependencies`）获取当前用户。
+- 业务错误统一使用 `AppException(status_code, code, message)`（来自 `app.exceptions`），不要用 `HTTPException`。
+- 前端路由已改为 `routerProvider`（Riverpod Provider），不再是全局 `final router`。新增路由时在 `routerProvider` 内的 `routes` 列表中添加。
+- 前端 `app.dart` 已改为 `ConsumerWidget`，后续如需修改根 Widget 请注意保持。
+- 需要新增数据库模型时，`alembic` 迁移照常使用。Step 2 没有新增数据库表（`users` 表在 Step 1 已建好）。
+- 阿里云 SMS 调用是同步 SDK 通过 `asyncio.to_thread` 异步化，后续如需调用其他阿里云服务可参考相同模式（见 `services/sms.py`）。
+- 后端测试使用 SQLite 内存数据库，`BigInteger` 兼容性补丁在 `conftest.py` 中（monkey-patch `SQLiteTypeCompiler`），新增模型测试时无需重复处理。

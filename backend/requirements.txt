@@ -15,3 +15,8 @@ apscheduler==3.10.4
 pillow==10.4.0
 alibabacloud-dypnsapi20170525>=2.0.0
 alibabacloud-imagerecog20190930>=2.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+aiosqlite>=0.20.0
