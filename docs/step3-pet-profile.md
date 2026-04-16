@@ -447,6 +447,7 @@ async def list_user_pets(
 
 - `upload_pet_avatar(...)`
 - `delete_object_by_url(...)`
+- `delete_objects_by_prefix(...)`
 
 约束：
 
@@ -454,6 +455,39 @@ async def list_user_pets(
 - 返回给前端的 URL 必须基于统一入口地址拼接，例如 `PUBLIC_BASE_URL + /media/...`
 - 替换头像时，先上传新图，再更新数据库，再删除旧图，避免用户出现短暂无头像状态
 - 删除宠物档案时，除级联删除表记录外，还需要显式清理头像与照片文件
+
+**MinIO Bucket 公开读取策略（必须）：**
+
+MinIO bucket 默认私有，客户端通过 Nginx 访问 `/media/...` URL 时，MinIO 会返回 403。
+`_ensure_bucket()` 在首次访问 bucket 时，必须调用 `set_bucket_policy` 设置公开读取策略：
+
+```python
+import json
+
+_initialized_buckets: set[str] = set()
+
+def _public_read_policy(bucket: str) -> str:
+    return json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"AWS": ["*"]},
+            "Action": ["s3:GetObject"],
+            "Resource": [f"arn:aws:s3:::{bucket}/*"],
+        }],
+    })
+
+def _ensure_bucket(bucket: str) -> None:
+    if bucket in _initialized_buckets:
+        return
+    client = _get_client()
+    if not client.bucket_exists(bucket):
+        client.make_bucket(bucket)
+    client.set_bucket_policy(bucket, _public_read_policy(bucket))
+    _initialized_buckets.add(bucket)
+```
+
+进程内缓存 `_initialized_buckets` 避免每次请求都重复调用。对于存量的私有 bucket，此实现会在下次首次调用时自动补设 policy，无需手动迁移。
 
 ### 3.6 推荐后端实现顺序
 
@@ -489,10 +523,10 @@ async def list_user_pets(
 ```
 
 - 顶部展示用户头像、昵称、手机号 (中间四位用*隐藏)
-- 点击昵称可编辑
+- 点击昵称（带铅笔图标）弹出 `AlertDialog`，输入新昵称后调用 `authProvider.notifier.updateNickname()`，成功后立即更新 UI
 - 列表项: 宠物档案管理、切换账号、关于
-- `ProfileScreen` 在 Step 3 中不再保留“后续完善”占位文案
-- 推荐通过 `authProvider` 读取当前用户信息，通过独立的宠物 Provider 管理档案与选择状态
+- `ProfileScreen` 在 Step 3 中不再保留”后续完善”占位文案
+- 推荐通过 `authProvider` 读取当前用户信息，`AuthNotifier` 需提供 `updateNickname(String)` 方法
 
 ### 4.2 宠物档案管理页面 (`screens/profile/pet_manage_screen.dart`)
 
@@ -536,8 +570,8 @@ async def list_user_pets(
 │                                 │
 │        ┌─────────┐              │
 │        │  点击上传 │              │
-│        │  头像    │              │
-│        └─────────┘              │
+│        │  头像    │ ← 上传中显示  │
+│        └─────────┘   进度圆环    │
 │                                 │
 │  宠物类型                        │
 │  ┌─────────┐ ┌─────────┐       │
@@ -563,16 +597,23 @@ async def list_user_pets(
 │  ┌─────────────────────────┐    │
 │  │         保  存            │    │
 │  └─────────────────────────┘    │
+│                                 │
+│  ┌─────────────────────────┐    │
+│  │  🗑  删除此宠物档案 (仅编辑)│    │  ← 仅编辑模式显示
+│  └─────────────────────────┘    │
 └─────────────────────────────────┘
 ```
 
 - 宠物类型: 猫/狗 二选一的 `SegmentedButton`
 - 编辑模式下宠物类型不可修改 (灰显)
 - 头像: 圆形，点击选择图片上传
+  - **编辑模式**：点击立即上传到服务器，上传期间显示进度圆环覆盖，禁止重复点击，完成后 toast 提示
+  - **创建模式**：先本地预览，保存时随创建请求一并上传
 - 名字: 必填
-- 品种: 选填，可以提供常见品种下拉+自定义输入
+- 品种: 选填，`Autocomplete` + 自由输入，预设常见品种
 - 生日: 日期选择器
-- 编辑页只允许 `owner` 进入编辑态；若将来复用为详情页，可通过参数切成只读模式
+- 编辑模式下显示「删除此宠物档案」按钮（红色描边），点击弹出确认对话框后执行删除
+- 编辑页只允许 `owner` 进入编辑态
 
 ### 4.4 路由建议
 
@@ -638,42 +679,65 @@ class PetSelector extends StatelessWidget {
 
 ```dart
 // Service Provider
-final petServiceProvider = Provider<PetService>((ref) {
-  final dio = ref.read(apiClientProvider);
-  return PetService(dio);
-});
+final petServiceProvider = Provider<PetService>((ref) => PetService());
 
-// 宠物列表 Provider
-final petListProvider = FutureProvider<PetListResult>((ref) async {
-  final service = ref.read(petServiceProvider);
-  return await service.getPets(page: 1, pageSize: 20);
-});
+// 宠物列表 Provider（AsyncNotifierProvider，支持手动 refresh）
+final petListProvider =
+    AsyncNotifierProvider<PetListNotifier, PetListResult>(PetListNotifier.new);
 
-// 当前选中的宠物 ID，持久化到本地
-final selectedPetIdProvider = StateProvider<int?>((ref) => null);
+class PetListNotifier extends AsyncNotifier<PetListResult> {
+  @override
+  Future<PetListResult> build() async {
+    // 监听 auth 状态：未认证时直接返回空，不发起网络请求
+    final authState = ref.watch(authProvider);
+    if (authState.status != AuthStatus.authenticated) {
+      return PetListResult(page: 1, pageSize: 0, total: 0, pets: []);
+    }
+    final service = ref.read(petServiceProvider);
+    return await service.getPets(page: 1, pageSize: 100);
+  }
+
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      final service = ref.read(petServiceProvider);
+      return await service.getPets(page: 1, pageSize: 100);
+    });
+  }
+}
+
+// 当前选中的宠物 ID，持久化到 SharedPreferences
+final selectedPetIdProvider =
+    StateNotifierProvider<SelectedPetIdNotifier, int?>(
+  (ref) => SelectedPetIdNotifier(),
+);
 
 // 对外暴露当前选中的宠物对象
 final selectedPetProvider = Provider<Pet?>((ref) {
   final selectedId = ref.watch(selectedPetIdProvider);
-  final petList = ref.watch(petListProvider).valueOrNull?.pets ?? const <Pet>[];
-  for (final pet in petList) {
-    if (pet.id == selectedId) return pet;
+  final petListAsync = ref.watch(petListProvider);
+  final pets = petListAsync.valueOrNull?.pets ?? const <Pet>[];
+  if (pets.isEmpty) return null;
+  if (selectedId != null) {
+    for (final pet in pets) {
+      if (pet.id == selectedId) return pet;
+    }
   }
-  return petList.isEmpty ? null : petList.first;
+  return pets.first;
 });
 
 // 时间轴选中的宠物 ID 列表，空数组表示全部
 final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);
 ```
 
-**重要**: `selectedPetProvider` 在多个页面间共享。用户在「记录」页切换宠物后，切换到「健康」页时应保持相同选择。
+**重要**:
 
-实现建议：
-
-- 本地持久化建议只保存 `pet_id` / `pet_ids`，不要直接持久化完整对象
+- `petListProvider` 使用 `AsyncNotifierProvider` 而非 `FutureProvider`，以支持手动 `refresh()`
+- `build()` 中 `ref.watch(authProvider)` 使 provider 在认证状态变化时自动重建：登录后自动拉取宠物列表，登出后自动清空，无需手动失效
+- 在 auth 状态为 `unknown`（应用启动检查 token 阶段）或 `unauthenticated` 时，`build()` 返回空列表而不发起网络请求，避免触发 401
+- `selectedPetIdProvider` 使用 `StateNotifier` 并在构造时从 `SharedPreferences` 恢复上次选中值
 - 宠物创建成功后，刷新 `petListProvider`，并把新建宠物写入 `selectedPetIdProvider`
-- 宠物删除后，如果删除的是当前选中宠物，需要自动切换到剩余列表中的第一只
-- 时间轴多选状态单独维护，不要与单选状态共用一个 Provider
+- 宠物删除后，如果删除的是当前选中宠物，需要自动切换到 null，下次打开自动回退到列表第一项
 
 ### 5.1 前端实现蓝图
 
@@ -693,6 +757,44 @@ final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);
 2. 再完成 `pet_provider.dart` 的列表、选择与本地恢复
 3. 接着实现 `ProfileScreen`、`PetManageScreen`、`PetEditScreen`
 4. 最后把 `PetSelector` 接到记录、健康、时间轴页面
+
+### 5.2 API 客户端配置 (`services/api_client.dart`)
+
+**超时设置：**
+
+```dart
+BaseOptions(
+  connectTimeout: const Duration(seconds: 15),
+  receiveTimeout: const Duration(seconds: 30),
+  sendTimeout: const Duration(seconds: 60),  // 文件上传留足时间
+)
+```
+
+**网络错误自动重试（`_RetryInterceptor`）：**
+
+对 `connectionTimeout`、`sendTimeout`、`receiveTimeout`、`connectionError` 类型的错误执行最多 2 次重试，采用指数退避（500ms、1000ms）。不重试业务错误（4xx/5xx）：
+
+```dart
+bool _shouldRetry(DioException err) {
+  switch (err.type) {
+    case DioExceptionType.connectionTimeout:
+    case DioExceptionType.sendTimeout:
+    case DioExceptionType.receiveTimeout:
+    case DioExceptionType.connectionError:
+      return true;
+    default:
+      return false;
+  }
+}
+```
+
+重试拦截器需在 auth 拦截器**之前**添加（`dio.interceptors.add(_RetryInterceptor(dio))`），保证重试走完整的 interceptor 链。
+
+**interceptor 添加顺序（onRequest 执行顺序）：**
+
+1. `_RetryInterceptor`（网络错误重试）
+2. `LogInterceptor`（debug 日志）
+3. Auth `InterceptorsWrapper`（注入 token、处理 401 自动刷新）
 
 ---
 
@@ -717,23 +819,54 @@ final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);
 - `backend/app/schemas/pet.py` - 宠物 Schema (完善)
 - `backend/app/api/v1/pets.py` - 宠物档案路由 (完善)
 - `backend/app/api/v1/router.py` - 注册 pets 路由 (修改)
-- `backend/app/services/pet.py` - 宠物领域服务 (新建，推荐)
-- `backend/app/services/storage.py` - MinIO 存储服务 (新建，供头像上传使用)
+- `backend/app/services/pet.py` - 宠物领域服务 (新建)
+- `backend/app/services/storage.py` - MinIO 存储服务 (新建，含公开读取 policy 设置)
 - `backend/app/utils/invite_code.py` - 邀请码生成 (新建)
+- `backend/app/services/auth.py` - 补充首次注册时的默认昵称生成 (修改)
 
 ### 前端
 
 - `frontend/lib/models/pet.dart` - 宠物数据模型 (新建)
-- `frontend/lib/services/pet_service.dart` - 宠物 API 服务 (新建)
-- `frontend/lib/providers/pet_provider.dart` - 宠物状态管理 (新建)
-- `frontend/lib/screens/profile/profile_screen.dart` - 我的页面 (完善)
+- `frontend/lib/services/pet_service.dart` - 宠物 API 服务 (新建，`uploadAvatar` 支持 `onSendProgress`)
+- `frontend/lib/services/api_client.dart` - 超时配置 + 网络错误自动重试 (修改)
+- `frontend/lib/providers/pet_provider.dart` - 宠物状态管理，使用 `AsyncNotifierProvider`，监听 auth 状态 (新建)
+- `frontend/lib/providers/auth_provider.dart` - 补充 `updateNickname()` 方法 (修改)
+- `frontend/lib/config/router.dart` - 修复 `unknown` auth 状态下的路由重定向逻辑 (修改)
+- `frontend/lib/screens/profile/profile_screen.dart` - 我的页面，含昵称编辑对话框 (完善)
 - `frontend/lib/screens/profile/pet_manage_screen.dart` - 档案管理 (新建)
-- `frontend/lib/screens/profile/pet_edit_screen.dart` - 创建/编辑档案 (新建)
+- `frontend/lib/screens/profile/pet_edit_screen.dart` - 创建/编辑档案，含删除按钮和上传进度 (新建)
 - `frontend/lib/widgets/pet_selector.dart` - 宠物选择器组件 (新建)
 
 ---
 
-## 8. 验收标准
+## 8. 已知问题与修复记录
+
+### 8.1 初次登录后立即访问宠物档案报 401
+
+**现象：** 登录成功后点击任何需要认证的页面，100% 触发 `DioException [bad response]: status code 401`。
+
+**根因：** GoRouter 路由跳转逻辑在 auth 状态为 `unknown`（应用启动时正在验证 token 阶段）时 `redirect` 返回 `null`，导致直接渲染初始路由 `/record`。`RecordScreen` 立即 watch `petListProvider`，触发 `GET /pets` 请求，但此时尚无 token，返回 401。该错误被 Riverpod 缓存为 `AsyncError` 状态，登录完成后 provider 不会自动重建，页面始终展示加载失败。
+
+**修复：**
+
+1. **路由（`config/router.dart`）**：`unknown` 状态时若不在 `/login`，强制跳转到 `/login`，避免数据页面在未认证时渲染：
+   ```dart
+   if (isLoading) return onLogin ? null : '/login';
+   ```
+
+2. **Provider（`providers/pet_provider.dart`）**：`PetListNotifier.build()` 监听 `authProvider`，未认证时直接返回空列表；认证状态变化时自动重建并拉取数据，彻底消除 stale error 状态。
+
+### 8.2 上传头像后客户端无法显示图片（403）
+
+**现象：** 头像上传成功（后端存储 URL 到数据库），但宠物档案管理页和编辑页均无法展示头像图片。
+
+**根因：** MinIO bucket 默认为私有访问，客户端通过 Nginx 公网地址请求 `/media/avatars/...` 时，MinIO 返回 `403 Access Denied`。上传本身使用携带凭证的后端 MinIO SDK，不受影响；但展示走的是公网 URL，无凭证，被拒绝。
+
+**修复：** `_ensure_bucket()` 在首次访问 bucket 时调用 `set_bucket_policy` 写入 `s3:GetObject` 公开读取策略（见 Section 3.5）。已存在的私有 bucket 在下次首次调用时自动补设，无需手动迁移。
+
+---
+
+## 9. 验收标准
 
 - [ ] 后端 `POST /api/v1/pets` 创建宠物档案成功，自动生成邀请码
 - [ ] 后端 `GET /api/v1/pets` 支持 `page`、`page_size`，并返回 `page`、`page_size`、`total`、`pets`
@@ -753,7 +886,7 @@ final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);
 
 ---
 
-## 9. 联调与验收清单
+## 10. 联调与验收清单
 
 ### 9.1 后端联调顺序
 

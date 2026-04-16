@@ -1,4 +1,5 @@
 import io
+import json
 import time
 from urllib.parse import urlparse
 
@@ -7,6 +8,7 @@ from minio import Minio
 from app.config import settings
 
 _client: Minio | None = None
+_initialized_buckets: set[str] = set()
 
 
 def _get_client() -> Minio:
@@ -21,10 +23,28 @@ def _get_client() -> Minio:
     return _client
 
 
+def _public_read_policy(bucket: str) -> str:
+    return json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": ["*"]},
+                "Action": ["s3:GetObject"],
+                "Resource": [f"arn:aws:s3:::{bucket}/*"],
+            }
+        ],
+    })
+
+
 def _ensure_bucket(bucket: str) -> None:
+    if bucket in _initialized_buckets:
+        return
     client = _get_client()
     if not client.bucket_exists(bucket):
         client.make_bucket(bucket)
+    client.set_bucket_policy(bucket, _public_read_policy(bucket))
+    _initialized_buckets.add(bucket)
 
 
 def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
