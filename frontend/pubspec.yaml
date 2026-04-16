@@ -34,6 +34,8 @@ dependencies:
   permission_handler: ^11.3.0
   # Photo viewer
   photo_view: ^0.15.0
+  # Temp directory for HEIC conversion
+  path_provider: ^2.1.0
 
 dev_dependencies:
   flutter_test:
