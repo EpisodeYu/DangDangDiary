@@ -54,12 +54,23 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 status_code=400,
                 content={"code": "INVALID_NICKNAME", "message": "昵称不合法", "details": None},
             )
+
+    safe_errors = []
+    for error in errors:
+        safe_error = {
+            "loc": error.get("loc"),
+            "msg": error.get("msg", ""),
+            "type": error.get("type", ""),
+        }
+        safe_errors.append(safe_error)
+
+    first_msg = safe_errors[0]["msg"] if safe_errors else "请求参数校验失败"
     return JSONResponse(
         status_code=400,
         content={
             "code": "VALIDATION_ERROR",
-            "message": "请求参数校验失败",
-            "details": errors,
+            "message": first_msg,
+            "details": safe_errors,
         },
     )
 

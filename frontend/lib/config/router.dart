@@ -9,12 +9,12 @@ import '../screens/health/health_screen.dart';
 import '../screens/timeline/timeline_screen.dart';
 import '../screens/ai/ai_screen.dart';
 import '../screens/profile/profile_screen.dart';
+import '../screens/profile/pet_manage_screen.dart';
+import '../screens/profile/pet_edit_screen.dart';
 import '../widgets/main_scaffold.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
-/// Listenable that triggers GoRouter redirect re-evaluation
-/// whenever the auth state changes.
 class _AuthRedirectNotifier extends ChangeNotifier {
   _AuthRedirectNotifier(Ref ref) {
     ref.listen<AuthState>(authProvider, (prev, next) => notifyListeners());
@@ -43,6 +43,24 @@ final routerProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/profile/pets',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const PetManageScreen(),
+      ),
+      GoRoute(
+        path: '/profile/pets/new',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const PetEditScreen(),
+      ),
+      GoRoute(
+        path: '/profile/pets/:petId/edit',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final petId = int.parse(state.pathParameters['petId']!);
+          return PetEditScreen(petId: petId);
+        },
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, navigationShell) {

@@ -1,12 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-class TimelineScreen extends StatelessWidget {
+import '../../providers/pet_provider.dart';
+import '../../widgets/pet_selector.dart';
+
+class TimelineScreen extends ConsumerWidget {
   const TimelineScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final petListAsync = ref.watch(petListProvider);
+    final selectedPetIds = ref.watch(selectedTimelinePetIdsProvider);
+    final pets = petListAsync.valueOrNull?.pets ?? [];
+
     return Scaffold(
-      appBar: AppBar(title: const Text('时间轴')),
+      appBar: AppBar(
+        title: PetSelector(
+          multiSelect: true,
+          pets: pets,
+          selectedPetIds: selectedPetIds,
+          onMultiChanged: (ids) {
+            ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
+          },
+        ),
+      ),
       body: const Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
