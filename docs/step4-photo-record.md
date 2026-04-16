@@ -22,6 +22,33 @@
 
 ---
 
+## 当前实现基线与提交对照
+
+当前 Step 4 的代码基线不是单一提交，而是以下几次提交叠加后的结果；后续 agent 应以**当前代码实现**为准，而不是只看最早设计稿:
+
+- `14adfff Step4 code commit`
+  - 后端落地照片上传、列表、删除、原图 URL 四个接口
+  - 新增 `image_recognition.py` 与 `storage.py` 的照片上传/缩略图/签名 URL 能力
+  - 前端新增 `Photo` 模型、`PhotoService`、`RecordScreen`、`ExifHelper`
+  - Nginx 补齐 `/media/` 代理，使缩略图与签名 URL 能通过统一入口访问
+- `eb33b23 Change UI of recoding and fix upload bug`
+  - 上传协议从“整批共用一个 `taken_at`”调整为“每张照片各自提交一个 `taken_at`”
+  - 记录页 UI 改成纵向照片卡片，每张照片独立显示和修改日期
+  - FastAPI 校验错误序列化做了兼容处理，避免错误详情里出现不可 JSON 化对象
+  - 前后端/Nginx 增加上传超时配置，减少大图上传时的超时报错
+- `bc5f59f Fix multi upload bug`
+  - 后端把图片识别和 MinIO 上传包进 `asyncio.to_thread(...)`，避免阻塞事件循环
+  - 前端与 Nginx 接收超时继续放宽到 `300s`，提升多图上传成功率
+  - 记录页保留“失败项继续重试”的逻辑，同时修正多图场景下的交互细节
+- `34b1372 Fix image recognotion too slow`
+  - 阿里云识别前先把图片压缩到较小 JPEG，再发识别请求
+  - 识别客户端改成单例缓存，避免每张图重复初始化 SDK Client
+  - 为识别请求加 `connect_timeout=5s`、`read_timeout=15s`，慢请求异常时继续按“放行上传”策略处理
+
+与 Step 4 无直接关系的后续提交（例如 Android SDK 配置）不在本文档范围内。
+
+---
+
 ## 0. 本步骤关键约定
 
 这些约定已经在 Step 4 细化中确认，后续实现默认按此执行:
@@ -32,8 +59,10 @@
 - 上传接口统一返回 `200`，用 `successes` / `failures` 表达结果
 - 服务端处理文件时要**继续处理完整批次**，不能遇到第一张失败就中断
 - 阿里云识别服务异常、超时、未配置时，**放行上传**，优先保证主流程可用
-- 一次上传请求只提交一个 `taken_at`，本次成功上传的所有照片共享该日期
+- 当前实现中，`taken_at` 是**与文件一一对应的数组字段**，每张照片有自己的拍摄日期
 - 上传响应中保留 `storage_key`、`thumbnail_key`
+- 当前实现已把图片识别和存储上传放到工作线程中执行，避免阻塞 FastAPI 异步请求
+- 当前上传链路的超时基线是: 前端 `sendTimeout=120s`、`receiveTimeout=300s`，Nginx `proxy_read_timeout=300s`
 
 ---
 
@@ -73,7 +102,7 @@ Authorization: Bearer {access_token}
 
 表单字段:
 - `files`: 图片文件列表，最少 1 张，最多 5 张，每张 <= 15MB
-- `taken_at`: 拍摄日期，格式 `YYYY-MM-DD`
+- `taken_at`: 拍摄日期字段，格式 `YYYY-MM-DD`，**需要重复提交多次**，数量必须和 `files` 一致
 
 支持的图片格式:
 - JPEG
@@ -84,6 +113,7 @@ Authorization: Bearer {access_token}
 - 如果用户选择 `HEIC/HEIF`，Flutter 端先转换为 `JPEG`
 - 上传接口只负责写入照片记录，不负责时间轴聚合
 - `owner` 与 `member` 只要能访问该宠物档案，都可以上传
+- 当前实现按表单顺序把 `taken_at[i]` 对应到 `files[i]`
 
 #### 2.1.1 返回语义
 
@@ -136,9 +166,11 @@ Authorization: Bearer {access_token}
 #### 2.1.2 请求级错误与文件级失败的区分
 
 以下情况属于**请求级错误**，直接返回错误响应，不进入批量处理结果:
+- `400 VALIDATION_ERROR`: `multipart/form-data` 缺少必填字段，或 FastAPI 基础校验失败
 - `400 EMPTY_UPLOAD`: 没有上传任何文件
 - `400 TOO_MANY_FILES`: 一次上传超过 5 张
-- `400 INVALID_TAKEN_AT`: `taken_at` 缺失或格式非法
+- `400 TAKEN_AT_MISMATCH`: `taken_at` 数量与 `files` 数量不一致
+- `400 INVALID_TAKEN_AT`: 某个 `taken_at` 不是合法 `YYYY-MM-DD`
 - `403 PET_FORBIDDEN`: 当前用户无权访问该宠物档案
 - `404 PET_NOT_FOUND`: 宠物档案不存在
 
@@ -146,8 +178,10 @@ Authorization: Bearer {access_token}
 - `UNSUPPORTED_IMAGE_TYPE`
 - `FILE_TOO_LARGE`
 - `PET_NOT_DETECTED`
-- `THUMBNAIL_GENERATION_FAILED`
 - `PHOTO_UPLOAD_FAILED`
+
+说明:
+- 当前实现没有把“缩略图生成失败”单独区分成独立错误码，统一折叠到 `PHOTO_UPLOAD_FAILED`
 
 如果一批次中所有文件都失败，但请求本身合法，也仍然返回 `200`，此时:
 - `success_count = 0`
@@ -159,18 +193,20 @@ Authorization: Bearer {access_token}
 2. 校验请求级条件:
    - `files` 非空
    - 文件总数不超过 5
-   - `taken_at` 格式合法
+   - `taken_at` 数量与文件数一致
+   - 每个 `taken_at` 都能解析为合法日期
 3. 按顺序遍历每个文件，**继续处理完整批次**
 4. 单文件处理流程:
    - 校验类型是否为 `image/jpeg`、`image/png`、`image/webp`
    - 校验文件大小是否 <= 15MB
-   - 调用阿里云 `RecognizeScene` 判断是否包含猫或狗
+   - 在工作线程中调用阿里云 `RecognizeScene` 判断是否包含猫或狗
    - 如果明确识别为非宠物，则写入 `failures`
    - 如果识别服务异常、超时或未配置，则记录日志并继续上传
    - 生成 UUID 文件名
-   - 上传原图到 `pet-photos`
+   - 在工作线程中上传原图到 `pet-photos`
    - 生成缩略图并上传到 `pet-thumbnails`
    - 创建 `photos` 表记录
+   - 该条记录的 `taken_at` 使用当前文件对应的 `parsed_dates[idx]`
    - 把成功结果写入 `successes`
 5. 汇总返回 `successes`、`failures`、`success_count`、`failure_count`、`total_count`
 
@@ -184,6 +220,8 @@ Authorization: Bearer {access_token}
 - 识别结果命中宠物关键词且置信度 > `0.3`，判定为通过
 - 识别结果明确不含宠物时，返回文件级失败 `PET_NOT_DETECTED`
 - 第三方服务异常时**放行上传**
+- 当前实现会先把图片压缩到约 `800x800` 的 JPEG（质量 `70`）再调用识别接口
+- 当前实现会复用单例 Aliyun Client，并为识别请求设置连接/读取超时
 
 这里的“放行”是**产品决策**，表示“第三方识别不可用时不阻塞主流程”，并不等于识别成功。
 
@@ -382,6 +420,7 @@ class ImageRecognitionResult(TypedDict):
 
 注意:
 - 请求级错误使用 `AppException`
+- FastAPI `RequestValidationError` 也会被统一转成 `400` + 结构化错误体；当前实现会把 `loc` / `msg` / `type` 都转换成可 JSON 序列化的字符串结构
 - 文件级失败不抛整批异常，而是进入 `failures`
 - 不再使用“整批抛 400 + `failed_index`”的旧设计
 
@@ -406,23 +445,22 @@ class ImageRecognitionResult(TypedDict):
 │  橘子 ▼    (宠物选择器)           │
 ├─────────────────────────────────┤
 │                                 │
-│  ┌─────┐ ┌─────┐ ┌─────┐      │
-│  │     │ │     │ │  ＋  │      │
-│  │ 📷  │ │ 📷  │ │ 添加 │      │
-│  │     │ │     │ │     │      │
-│  └──×──┘ └──×──┘ └─────┘      │
-│  (已选照片预览，最多 5 张)         │
+│  [初始态]                         │
+│  点击添加照片                     │
+│  支持从相册选择或拍照，最多 5 张     │
 │                                 │
-│  拍摄日期                        │
+│  [选择后]                         │
 │  ┌─────────────────────────┐    │
-│  │  2024-01-15    📅        │    │
+│  │        照片预览          │    │
+│  │                  ×       │    │
+│  ├─────────────────────────┤    │
+│  │  📅 2024-01-15      >    │    │
 │  └─────────────────────────┘    │
-│  (默认取 EXIF，可手动修改)         │
+│  (每张照片单独一张卡片)            │
 │                                 │
-│  ┌─────────────────────────┐    │
-│  │       记录完成            │    │
-│  └─────────────────────────┘    │
+│  [继续添加照片]                   │
 │                                 │
+│  [底部固定按钮: 记录完成]          │
 └─────────────────────────────────┘
 ```
 
@@ -436,29 +474,30 @@ class ImageRecognitionResult(TypedDict):
    - 点击「+」弹出操作菜单: `从相册选择` / `拍照`
    - 相册支持多选，相机一次新增 1 张
    - 总数最多 5 张，超过上限时禁止继续添加
-   - 每张缩略图右上角有删除按钮
+   - 当前实现为纵向卡片列表，每张卡片右上角有删除按钮
 3. HEIC/HEIF 处理:
    - 选图后先检查格式
    - 如果是 `HEIC/HEIF`，客户端先转为 `JPEG`
    - 转换后的临时文件继续参与 EXIF 处理与上传
 4. 日期处理:
-   - 初次选图后，自动从当前已选图片中提取**第一个有效 EXIF 日期**
-   - 如果所有图片都没有 EXIF，默认当天
-   - 日期框可手动修改，修改后将 `isDateManuallyEdited = true`
-   - 当用户手动改过日期后，再继续加图或删图时，不再自动覆盖该日期
-   - 只有在“清空全部已选图片”或“本次上传全部成功并重置页面”后，才把手动修改标记重置
+   - 当前实现是**每张照片单独维护一个日期**
+   - 从相册选择时，会逐张调用 `ExifHelper.extractDate(file)` 提取 EXIF 日期
+   - 单张提取失败时，该照片日期回退为 `DateTime.now()`
+   - 当前拍照分支直接以 `DateTime.now()` 作为默认日期，没有再读相机返回文件的 EXIF
+   - 每张卡片底部都有自己的日期行，点击后可单独修改该照片日期
+   - 添加或删除其它照片时，不会覆盖已存在照片的日期；删除照片时同步移除其日期
 5. 点击“记录完成”:
    - 必须满足“已选宠物 + 至少 1 张照片”
    - 提交期间禁用按钮和删除操作
    - 显示上传进度对话框
 6. 处理上传结果:
    - 全部成功: 弹出 `SnackBar`，页面重置
-   - 部分成功: 弹出结果摘要，移除成功项，保留失败项，方便用户重试
-   - 全部失败: 保留全部已选图片，展示失败原因列表
+   - 部分成功: 弹出结果摘要，移除成功项，保留失败项及其日期，方便用户重试
+   - 全部失败: 保留全部已选图片，并把失败原因显示在对应照片卡片的底部遮罩上
 
 ### 4.3 EXIF 日期提取 (`frontend/lib/utils/exif_helper.dart`)
 
-建议职责:
+当前实现提供的能力:
 - `extractDate(File imageFile)`: 提取单张日期
 - `extractFirstValidDate(List<File> files)`: 按顺序取第一张有效日期
 
@@ -471,17 +510,22 @@ class ImageRecognitionResult(TypedDict):
 - 读取失败时返回 `null`
 - 不要因为某一张 EXIF 解析失败影响整批选图
 
+当前页面实际用法:
+- `record_screen.dart` 当前使用的是 `extractDate(...)`，按照片逐张初始化默认日期
+- `extractFirstValidDate(...)` 仍保留在工具类中，但当前记录页未使用这条逻辑
+
 ### 4.4 照片选择与预览组件
 
-组件建议:
-- `photo_picker_grid.dart`
+当前实现说明:
+- 当前记录页的照片卡片列表直接写在 `record_screen.dart` 中
+- `photo_picker_grid.dart` 虽然在主提交中创建过，但当前页面并**未直接引用**这个组件，后续 agent 不要误以为它是现行主路径 UI
 
 功能要求:
-- 展示本地缩略图
+- 展示本地预览图
 - 支持删除单张
-- 当已选张数 < 5 时显示添加卡片
-- 当已选张数 = 5 时隐藏添加卡片
-- 支持为失败项显示错误角标或错误文案
+- 当已选张数 < 5 时显示“继续添加照片”入口
+- 当已选张数 = 5 时隐藏继续添加入口
+- 失败项在图片底部显示错误文案遮罩
 
 ### 4.5 上传进度展示
 
@@ -499,6 +543,7 @@ class ImageRecognitionResult(TypedDict):
 
 实现建议:
 - 使用 Dio 的 `onSendProgress(sent, total)`
+- 当前实现使用 `ValueNotifier<double>` 驱动进度弹窗刷新
 - UI 展示百分比和已选总张数
 - 请求完成后关闭进度框，再处理成功/失败摘要
 
@@ -507,26 +552,27 @@ class ImageRecognitionResult(TypedDict):
 前端需要区分三种情况:
 
 ### 全部成功
-- 提示: `记录完成，已上传 3 张照片`
+- 当前提示: `上传成功，请在时间轴内查看吧！`
 - 页面行为:
   - 清空已选图片
-  - 日期恢复为当天
-  - `isDateManuallyEdited = false`
+  - 清空每张照片的日期状态
+  - 清空失败消息
 
 ### 部分成功
 - 提示: `已成功上传 2 张，失败 1 张`
 - 页面行为:
   - 从已选列表中移除成功项
   - 保留失败项，便于用户删除或重新提交
-  - 日期保持当前值，不自动重置
+  - 失败项对应日期一并保留
 - 结果展示:
-  - 至少展示失败文件名和失败原因
+  - 当前实现会把失败原因映射到保留后的卡片索引，并显示在卡片底部
 
 ### 全部失败
 - 提示: `本次未成功上传，请检查失败原因后重试`
 - 页面行为:
   - 保留全部已选图片
-  - 日期保持当前值
+  - 保留全部已选日期
+  - 按原索引展示失败原因
 
 ### 4.7 API 调用 (`frontend/lib/services/photo_service.dart`)
 
@@ -559,8 +605,10 @@ class PhotoUploadResponse {
 调用要求:
 - 使用 `FormData`
 - 所有文件字段都使用 `files`
-- `taken_at` 按 `YYYY-MM-DD` 提交
+- `taken_at` 按 `YYYY-MM-DD` 重复追加到 `formData.fields`
+- `taken_at` 数量必须与 `files` 一致
 - 使用 `onSendProgress` 更新上传进度
+- 当前实现超时配置为 `sendTimeout=120s`、`receiveTimeout=300s`
 
 ---
 
@@ -572,13 +620,17 @@ class PhotoUploadResponse {
 - `backend/app/schemas/photo.py` - 补充照片响应模型与上传结果模型
 - `backend/app/api/v1/photos.py` - 实现 Step 4 照片相关接口
 - `backend/app/api/v1/router.py` - 确认 photos 路由注册
+- `backend/app/main.py` - 补充 Step 4 上传场景依赖的请求校验错误序列化兼容
 
 ### 前端
 - `frontend/lib/models/photo.dart` - 照片数据模型
 - `frontend/lib/services/photo_service.dart` - 照片 API 服务
 - `frontend/lib/screens/record/record_screen.dart` - 记录页面
 - `frontend/lib/utils/exif_helper.dart` - EXIF 日期提取
-- `frontend/lib/widgets/photo_picker_grid.dart` - 照片选择预览组件
+- `frontend/lib/widgets/photo_picker_grid.dart` - 早期创建的照片选择组件，当前记录页未直接使用
+
+### 网关
+- `nginx/nginx.conf` - 统一入口 `/media/` 代理与上传超时配置
 
 ---
 
@@ -603,10 +655,10 @@ class PhotoUploadResponse {
 - [ ] Flutter 记录页面展示宠物选择器和无档案空状态
 - [ ] Flutter 可以从相册多选照片，并支持拍照追加
 - [ ] Flutter 照片预览正确显示，可以删除单张
-- [ ] Flutter 自动从 EXIF 提取日期并填入日期输入框
-- [ ] Flutter 多张照片时使用第一个有效 EXIF 日期
-- [ ] Flutter 手动修改日期后，不会因继续加图或删图而被自动覆盖
+- [ ] Flutter 从相册选择时，会为每张照片单独尝试提取 EXIF 日期
+- [ ] 单张照片 EXIF 缺失或解析失败时，会回退到当前时间
+- [ ] Flutter 支持逐张修改照片日期，且不会因继续加图或删图覆盖其它照片日期
 - [ ] Flutter 上传时显示总进度百分比
 - [ ] 全部成功后页面重置
-- [ ] 部分成功时保留失败项，便于重试
+- [ ] 部分成功时保留失败项及其日期，便于重试
 - [ ] Flutter 能正确展示非宠物图片等失败原因
