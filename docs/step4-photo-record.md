@@ -2,39 +2,62 @@
 
 ## 项目背景
 
-「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL + MinIO 技术栈。本步骤实现宠物照片的上传与记录功能。
+「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL + MinIO 技术栈。本步骤实现宠物照片的上传、管理与记录页面闭环。
 
-**前置依赖**: Step 3 已完成，宠物档案管理可用，MinIO 存储服务已封装。
+**前置依赖**:
+- Step 3 已完成，宠物档案管理与档案选择器可用
+- 用户登录、鉴权、`pet_members` 权限链路已可用
+- MinIO 基础连接与统一入口 `/media/...` 已具备
 
 ---
 
 ## 本步骤目标
 
-1. 后端实现照片上传 API (支持批量上传，每次最多 5 张，单张 <= 15MB)
-2. 后端实现宠物图片校验 (调用阿里云场景识别 API，拒绝非宠物图片)
-3. 后端实现照片缩略图生成
-4. Flutter 实现「记录」页面 (选档案、选照片、日期选择)
-5. Flutter 实现 EXIF 日期提取
-6. 照片记录完成后页面重置
+1. 后端实现照片上传 API，支持批量上传，每次最多 5 张，单张 <= 15MB
+2. 后端实现宠物图片校验，调用阿里云场景识别 API 拦截明确的非宠物图片
+3. 后端实现缩略图生成、原图访问签名 URL、按宠物分页查询、删除照片
+4. Flutter 实现「记录」页面，支持选档案、选照片、日期选择、上传结果反馈
+5. Flutter 实现 EXIF 日期提取，并处理手动修改后的日期覆盖规则
+6. 明确 Step 4 与 Step 6 的边界: Step 4 负责按宠物的照片管理，Step 6 再做跨宠物时间轴
+
+---
+
+## 0. 本步骤关键约定
+
+这些约定已经在 Step 4 细化中确认，后续实现默认按此执行:
+
+- 共享档案中，`owner` 和 `member` 都可以上传照片
+- 删除照片时，只要当前用户可以访问该宠物档案，就可以删除该档案下任意照片
+- 批量上传采用**部分成功**策略，不做整批回滚
+- 上传接口统一返回 `200`，用 `successes` / `failures` 表达结果
+- 服务端处理文件时要**继续处理完整批次**，不能遇到第一张失败就中断
+- 阿里云识别服务异常、超时、未配置时，**放行上传**，优先保证主流程可用
+- 一次上传请求只提交一个 `taken_at`，本次成功上传的所有照片共享该日期
+- 上传响应中保留 `storage_key`、`thumbnail_key`
 
 ---
 
 ## 1. 照片存储架构
 
-```
+```text
 MinIO Buckets:
-├── pet-photos/          # 原图
+├── pet-photos/          # 原图，建议私有，仅通过预签名 URL 访问
 │   ├── {pet_id}/{uuid}.jpg
-│   └── {pet_id}/{uuid}.png
-└── pet-thumbnails/      # 缩略图 (后端生成)
-    ├── {pet_id}/{uuid}_thumb.jpg
+│   ├── {pet_id}/{uuid}.png
+│   └── {pet_id}/{uuid}.webp
+└── pet-thumbnails/      # 缩略图，公开读，经 /media/... 访问
     └── {pet_id}/{uuid}_thumb.jpg
 ```
 
-- 原图: 保持用户上传的原始文件，单张限制 15MB
-- 缩略图: 后端接收原图后，使用 Pillow 生成缩略图 (最大 400x400 像素, JPEG 质量 80)
-- 文件名使用 UUID 避免冲突
-- 按 pet_id 分目录，方便管理和清理
+约定说明:
+- 原图保持上传后的实际格式，支持 `jpg` / `png` / `webp`
+- 如果用户原始选择的是 `HEIC/HEIF`，Flutter 端必须先转成 `JPEG` 再上传
+- 缩略图由后端生成，统一为 `JPEG`
+- 文件名使用 UUID，按 `pet_id` 分目录，方便删除宠物时按前缀清理
+- `storage_key` 与 `thumbnail_key` 仅保存对象 key，不重复包含 bucket 名
+- `thumbnail_url` 由后端拼接为:
+  - `{PUBLIC_BASE_URL}/media/{MINIO_BUCKET_THUMBNAILS}/{thumbnail_key}`
+- 原图不直接暴露固定公开 URL，查看原图时走签名 URL 接口
 
 ---
 
@@ -42,7 +65,7 @@ MinIO Buckets:
 
 ### 2.1 上传照片
 
-```
+```http
 POST /api/v1/pets/{pet_id}/photos
 Content-Type: multipart/form-data
 Authorization: Bearer {access_token}
@@ -52,77 +75,184 @@ Authorization: Bearer {access_token}
 - `files`: 图片文件列表，最少 1 张，最多 5 张，每张 <= 15MB
 - `taken_at`: 拍摄日期，格式 `YYYY-MM-DD`
 
-支持的图片格式: JPEG, PNG, WEBP
+支持的图片格式:
+- JPEG
+- PNG
+- WEBP
 
 补充说明:
-- 若用户选择 HEIC/HEIF，Flutter 端先转换为 JPEG 后再上传
-- 列表接口只返回可直接展示的缩略图 URL；查看原图时再单独请求签名 URL
+- 如果用户选择 `HEIC/HEIF`，Flutter 端先转换为 `JPEG`
+- 上传接口只负责写入照片记录，不负责时间轴聚合
+- `owner` 与 `member` 只要能访问该宠物档案，都可以上传
 
-成功响应 (201):
+#### 2.1.1 返回语义
+
+上传接口统一返回 `200 OK`，响应体描述本批次结果:
+
+```json
+{
+  "successes": [
+    {
+      "index": 0,
+      "filename": "cat-1.jpg",
+      "photo": {
+        "id": 1,
+        "pet_id": 1,
+        "user_id": 12,
+        "storage_key": "1/a1b2c3d4.jpg",
+        "thumbnail_key": "1/a1b2c3d4_thumb.jpg",
+        "thumbnail_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb.jpg",
+        "taken_at": "2024-01-15",
+        "created_at": "2024-01-20T10:30:00Z"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "index": 1,
+      "filename": "landscape.png",
+      "code": "PET_NOT_DETECTED",
+      "message": "未识别到宠物，请换一张图片试试吧！",
+      "details": {
+        "detected_labels": [
+          "outdoor(0.82)",
+          "grass(0.77)"
+        ]
+      }
+    }
+  ],
+  "success_count": 1,
+  "failure_count": 1,
+  "total_count": 2
+}
+```
+
+字段说明:
+- `index`: 对应前端上传数组中的 0-based 序号
+- `filename`: 客户端上传时的文件名，方便前端定位失败项
+- `photo`: 成功项的完整照片对象
+- `failures[*]`: 只描述该文件失败原因，不影响同批次其它文件继续处理
+
+#### 2.1.2 请求级错误与文件级失败的区分
+
+以下情况属于**请求级错误**，直接返回错误响应，不进入批量处理结果:
+- `400 EMPTY_UPLOAD`: 没有上传任何文件
+- `400 TOO_MANY_FILES`: 一次上传超过 5 张
+- `400 INVALID_TAKEN_AT`: `taken_at` 缺失或格式非法
+- `403 PET_FORBIDDEN`: 当前用户无权访问该宠物档案
+- `404 PET_NOT_FOUND`: 宠物档案不存在
+
+以下情况属于**文件级失败**，写入 `failures`，请求本身仍返回 `200`:
+- `UNSUPPORTED_IMAGE_TYPE`
+- `FILE_TOO_LARGE`
+- `PET_NOT_DETECTED`
+- `THUMBNAIL_GENERATION_FAILED`
+- `PHOTO_UPLOAD_FAILED`
+
+如果一批次中所有文件都失败，但请求本身合法，也仍然返回 `200`，此时:
+- `success_count = 0`
+- `failure_count = total_count`
+
+#### 2.1.3 处理流程
+
+1. 校验当前用户是否可以访问 `pet_id`
+2. 校验请求级条件:
+   - `files` 非空
+   - 文件总数不超过 5
+   - `taken_at` 格式合法
+3. 按顺序遍历每个文件，**继续处理完整批次**
+4. 单文件处理流程:
+   - 校验类型是否为 `image/jpeg`、`image/png`、`image/webp`
+   - 校验文件大小是否 <= 15MB
+   - 调用阿里云 `RecognizeScene` 判断是否包含猫或狗
+   - 如果明确识别为非宠物，则写入 `failures`
+   - 如果识别服务异常、超时或未配置，则记录日志并继续上传
+   - 生成 UUID 文件名
+   - 上传原图到 `pet-photos`
+   - 生成缩略图并上传到 `pet-thumbnails`
+   - 创建 `photos` 表记录
+   - 把成功结果写入 `successes`
+5. 汇总返回 `successes`、`failures`、`success_count`、`failure_count`、`total_count`
+
+#### 2.1.4 宠物图片校验策略
+
+使用阿里云视觉智能开放平台的**场景识别 (`RecognizeScene`)** API。
+
+关键约定:
+- AccessKey 与短信服务共用
+- 识别输入使用二进制流，不要求先传 OSS
+- 识别结果命中宠物关键词且置信度 > `0.3`，判定为通过
+- 识别结果明确不含宠物时，返回文件级失败 `PET_NOT_DETECTED`
+- 第三方服务异常时**放行上传**
+
+这里的“放行”是**产品决策**，表示“第三方识别不可用时不阻塞主流程”，并不等于识别成功。
+
+阿里云文档参考:
+- `docs/API_docs/本文档为您介绍场景识别常用语言和常见情况的示例代码.md`
+
+#### 2.1.5 推荐响应模型
+
+```python
+class PhotoResponse(BaseModel):
+    id: int
+    pet_id: int
+    user_id: int
+    storage_key: str
+    thumbnail_key: str
+    thumbnail_url: str
+    taken_at: date
+    created_at: datetime
+
+class PhotoUploadSuccess(BaseModel):
+    index: int
+    filename: str
+    photo: PhotoResponse
+
+class PhotoUploadFailure(BaseModel):
+    index: int
+    filename: str
+    code: str
+    message: str
+    details: dict | None = None
+
+class PhotoUploadResponse(BaseModel):
+    successes: list[PhotoUploadSuccess]
+    failures: list[PhotoUploadFailure]
+    success_count: int
+    failure_count: int
+    total_count: int
+```
+
+### 2.2 获取宠物照片列表
+
+```http
+GET /api/v1/pets/{pet_id}/photos?page=1&page_size=20
+Authorization: Bearer {access_token}
+```
+
+查询参数:
+- `page`: 页码，默认 `1`
+- `page_size`: 每页数量，默认 `20`，最大 `50`
+
+权限:
+- `owner` 与 `member` 只要可以访问该宠物档案，都可以查看列表
+
+成功响应:
+
 ```json
 {
   "photos": [
     {
       "id": 1,
       "pet_id": 1,
-      "storage_key": "pet-photos/1/a1b2c3d4.jpg",
-      "thumbnail_key": "pet-thumbnails/1/a1b2c3d4_thumb.jpg",
+      "user_id": 12,
+      "storage_key": "1/a1b2c3d4.jpg",
+      "thumbnail_key": "1/a1b2c3d4_thumb.jpg",
       "thumbnail_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb.jpg",
       "taken_at": "2024-01-15",
-      "created_at": "2024-01-20T10:30:00"
-    },
-    ...
+      "created_at": "2024-01-20T10:30:00Z"
+    }
   ],
-  "count": 3
-}
-```
-
-错误响应:
-- 400: 文件格式不支持 / 文件过大 / 超过 5 张
-- 403: 无权限访问该宠物档案
-
-业务逻辑:
-1. 验证用户对 pet_id 的访问权限 (通过 pet_members 表)
-2. 验证文件数量 (1-5 张)
-3. 逐个处理每张图片:
-   a. 验证文件类型和大小
-   b. **宠物图片校验**: 调用阿里云场景识别 (RecognizeScene) API，检测图片中是否包含猫/狗
-   c. 如果未识别到宠物，返回 400 错误: `{"code": "PET_NOT_DETECTED", "message": "未识别到宠物，请换一张图片试试吧！", "details": {"failed_index": 0}}`
-   d. 生成 UUID 文件名
-   e. 处理 JPEG / PNG / WEBP 文件并上传原图到 MinIO `pet-photos` bucket
-   f. 使用 Pillow 生成缩略图 (最大 400x400, JPEG)
-   g. 上传缩略图到 MinIO `pet-thumbnails` bucket
-   h. 生成对外可访问的 `thumbnail_url`
-   i. 创建 photos 数据库记录
-4. 返回所有创建的照片记录
-
-错误响应 (400 - 非宠物图片):
-```json
-{
-  "code": "PET_NOT_DETECTED",
-  "message": "未识别到宠物，请换一张图片试试吧！",
-  "details": {
-    "failed_index": 2
-  }
-}
-```
-`details.failed_index` 表示第几张图片未通过校验 (0-based)，供前端标识具体是哪张图片。
-
-### 2.2 获取宠物照片列表
-
-```
-GET /api/v1/pets/{pet_id}/photos?page=1&page_size=20
-Authorization: Bearer {access_token}
-```
-
-查询参数:
-- `page`: 页码，默认 1
-- `page_size`: 每页数量，默认 20，最大 50
-
-成功响应 (200):
-```json
-{
-  "photos": [...],
   "total": 150,
   "page": 1,
   "page_size": 20,
@@ -130,340 +260,140 @@ Authorization: Bearer {access_token}
 }
 ```
 
-排序: 按 taken_at 降序 (最新的在前)
+排序:
+- 先按 `taken_at` 降序
+- 再按 `created_at` 降序
+- 如仍相同，可按 `id` 降序稳定排序
 
 ### 2.3 删除照片
 
-```
+```http
 DELETE /api/v1/photos/{photo_id}
 Authorization: Bearer {access_token}
 ```
 
-成功响应 (204): No Content
+成功响应:
+- `204 No Content`
+
+权限:
+- 只要当前用户可以访问该照片所属宠物档案，就可以删除该照片
+- 不区分该照片是否由当前用户上传
 
 业务逻辑:
-- 验证用户对照片所属宠物档案的访问权限
-- 从 MinIO 删除原图和缩略图
-- 删除数据库记录
+1. 查询 `photo_id`
+2. 校验当前用户是否可以访问该照片所属宠物档案
+3. 删除 MinIO 原图与缩略图
+4. 删除数据库记录
 
-### 2.4 获取照片原图 URL (带签名)
+推荐错误码:
+- `404 PHOTO_NOT_FOUND`
+- `403 PHOTO_FORBIDDEN`
 
-```
+### 2.4 获取照片原图 URL
+
+```http
 GET /api/v1/photos/{photo_id}/url
 Authorization: Bearer {access_token}
 ```
 
-成功响应 (200):
+成功响应:
+
 ```json
 {
-  "url": "http://YOUR_SERVER_IP/media/pet-photos/1/xxx.jpg?X-Amz-...",
+  "url": "http://YOUR_SERVER_IP/media/pet-photos/1/a1b2c3d4.jpg?X-Amz-...",
   "expires_in": 3600
 }
 ```
 
-用途: 时间轴点击查看原图时使用。原图使用预签名 URL (1小时过期)，缩略图则使用固定的 `/media/...` 路径。
+说明:
+- 该接口用于查看原图
+- 原图通过 MinIO 预签名 URL 暴露，默认有效期 1 小时
+- 返回给客户端的签名 URL 必须使用外部统一入口域名，不能泄露 MinIO 内部地址
+- 缩略图则继续使用固定 `/media/...` 路径
+- `owner` 与 `member` 只要可以访问该宠物档案，都可以获取原图 URL
 
 ---
 
 ## 3. 后端实现要点
 
-### 3.1 宠物图片校验服务 (`app/services/image_recognition.py`)
+### 3.1 路由职责划分
 
-使用阿里云视觉智能开放平台的**场景识别 (RecognizeScene)** API，在照片上传时判断图片中是否包含猫/狗。
+建议保留 `photos` 模块，但按职责拆分清楚:
 
-**API 关键信息:**
-- **接口**: `RecognizeScene` (图像识别 imagerecog 2019-09-30)
-- **Endpoint**: `imagerecog.cn-shanghai.aliyuncs.com`
-- **Region**: `cn-shanghai`
-- **SDK**: `alibabacloud_imagerecog20190930`
-- **AccessKey**: 与短信服务共用同一组 AccessKey
-- **输入**: 图片文件流 (使用 `RecognizeSceneAdvanceRequest`，直接传入二进制流，无需先上传到 OSS)
-- **输出**: 场景标签列表，每个标签包含 `Value` (标签名) 和 `Confidence` (置信度)
+- Step 4:
+  - `POST /api/v1/pets/{pet_id}/photos`
+  - `GET /api/v1/pets/{pet_id}/photos`
+  - `DELETE /api/v1/photos/{photo_id}`
+  - `GET /api/v1/photos/{photo_id}/url`
+- Step 6:
+  - `GET /api/v1/photos/timeline`
 
-**API 文档参考**: `docs/本文档为您介绍场景识别常用语言和常见情况的示例代码.md`
+也就是说，Step 4 先完成“按宠物的照片管理”，Step 6 再完成“跨宠物聚合浏览”。
 
-**实现代码:**
+### 3.2 存储服务要求 (`app/services/storage.py`)
+
+建议在现有 MinIO 封装上补齐以下能力:
+
+- `upload_photo(...)`:
+  - 上传原图到 `MINIO_BUCKET_PHOTOS`
+  - 生成缩略图并上传到 `MINIO_BUCKET_THUMBNAILS`
+  - 返回 `storage_key`、`thumbnail_key`
+- `build_thumbnail_url(thumbnail_key)`:
+  - 拼出缩略图公开 URL
+- `get_photo_presigned_url(storage_key, expires_seconds=3600)`:
+  - 生成原图签名 URL
+- `delete_photo_objects(storage_key, thumbnail_key)`:
+  - 删除原图和缩略图
+
+实现要求:
+- `pet-thumbnails` 允许公开读
+- `pet-photos` 不依赖公开读，优先通过签名 URL 访问
+- 缩略图统一转成 JPEG，尺寸上限 `400x400`，质量 `80`
+
+### 3.3 图片识别服务 (`app/services/image_recognition.py`)
+
+建议封装为独立服务，避免把第三方 SDK 逻辑直接塞进路由。
+
+输出建议:
 
 ```python
-import io
-from alibabacloud_imagerecog20190930.client import Client
-from alibabacloud_imagerecog20190930.models import RecognizeSceneAdvanceRequest
-from alibabacloud_tea_openapi.models import Config
-from alibabacloud_tea_util.models import RuntimeOptions
-from app.config import settings
+class ImageRecognitionResult(TypedDict):
+    is_pet: bool
+    labels: list[str]
+    skipped: bool
+```
 
-# 宠物相关的场景标签关键词 (英文，阿里云场景识别返回英文标签)
-PET_KEYWORDS = {
-    'cat', 'dog', 'kitten', 'puppy', 'pet', 'animal',
-    'feline', 'canine', 'kitty', 'pup',
-    'tabby', 'persian', 'siamese', 'husky', 'poodle',
-    'golden retriever', 'labrador', 'corgi', 'shiba',
-    'british shorthair', 'ragdoll',
+语义:
+- `is_pet=True, skipped=False`: 明确识别为宠物图片
+- `is_pet=False, skipped=False`: 明确识别为非宠物图片
+- `is_pet=True, skipped=True`: 因服务异常或未配置而放行
+
+### 3.4 错误处理风格
+
+整个 Step 4 继续沿用项目统一错误结构:
+
+```json
+{
+  "code": "SOME_ERROR",
+  "message": "用户可读提示",
+  "details": {}
 }
-
-class ImageRecognitionService:
-    def __init__(self):
-        if settings.ALIYUN_ACCESS_KEY_ID and settings.ALIYUN_ACCESS_KEY_SECRET:
-            config = Config(
-                access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
-                access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
-                endpoint='imagerecog.cn-shanghai.aliyuncs.com',
-                region_id='cn-shanghai',
-            )
-            self.client = Client(config)
-        else:
-            self.client = None
-
-    async def is_pet_image(self, image_data: bytes) -> tuple[bool, list[str]]:
-        """
-        判断图片中是否包含宠物 (猫/狗)。
-        返回 (是否为宠物图片, 识别到的标签列表)。
-        开发模式 (未配置 AccessKey) 下直接放行。
-        """
-        if self.client is None:
-            print("[DEV ImageRecog] 未配置 AccessKey，跳过宠物图片校验")
-            return True, []
-
-        try:
-            request = RecognizeSceneAdvanceRequest()
-            request.image_urlobject = io.BytesIO(image_data)
-            runtime = RuntimeOptions()
-
-            response = self.client.recognize_scene_advance(request, runtime)
-            tags = response.body.data.tags if response.body.data else []
-
-            detected_labels = []
-            for tag in tags:
-                label = tag.value.lower() if tag.value else ''
-                confidence = tag.confidence if tag.confidence else 0
-                detected_labels.append(f"{tag.value}({confidence:.2f})")
-
-                # 检查标签是否包含宠物关键词
-                for keyword in PET_KEYWORDS:
-                    if keyword in label and confidence > 0.3:
-                        print(f"[ImageRecog] 识别到宠物标签: {tag.value} (置信度: {confidence:.2f})")
-                        return True, detected_labels
-
-            print(f"[ImageRecog] 未识别到宠物，标签: {detected_labels}")
-            return False, detected_labels
-
-        except Exception as e:
-            print(f"[ImageRecog Error] 场景识别异常: {e}")
-            # 识别服务异常时放行，避免阻塞正常上传
-            return True, []
-
-image_recognition_service = ImageRecognitionService()
 ```
 
-**需要安装的 SDK:**
-```
-pip install alibabacloud_imagerecog20190930
-```
+注意:
+- 请求级错误使用 `AppException`
+- 文件级失败不抛整批异常，而是进入 `failures`
+- 不再使用“整批抛 400 + `failed_index`”的旧设计
 
-**在照片上传 API 中集成校验:**
+### 3.5 事务与一致性建议
 
-```python
-# app/api/v1/photos.py 中的上传逻辑
-from app.services.image_recognition import image_recognition_service
+因为本步骤采用“部分成功”策略，所以不做整批数据库回滚。
 
-@router.post("/pets/{pet_id}/photos", status_code=201)
-async def upload_photos(
-    pet_id: int,
-    files: list[UploadFile],
-    taken_at: str = Form(...),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    # ... 权限和基础校验 ...
-
-    for index, file in enumerate(files):
-        content = await file.read()
-
-        # 宠物图片校验
-        is_pet, labels = await image_recognition_service.is_pet_image(content)
-        if not is_pet:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "PET_NOT_DETECTED",
-                    "message": "未识别到宠物，请换一张图片试试吧！",
-                    "details": {
-                        "failed_index": index,
-                        "detected_labels": labels,
-                    },
-                }
-            )
-
-        await file.seek(0)
-        # ... 后续上传逻辑 ...
-```
-
-**注意事项:**
-- 场景识别 API 按调用次数计费，每张图片调用一次
-- 阿里云视觉智能开放平台新用户有免费额度
-- 识别服务异常时**放行**上传，避免因第三方服务故障阻塞核心功能
-- 置信度阈值设为 0.3，宁可误放也不误拦（用户体验优先）
-- `PET_KEYWORDS` 列表可根据实际识别结果持续补充
-
-### 3.2 MinIO 存储服务 (`app/services/storage.py`)
-
-```python
-from minio import Minio
-from minio.error import S3Error
-from io import BytesIO
-from PIL import Image
-import uuid
-from app.config import settings
-
-class StorageService:
-    def __init__(self):
-        self.client = Minio(
-            settings.MINIO_ENDPOINT,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE,
-        )
-        self._ensure_buckets()
-
-    def _ensure_buckets(self):
-        for bucket in [
-            settings.MINIO_BUCKET_PHOTOS,
-            settings.MINIO_BUCKET_THUMBNAILS,
-            settings.MINIO_BUCKET_AVATARS,
-        ]:
-            if not self.client.bucket_exists(bucket):
-                self.client.make_bucket(bucket)
-
-    def upload_photo(self, pet_id: int, file_data: bytes, content_type: str) -> tuple[str, str]:
-        """上传原图并生成缩略图，返回 (storage_key, thumbnail_key)"""
-        ext = "jpg" if "jpeg" in content_type or "jpg" in content_type else "png"
-        file_uuid = str(uuid.uuid4())
-
-        # 上传原图
-        storage_key = f"{pet_id}/{file_uuid}.{ext}"
-        self.client.put_object(
-            settings.MINIO_BUCKET_PHOTOS,
-            storage_key,
-            BytesIO(file_data),
-            length=len(file_data),
-            content_type=content_type,
-        )
-
-        # 生成并上传缩略图
-        thumbnail_key = f"{pet_id}/{file_uuid}_thumb.jpg"
-        thumbnail_data = self._generate_thumbnail(file_data)
-        self.client.put_object(
-            settings.MINIO_BUCKET_THUMBNAILS,
-            thumbnail_key,
-            BytesIO(thumbnail_data),
-            length=len(thumbnail_data),
-            content_type="image/jpeg",
-        )
-
-        return storage_key, thumbnail_key
-
-    def _generate_thumbnail(self, image_data: bytes, max_size: tuple = (400, 400)) -> bytes:
-        img = Image.open(BytesIO(image_data))
-        img.thumbnail(max_size, Image.LANCZOS)
-        if img.mode in ("RGBA", "P"):
-            img = img.convert("RGB")
-        output = BytesIO()
-        img.save(output, format="JPEG", quality=80)
-        return output.getvalue()
-
-    def get_public_media_url(self, key: str) -> str:
-        return f"{settings.PUBLIC_BASE_URL}/media/{settings.MINIO_BUCKET_THUMBNAILS}/{key}"
-
-    def get_presigned_url(self, bucket: str, key: str, expires_hours: int = 1) -> str:
-        from datetime import timedelta
-        return self.client.presigned_get_object(bucket, key, expires=timedelta(hours=expires_hours))
-
-    def delete_object(self, bucket: str, key: str):
-        self.client.remove_object(bucket, key)
-
-storage_service = StorageService()
-```
-
-### 3.2 Pydantic Schema (`app/schemas/photo.py`)
-
-```python
-from pydantic import BaseModel
-from datetime import date, datetime
-
-class PhotoResponse(BaseModel):
-    id: int
-    pet_id: int
-    storage_key: str
-    thumbnail_key: str | None
-    thumbnail_url: str
-    taken_at: date
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-class PhotoUploadResponse(BaseModel):
-    photos: list[PhotoResponse]
-    count: int
-
-class PhotoListResponse(BaseModel):
-    photos: list[PhotoResponse]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-```
-
-### 3.3 文件验证
-
-```python
-ALLOWED_CONTENT_TYPES = {
-    "image/jpeg", "image/jpg", "image/png", "image/webp"
-}
-MAX_FILE_SIZE = 15 * 1024 * 1024  # 15MB
-MAX_FILES_PER_UPLOAD = 5
-
-async def validate_upload_files(files: list[UploadFile]):
-    if len(files) > MAX_FILES_PER_UPLOAD:
-        raise HTTPException(
-            400,
-            detail={
-                "code": "TOO_MANY_FILES",
-                "message": f"每次最多上传 {MAX_FILES_PER_UPLOAD} 张照片",
-                "details": {"max_files": MAX_FILES_PER_UPLOAD},
-            },
-        )
-    if len(files) == 0:
-        raise HTTPException(
-            400,
-            detail={
-                "code": "EMPTY_UPLOAD",
-                "message": "请至少上传一张照片",
-                "details": None,
-            },
-        )
-    for f in files:
-        if f.content_type not in ALLOWED_CONTENT_TYPES:
-            raise HTTPException(
-                400,
-                detail={
-                    "code": "UNSUPPORTED_IMAGE_TYPE",
-                    "message": f"不支持的文件格式: {f.content_type}",
-                    "details": {"content_type": f.content_type},
-                },
-            )
-        content = await f.read()
-        if len(content) > MAX_FILE_SIZE:
-            raise HTTPException(
-                400,
-                detail={
-                    "code": "FILE_TOO_LARGE",
-                    "message": f"文件 {f.filename} 超过 15MB 限制",
-                    "details": {"max_file_size": MAX_FILE_SIZE},
-                },
-            )
-        await f.seek(0)
-```
+建议实现原则:
+- 每个文件独立处理
+- 单文件内部尽量保持“存储成功后再写库”
+- 如果原图已上传但缩略图或写库失败，要尽量做该文件级补偿删除
+- 失败文件不能影响同批次后续文件
 
 ---
 
@@ -471,7 +401,7 @@ async def validate_upload_files(files: list[UploadFile]):
 
 ### 4.1 页面布局
 
-```
+```text
 ┌─────────────────────────────────┐
 │  橘子 ▼    (宠物选择器)           │
 ├─────────────────────────────────┤
@@ -481,208 +411,202 @@ async def validate_upload_files(files: list[UploadFile]):
 │  │ 📷  │ │ 📷  │ │ 添加 │      │
 │  │     │ │     │ │     │      │
 │  └──×──┘ └──×──┘ └─────┘      │
-│  (已选照片预览，右上角×可删除)      │
-│  (最多5张，横向滚动)              │
+│  (已选照片预览，最多 5 张)         │
 │                                 │
 │  拍摄日期                        │
 │  ┌─────────────────────────┐    │
 │  │  2024-01-15    📅        │    │
 │  └─────────────────────────┘    │
-│  (从EXIF自动获取，可手动修改)      │
-│                                 │
+│  (默认取 EXIF，可手动修改)         │
 │                                 │
 │  ┌─────────────────────────┐    │
 │  │       记录完成            │    │
 │  └─────────────────────────┘    │
 │                                 │
 └─────────────────────────────────┘
-│  记录  │  健康  │ 时间轴 │  AI  │ 我的 │
-└─────────────────────────────────┘
 ```
 
 ### 4.2 交互流程
 
-1. **页面初始状态**: 显示宠物选择器 (如果有多个档案)，照片区域显示一个「+」添加按钮
-2. **选择照片**: 点击「+」打开图片选择器 (支持相册选择和拍照)
-   - 支持多选，最多 5 张
-   - 选择后显示缩略图预览
-   - 每张预览图右上角有「×」按钮可移除
-   - 如果已选 5 张，隐藏「+」按钮
-3. **日期提取与设置**:
-   - 选择照片后自动尝试提取 EXIF 日期
-   - 按照片选择顺序，使用第一个成功提取到日期的值
-   - 如果所有照片都没有 EXIF 日期信息，默认使用当天日期
-   - 日期输入框始终可编辑，点击弹出日期选择器
-4. **提交记录**: 点击「记录完成」按钮
-   - 按钮需要同时满足: 已选择宠物 + 已选择至少 1 张照片
-   - 提交时显示上传进度
-   - 成功后弹出 SnackBar 提示「记录完成」
-   - 页面重置: 清空已选照片，日期恢复为当天
+1. 页面初始状态:
+   - 显示宠物选择器
+   - 如果没有宠物档案，显示“请先创建宠物档案”的空状态与跳转入口
+   - 照片区域默认显示一个「+」添加按钮
+2. 选择照片:
+   - 点击「+」弹出操作菜单: `从相册选择` / `拍照`
+   - 相册支持多选，相机一次新增 1 张
+   - 总数最多 5 张，超过上限时禁止继续添加
+   - 每张缩略图右上角有删除按钮
+3. HEIC/HEIF 处理:
+   - 选图后先检查格式
+   - 如果是 `HEIC/HEIF`，客户端先转为 `JPEG`
+   - 转换后的临时文件继续参与 EXIF 处理与上传
+4. 日期处理:
+   - 初次选图后，自动从当前已选图片中提取**第一个有效 EXIF 日期**
+   - 如果所有图片都没有 EXIF，默认当天
+   - 日期框可手动修改，修改后将 `isDateManuallyEdited = true`
+   - 当用户手动改过日期后，再继续加图或删图时，不再自动覆盖该日期
+   - 只有在“清空全部已选图片”或“本次上传全部成功并重置页面”后，才把手动修改标记重置
+5. 点击“记录完成”:
+   - 必须满足“已选宠物 + 至少 1 张照片”
+   - 提交期间禁用按钮和删除操作
+   - 显示上传进度对话框
+6. 处理上传结果:
+   - 全部成功: 弹出 `SnackBar`，页面重置
+   - 部分成功: 弹出结果摘要，移除成功项，保留失败项，方便用户重试
+   - 全部失败: 保留全部已选图片，展示失败原因列表
 
-### 4.3 EXIF 日期提取 (`utils/exif_helper.dart`)
+### 4.3 EXIF 日期提取 (`frontend/lib/utils/exif_helper.dart`)
 
-```dart
-import 'dart:io';
-import 'package:exif/exif.dart';
+建议职责:
+- `extractDate(File imageFile)`: 提取单张日期
+- `extractFirstValidDate(List<File> files)`: 按顺序取第一张有效日期
 
-class ExifHelper {
-  /// 从图片文件提取拍摄日期
-  /// 返回 null 表示无法提取
-  static Future<DateTime?> extractDate(File imageFile) async {
-    try {
-      final bytes = await imageFile.readAsBytes();
-      final data = await readExifFromBytes(bytes);
+优先字段:
+1. `EXIF DateTimeOriginal`
+2. `EXIF DateTimeDigitized`
+3. `Image DateTime`
 
-      if (data.isEmpty) return null;
-
-      // 优先使用 DateTimeOriginal
-      final dateStr = data['EXIF DateTimeOriginal']?.printable ??
-                      data['EXIF DateTimeDigitized']?.printable ??
-                      data['Image DateTime']?.printable;
-
-      if (dateStr == null) return null;
-
-      // EXIF 日期格式: "2024:01:15 10:30:00"
-      final parts = dateStr.split(' ');
-      if (parts.isEmpty) return null;
-      final datePart = parts[0].replaceAll(':', '-');
-      return DateTime.tryParse(datePart);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 从多张照片中提取第一个有效日期
-  static Future<DateTime?> extractFirstValidDate(List<File> files) async {
-    for (final file in files) {
-      final date = await extractDate(file);
-      if (date != null) return date;
-    }
-    return null;
-  }
-}
-```
+异常处理:
+- 读取失败时返回 `null`
+- 不要因为某一张 EXIF 解析失败影响整批选图
 
 ### 4.4 照片选择与预览组件
 
-```dart
-// 使用 image_picker 包
-final ImagePicker _picker = ImagePicker();
+组件建议:
+- `photo_picker_grid.dart`
 
-// 选择多张照片
-Future<void> _pickImages() async {
-  final remaining = 5 - _selectedImages.length;
-  if (remaining <= 0) return;
-
-  final List<XFile> images = await _picker.pickMultiImage(
-    maxWidth: null,  // 保持原图
-    maxHeight: null,
-    imageQuality: null,
-  );
-
-  if (images.isNotEmpty) {
-    final toAdd = images.take(remaining).toList();
-    setState(() {
-      _selectedImages.addAll(toAdd);
-    });
-    // 提取 EXIF 日期
-    _updateDateFromExif();
-  }
-}
-```
+功能要求:
+- 展示本地缩略图
+- 支持删除单张
+- 当已选张数 < 5 时显示添加卡片
+- 当已选张数 = 5 时隐藏添加卡片
+- 支持为失败项显示错误角标或错误文案
 
 ### 4.5 上传进度展示
 
-上传多张照片时，显示进度对话框:
+由于上传采用单次 `multipart/form-data` 请求，进度展示以**总字节百分比**为准，不以“第几张 / 第几张”作为唯一进度来源。
 
-```
+推荐展示:
+
+```text
 ┌─────────────────────┐
 │   正在上传照片...     │
-│   ████████░░ 3/5    │
-│                     │
-│   请勿关闭页面       │
+│   ██████░░░░ 46%    │
+│   共 5 张，请勿关闭页面 │
 └─────────────────────┘
 ```
 
-使用 Dio 的 `onSendProgress` 回调显示上传进度。
+实现建议:
+- 使用 Dio 的 `onSendProgress(sent, total)`
+- UI 展示百分比和已选总张数
+- 请求完成后关闭进度框，再处理成功/失败摘要
 
-### 4.6 API 调用 (`services/photo_service.dart`)
+### 4.6 上传结果反馈
+
+前端需要区分三种情况:
+
+### 全部成功
+- 提示: `记录完成，已上传 3 张照片`
+- 页面行为:
+  - 清空已选图片
+  - 日期恢复为当天
+  - `isDateManuallyEdited = false`
+
+### 部分成功
+- 提示: `已成功上传 2 张，失败 1 张`
+- 页面行为:
+  - 从已选列表中移除成功项
+  - 保留失败项，便于用户删除或重新提交
+  - 日期保持当前值，不自动重置
+- 结果展示:
+  - 至少展示失败文件名和失败原因
+
+### 全部失败
+- 提示: `本次未成功上传，请检查失败原因后重试`
+- 页面行为:
+  - 保留全部已选图片
+  - 日期保持当前值
+
+### 4.7 API 调用 (`frontend/lib/services/photo_service.dart`)
+
+建议模型:
 
 ```dart
-class PhotoService {
-  final ApiClient _apiClient;
+class PhotoUploadSuccess {
+  final int index;
+  final String filename;
+  final Photo photo;
+}
 
-  PhotoService(this._apiClient);
+class PhotoUploadFailure {
+  final int index;
+  final String filename;
+  final String code;
+  final String message;
+  final Map<String, dynamic>? details;
+}
 
-  Future<PhotoUploadResponse> uploadPhotos({
-    required int petId,
-    required List<File> files,
-    required DateTime takenAt,
-  }) async {
-    final formData = FormData();
-
-    for (final file in files) {
-      formData.files.add(MapEntry(
-        'files',
-        await MultipartFile.fromFile(file.path),
-      ));
-    }
-
-    formData.fields.add(MapEntry(
-      'taken_at',
-      '${takenAt.year}-${takenAt.month.toString().padLeft(2, '0')}-${takenAt.day.toString().padLeft(2, '0')}',
-    ));
-
-    final response = await _apiClient.dio.post(
-      '/pets/$petId/photos',
-      data: formData,
-    );
-
-    return PhotoUploadResponse.fromJson(response.data);
-  }
+class PhotoUploadResponse {
+  final List<PhotoUploadSuccess> successes;
+  final List<PhotoUploadFailure> failures;
+  final int successCount;
+  final int failureCount;
+  final int totalCount;
 }
 ```
 
+调用要求:
+- 使用 `FormData`
+- 所有文件字段都使用 `files`
+- `taken_at` 按 `YYYY-MM-DD` 提交
+- 使用 `onSendProgress` 更新上传进度
+
 ---
 
-## 5. 需要创建/修改的文件清单
+## 5. 需要创建或修改的文件清单
 
 ### 后端
-- `backend/app/services/image_recognition.py` - 宠物图片校验服务 (新建)
-- `backend/app/services/storage.py` - MinIO 存储服务 (新建或补充)
-- `backend/app/schemas/photo.py` - 照片 Schema (新建)
-- `backend/app/api/v1/photos.py` - 照片路由，含宠物图片校验 (新建)
-- `backend/app/api/v1/router.py` - 注册 photos 路由 (修改)
-- `backend/requirements.txt` - 添加 `alibabacloud_imagerecog20190930` (修改)
+- `backend/app/services/image_recognition.py` - 宠物图片校验服务
+- `backend/app/services/storage.py` - 补充照片上传、缩略图、签名 URL、删除能力
+- `backend/app/schemas/photo.py` - 补充照片响应模型与上传结果模型
+- `backend/app/api/v1/photos.py` - 实现 Step 4 照片相关接口
+- `backend/app/api/v1/router.py` - 确认 photos 路由注册
 
 ### 前端
-- `frontend/lib/models/photo.dart` - 照片数据模型 (新建)
-- `frontend/lib/services/photo_service.dart` - 照片 API 服务 (新建)
-- `frontend/lib/screens/record/record_screen.dart` - 记录页面 (实现)
-- `frontend/lib/utils/exif_helper.dart` - EXIF 日期提取 (新建)
-- `frontend/lib/widgets/photo_picker_grid.dart` - 照片选择预览组件 (新建)
+- `frontend/lib/models/photo.dart` - 照片数据模型
+- `frontend/lib/services/photo_service.dart` - 照片 API 服务
+- `frontend/lib/screens/record/record_screen.dart` - 记录页面
+- `frontend/lib/utils/exif_helper.dart` - EXIF 日期提取
+- `frontend/lib/widgets/photo_picker_grid.dart` - 照片选择预览组件
 
 ---
 
 ## 6. 验收标准
 
 - [ ] 后端 `POST /api/v1/pets/{id}/photos` 支持上传 1-5 张照片
-- [ ] 后端正确验证文件类型 (JPEG/PNG/WEBP) 和大小 (<= 15MB)
-- [ ] Flutter 在选择 HEIC/HEIF 时先转换为 JPEG 再上传
+- [ ] 上传接口采用 `200` + `successes` / `failures` 聚合返回
+- [ ] 服务端会继续处理整批文件，不会因单张失败而提前中断
+- [ ] 文件级失败会返回 `index`、`filename`、`code`、`message`、`details`
+- [ ] 请求级错误与文件级失败语义清晰分离
+- [ ] 后端正确验证文件类型 (`JPEG/PNG/WEBP`) 和大小 (`<= 15MB`)
+- [ ] Flutter 在选择 `HEIC/HEIF` 时先转换为 `JPEG`
 - [ ] 后端调用阿里云场景识别 API 校验图片是否包含宠物
-- [ ] 上传非宠物图片时返回 400 错误: "未识别到宠物，请换一张图片试试吧！"
-- [ ] 场景识别服务异常时放行上传，不阻塞正常流程
+- [ ] 识别明确不是宠物时，单文件进入 `failures`
+- [ ] 识别服务异常时放行上传，不阻塞正常流程
 - [ ] 后端自动生成缩略图并存储到 MinIO
 - [ ] 后端 `GET /api/v1/pets/{id}/photos` 分页返回照片列表
 - [ ] 后端 `DELETE /api/v1/photos/{id}` 删除照片及 MinIO 文件
-- [ ] Flutter 记录页面展示宠物选择器
-- [ ] Flutter 可以从相册选择多张照片 (最多5张)
+- [ ] 后端 `GET /api/v1/photos/{id}/url` 返回原图签名 URL
+- [ ] `owner` 与 `member` 都可以上传照片
+- [ ] 只要能访问档案，`member` 也可以删除该档案下任意照片
+- [ ] Flutter 记录页面展示宠物选择器和无档案空状态
+- [ ] Flutter 可以从相册多选照片，并支持拍照追加
 - [ ] Flutter 照片预览正确显示，可以删除单张
 - [ ] Flutter 自动从 EXIF 提取日期并填入日期输入框
 - [ ] Flutter 多张照片时使用第一个有效 EXIF 日期
-- [ ] Flutter 无 EXIF 日期时默认为当天
-- [ ] Flutter 日期输入框可以手动编辑
-- [ ] Flutter 上传时显示进度
-- [ ] Flutter 上传成功后弹出提示，页面重置
-- [ ] 无宠物档案时提示用户先创建档案
-- [ ] Flutter 上传非宠物图片时正确展示拒绝提示信息
+- [ ] Flutter 手动修改日期后，不会因继续加图或删图而被自动覆盖
+- [ ] Flutter 上传时显示总进度百分比
+- [ ] 全部成功后页面重置
+- [ ] 部分成功时保留失败项，便于重试
+- [ ] Flutter 能正确展示非宠物图片等失败原因
