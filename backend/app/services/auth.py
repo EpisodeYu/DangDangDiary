@@ -1,3 +1,4 @@
+import secrets
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -8,6 +9,10 @@ from app.models.user import User
 from app.services import redis as redis_service
 from app.services import sms as sms_service
 from app.utils.security import create_access_token, create_refresh_token, decode_token
+
+
+def _generate_default_nickname() -> str:
+    return f"用户{secrets.token_hex(4)}"
 
 
 async def send_code(phone: str):
@@ -31,7 +36,7 @@ async def login(phone: str, code: str, db: AsyncSession) -> tuple[str, str, User
     user = result.scalar_one_or_none()
 
     if user is None:
-        user = User(phone=phone)
+        user = User(phone=phone, nickname=_generate_default_nickname())
         db.add(user)
         await db.flush()
 

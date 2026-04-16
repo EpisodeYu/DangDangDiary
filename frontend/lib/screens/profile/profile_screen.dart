@@ -44,12 +44,25 @@ class ProfileScreen extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        user?.nickname ?? '未设置昵称',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.textPrimary,
+                      GestureDetector(
+                        onTap: () => _showEditNicknameDialog(context, ref, user?.nickname),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                user?.nickname ?? '未设置昵称',
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppTheme.textPrimary,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.edit, size: 16, color: AppTheme.textSecondary),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -110,6 +123,46 @@ class ProfileScreen extends ConsumerWidget {
       title: Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
       trailing: const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
       onTap: onTap,
+    );
+  }
+
+  void _showEditNicknameDialog(BuildContext context, WidgetRef ref, String? currentNickname) {
+    final controller = TextEditingController(text: currentNickname ?? '');
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('修改昵称'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 50,
+          decoration: InputDecoration(
+            hintText: '请输入昵称',
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final nickname = controller.text.trim();
+              if (nickname.isEmpty) return;
+              Navigator.of(ctx).pop();
+              final success = await ref.read(authProvider.notifier).updateNickname(nickname);
+              if (!success && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('昵称修改失败，请重试')),
+                );
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
     );
   }
 

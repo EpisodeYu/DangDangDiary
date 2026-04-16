@@ -52,7 +52,12 @@ class PetService {
     return Pet.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<Pet> uploadAvatar(int petId, Uint8List bytes, String filename) async {
+  Future<Pet> uploadAvatar(
+    int petId,
+    Uint8List bytes,
+    String filename, {
+    ProgressCallback? onSendProgress,
+  }) async {
     final formData = FormData.fromMap({
       'file': MultipartFile.fromBytes(bytes, filename: filename),
     });
@@ -60,6 +65,7 @@ class PetService {
       '/pets/$petId/avatar',
       data: formData,
       options: Options(contentType: 'multipart/form-data'),
+      onSendProgress: onSendProgress,
     );
     return Pet.fromJson(resp.data as Map<String, dynamic>);
   }

@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -15,10 +17,13 @@ class ApiClient {
   ApiClient._internal() {
     dio = Dio(BaseOptions(
       baseUrl: '${AppConstants.baseUrl}${AppConstants.apiPrefix}',
-      connectTimeout: const Duration(seconds: 10),
+      connectTimeout: const Duration(seconds: 15),
       receiveTimeout: const Duration(seconds: 30),
+      sendTimeout: const Duration(seconds: 60),
       headers: {'Content-Type': 'application/json'},
     ));
+
+    dio.interceptors.add(_RetryInterceptor(dio));
 
     if (kDebugMode) {
       dio.interceptors.add(LogInterceptor(
@@ -67,8 +72,8 @@ class ApiClient {
         try {
           final refreshDio = Dio(BaseOptions(
             baseUrl: '${AppConstants.baseUrl}${AppConstants.apiPrefix}',
-            connectTimeout: const Duration(seconds: 10),
-            receiveTimeout: const Duration(seconds: 10),
+            connectTimeout: const Duration(seconds: 15),
+            receiveTimeout: const Duration(seconds: 15),
           ));
           final resp = await refreshDio.post(
             '/auth/refresh',
@@ -91,5 +96,51 @@ class ApiClient {
         }
       },
     ));
+  }
+}
+
+class _RetryInterceptor extends Interceptor {
+  final Dio _dio;
+  static const _maxRetries = 2;
+  static const _extraKey = '_retryCount';
+
+  _RetryInterceptor(this._dio);
+
+  bool _shouldRetry(DioException err) {
+    if (err.requestOptions.extra['_retried'] == true) return false;
+
+    switch (err.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+      case DioExceptionType.connectionError:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    final retryCount = (err.requestOptions.extra[_extraKey] as int?) ?? 0;
+
+    if (!_shouldRetry(err) || retryCount >= _maxRetries) {
+      handler.next(err);
+      return;
+    }
+
+    final delay = Duration(milliseconds: 500 * pow(2, retryCount).toInt());
+    await Future.delayed(delay);
+
+    final opts = err.requestOptions;
+    opts.extra[_extraKey] = retryCount + 1;
+
+    try {
+      debugPrint('[API] Retry ${retryCount + 1}/$_maxRetries: ${opts.method} ${opts.path}');
+      final resp = await _dio.fetch(opts);
+      handler.resolve(resp);
+    } on DioException catch (e) {
+      handler.next(e);
+    }
   }
 }

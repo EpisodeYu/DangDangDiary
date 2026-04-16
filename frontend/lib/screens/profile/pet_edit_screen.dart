@@ -41,6 +41,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   Pet? _existingPet;
   bool _isLoading = false;
   bool _isInitialized = false;
+  double? _uploadProgress;
 
   bool get _isEditing => widget.petId != null;
 
@@ -92,6 +93,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             _buildBirthdayField(),
             const SizedBox(height: 32),
             _buildSaveButton(),
+            if (_isEditing) ...[
+              const SizedBox(height: 16),
+              _buildDeleteButton(),
+            ],
           ],
         ),
       ),
@@ -99,9 +104,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   }
 
   Widget _buildAvatarSection() {
+    final isUploading = _uploadProgress != null;
     return Center(
       child: GestureDetector(
-        onTap: _isEditing ? _pickAndUploadAvatar : _pickAvatar,
+        onTap: isUploading ? null : (_isEditing ? _pickAndUploadAvatar : _pickAvatar),
         child: Stack(
           children: [
             CircleAvatar(
@@ -116,19 +122,41 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                   ? const Icon(Icons.camera_alt, size: 32, color: AppTheme.primaryColor)
                   : null,
             ),
-            Positioned(
-              bottom: 0,
-              right: 0,
-              child: Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+            if (isUploading)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withValues(alpha: 0.5),
+                  ),
+                  child: Center(
+                    child: SizedBox(
+                      width: 48,
+                      height: 48,
+                      child: CircularProgressIndicator(
+                        value: _uploadProgress,
+                        strokeWidth: 3,
+                        color: Colors.white,
+                        backgroundColor: Colors.white.withValues(alpha: 0.3),
+                      ),
+                    ),
+                  ),
                 ),
-                child: const Icon(Icons.edit, size: 14, color: Colors.white),
               ),
-            ),
+            if (!isUploading)
+              Positioned(
+                bottom: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    color: AppTheme.primaryColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                  ),
+                  child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                ),
+              ),
           ],
         ),
       ),
@@ -292,6 +320,68 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     );
   }
 
+  Widget _buildDeleteButton() {
+    return SizedBox(
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: _isLoading ? null : _confirmAndDelete,
+        icon: const Icon(Icons.delete_outline),
+        label: const Text('删除此宠物档案', style: TextStyle(fontSize: 16)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.errorColor,
+          side: const BorderSide(color: AppTheme.errorColor),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmAndDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除宠物档案'),
+        content: const Text('删除后将清除该宠物的所有数据，包括照片、体重、驱虫和疫苗记录。此操作不可恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(petServiceProvider).deletePet(widget.petId!);
+
+      final selectedId = ref.read(selectedPetIdProvider);
+      if (selectedId == widget.petId) {
+        ref.read(selectedPetIdProvider.notifier).select(null);
+      }
+      ref.read(petListProvider.notifier).refresh();
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('删除失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _pickBirthday() async {
     final picked = await showDatePicker(
       context: context,
@@ -328,19 +418,35 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     });
 
     if (widget.petId != null) {
+      setState(() => _uploadProgress = 0);
       try {
         await ref.read(petServiceProvider).uploadAvatar(
           widget.petId!,
           bytes,
           file.name,
+          onSendProgress: (sent, total) {
+            if (mounted && total > 0) {
+              setState(() => _uploadProgress = sent / total);
+            }
+          },
         );
         ref.read(petListProvider.notifier).refresh();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('头像上传成功'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('头像上传失败: $e')),
           );
         }
+      } finally {
+        if (mounted) setState(() => _uploadProgress = null);
       }
     }
   }
@@ -371,7 +477,18 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         );
 
         if (_avatarBytes != null && _avatarFilename != null) {
-          await service.uploadAvatar(created.id, _avatarBytes!, _avatarFilename!);
+          setState(() => _uploadProgress = 0);
+          await service.uploadAvatar(
+            created.id,
+            _avatarBytes!,
+            _avatarFilename!,
+            onSendProgress: (sent, total) {
+              if (mounted && total > 0) {
+                setState(() => _uploadProgress = sent / total);
+              }
+            },
+          );
+          if (mounted) setState(() => _uploadProgress = null);
         }
 
         ref.read(selectedPetIdProvider.notifier).select(created.id);
