@@ -11,21 +11,28 @@ class PhotoService {
   Future<PhotoUploadResponse> uploadPhotos({
     required int petId,
     required List<File> files,
-    required String takenAt,
+    required List<String> takenAtDates,
     ProgressCallback? onSendProgress,
   }) async {
-    final formData = FormData.fromMap({
-      'taken_at': takenAt,
-      'files': files.map((f) {
-        final filename = f.path.split('/').last;
-        return MultipartFile.fromFileSync(f.path, filename: filename);
-      }).toList(),
-    });
+    final formData = FormData();
+    for (final date in takenAtDates) {
+      formData.fields.add(MapEntry('taken_at', date));
+    }
+    for (final f in files) {
+      final filename = f.path.split('/').last;
+      formData.files.add(MapEntry(
+        'files',
+        MultipartFile.fromFileSync(f.path, filename: filename),
+      ));
+    }
 
     final resp = await _dio.post(
       '/pets/$petId/photos',
       data: formData,
-      options: Options(contentType: 'multipart/form-data'),
+      options: Options(
+        sendTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 120),
+      ),
       onSendProgress: onSendProgress,
     );
 

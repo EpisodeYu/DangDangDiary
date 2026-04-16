@@ -57,10 +57,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     safe_errors = []
     for error in errors:
+        loc = error.get("loc")
         safe_error = {
-            "loc": error.get("loc"),
-            "msg": error.get("msg", ""),
-            "type": error.get("type", ""),
+            "loc": [str(part) for part in loc] if loc else [],
+            "msg": str(error.get("msg", "")),
+            "type": str(error.get("type", "")),
         }
         safe_errors.append(safe_error)
 

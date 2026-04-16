@@ -54,7 +54,7 @@ def _photo_to_response(photo: Photo) -> PhotoResponse:
 @router.post("/pets/{pet_id}/photos", response_model=PhotoUploadResponse)
 async def upload_photos(
     pet_id: int,
-    taken_at: str = Form(...),
+    taken_at: list[str] = Form(...),
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -67,10 +67,15 @@ async def upload_photos(
     if len(files) > MAX_FILES_PER_UPLOAD:
         raise AppException(400, "TOO_MANY_FILES", f"一次最多上传 {MAX_FILES_PER_UPLOAD} 张照片")
 
-    try:
-        parsed_date = date.fromisoformat(taken_at)
-    except (ValueError, TypeError):
-        raise AppException(400, "INVALID_TAKEN_AT", "拍摄日期格式不正确，请使用 YYYY-MM-DD 格式")
+    if len(taken_at) != len(files):
+        raise AppException(400, "TAKEN_AT_MISMATCH", "拍摄日期数量必须与照片数量一致")
+
+    parsed_dates: list[date] = []
+    for ta in taken_at:
+        try:
+            parsed_dates.append(date.fromisoformat(ta))
+        except (ValueError, TypeError):
+            raise AppException(400, "INVALID_TAKEN_AT", f"拍摄日期格式不正确：{ta}，请使用 YYYY-MM-DD 格式")
 
     successes: list[PhotoUploadSuccess] = []
     failures: list[PhotoUploadFailure] = []
@@ -124,7 +129,7 @@ async def upload_photos(
                 user_id=current_user.id,
                 storage_key=storage_key,
                 thumbnail_key=thumbnail_key,
-                taken_at=parsed_date,
+                taken_at=parsed_dates[idx],
                 created_at=datetime.utcnow(),
             )
             db.add(photo)

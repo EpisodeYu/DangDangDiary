@@ -15,7 +15,6 @@ import '../../providers/pet_provider.dart';
 import '../../services/photo_service.dart';
 import '../../utils/exif_helper.dart';
 import '../../widgets/pet_selector.dart';
-import '../../widgets/photo_picker_grid.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 
@@ -28,14 +27,19 @@ class RecordScreen extends ConsumerStatefulWidget {
 
 class _RecordScreenState extends ConsumerState<RecordScreen> {
   final List<File> _selectedFiles = [];
-  DateTime _takenAt = DateTime.now();
-  bool _isDateManuallyEdited = false;
+  final List<DateTime> _photoDates = [];
   bool _isUploading = false;
-  double _uploadProgress = 0;
+  final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
   Map<int, String> _failureMessages = {};
 
   final _picker = ImagePicker();
   final _dateFormat = DateFormat('yyyy-MM-dd');
+
+  @override
+  void dispose() {
+    _uploadProgress.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -64,29 +68,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       return _buildEmptyState();
     }
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildSectionLabel('选择照片'),
-          const SizedBox(height: 8),
-          PhotoPickerGrid(
-            selectedFiles: _selectedFiles,
-            failureMessages: _failureMessages,
-            enabled: !_isUploading,
-            onAddTap: _showAddPhotoOptions,
-            onRemoveTap: _removePhoto,
-          ),
-          const SizedBox(height: 24),
-          _buildSectionLabel('拍摄日期'),
-          const SizedBox(height: 8),
-          _buildDatePicker(),
-          const SizedBox(height: 32),
-          _buildSubmitButton(),
-        ],
-      ),
-    );
+    if (_selectedFiles.isEmpty) {
+      return _buildInitialState();
+    }
+
+    return _buildPhotoListState();
   }
 
   Widget _buildEmptyState() {
@@ -112,55 +98,202 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     );
   }
 
-  Widget _buildSectionLabel(String text) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 15,
-        fontWeight: FontWeight.w600,
-        color: AppTheme.textPrimary,
-      ),
-    );
-  }
-
-  Widget _buildDatePicker() {
+  Widget _buildInitialState() {
     return GestureDetector(
-      onTap: _isUploading ? null : _pickDate,
+      onTap: _showAddPhotoOptions,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300),
-        ),
-        child: Row(
+        color: AppTheme.secondaryColor.withValues(alpha: 0.15),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Expanded(
-              child: Text(
-                _dateFormat.format(_takenAt),
-                style: const TextStyle(fontSize: 16, color: AppTheme.textPrimary),
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppTheme.secondaryColor.withValues(alpha: 0.4),
+                shape: BoxShape.circle,
               ),
+              child: const Icon(Icons.add_a_photo_outlined, size: 36, color: AppTheme.primaryColor),
             ),
-            const Icon(Icons.calendar_today, color: AppTheme.textSecondary, size: 20),
+            const SizedBox(height: 16),
+            const Text(
+              '点击添加照片',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '支持从相册选择或拍照，最多5张',
+              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSubmitButton() {
-    final canSubmit = _selectedFiles.isNotEmpty && !_isUploading;
-    return SizedBox(
-      height: 50,
-      child: ElevatedButton(
-        onPressed: canSubmit ? _submit : null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppTheme.primaryColor,
-          foregroundColor: Colors.white,
-          disabledBackgroundColor: Colors.grey.shade300,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+  Widget _buildPhotoListState() {
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            itemCount: _selectedFiles.length + (_selectedFiles.length < 5 && !_isUploading ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index < _selectedFiles.length) {
+                return _buildPhotoCard(index);
+              }
+              return _buildAddMoreButton();
+            },
+          ),
         ),
-        child: const Text('记录完成', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        _buildBottomSubmitBar(),
+      ],
+    );
+  }
+
+  Widget _buildPhotoCard(int index) {
+    final file = _selectedFiles[index];
+    final date = _photoDates[index];
+    final failureMsg = _failureMessages[index];
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Photo preview with remove button
+          Stack(
+            children: [
+              ClipRRect(
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                child: AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: Image.file(file, fit: BoxFit.cover, cacheWidth: 600),
+                ),
+              ),
+              if (!_isUploading)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: GestureDetector(
+                    onTap: () => _removePhoto(index),
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.close, size: 16, color: Colors.white),
+                    ),
+                  ),
+                ),
+              if (failureMsg != null)
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor.withValues(alpha: 0.85),
+                    ),
+                    child: Text(
+                      failureMsg,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          // Date picker row
+          GestureDetector(
+            onTap: _isUploading ? null : () => _pickDateForPhoto(index),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.calendar_today, size: 18, color: AppTheme.textSecondary),
+                  const SizedBox(width: 8),
+                  Text(
+                    _dateFormat.format(date),
+                    style: const TextStyle(fontSize: 15, color: AppTheme.textPrimary),
+                  ),
+                  const Spacer(),
+                  Icon(Icons.chevron_right, size: 20, color: Colors.grey.shade400),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAddMoreButton() {
+    return GestureDetector(
+      onTap: _showAddPhotoOptions,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        height: 64,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.add, size: 22, color: Colors.grey.shade500),
+            const SizedBox(width: 6),
+            Text(
+              '继续添加照片',
+              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBottomSubmitBar() {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        height: 50,
+        child: ElevatedButton(
+          onPressed: _isUploading ? null : _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: Colors.grey.shade300,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+          child: const Text('记录完成', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        ),
       ),
     );
   }
@@ -217,11 +350,19 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final actualToAdd = files.take(5 - _selectedFiles.length).toList();
     if (actualToAdd.isEmpty) return;
 
+    // Extract EXIF dates for each new photo
+    final dates = <DateTime>[];
+    for (final file in actualToAdd) {
+      final exifDate = await ExifHelper.extractDate(file);
+      dates.add(exifDate ?? DateTime.now());
+    }
+
+    if (!mounted) return;
     setState(() {
       _selectedFiles.addAll(actualToAdd);
+      _photoDates.addAll(dates);
       _failureMessages = {};
     });
-    await _autoFillDate();
   }
 
   Future<void> _takePhoto() async {
@@ -231,11 +372,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final converted = await _ensureJpeg(xfile);
 
     if (_selectedFiles.length >= 5) return;
+
+    if (!mounted) return;
     setState(() {
       _selectedFiles.add(converted);
+      _photoDates.add(DateTime.now());
       _failureMessages = {};
     });
-    await _autoFillDate();
   }
 
   Future<File> _ensureJpeg(XFile xfile) async {
@@ -257,35 +400,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   void _removePhoto(int index) {
     setState(() {
       _selectedFiles.removeAt(index);
+      _photoDates.removeAt(index);
       _failureMessages = {};
-      if (_selectedFiles.isEmpty) {
-        _isDateManuallyEdited = false;
-        _takenAt = DateTime.now();
-      }
     });
   }
 
-  Future<void> _autoFillDate() async {
-    if (_isDateManuallyEdited) return;
-    final exifDate = await ExifHelper.extractFirstValidDate(_selectedFiles);
-    if (!mounted) return;
-    setState(() {
-      _takenAt = exifDate ?? DateTime.now();
-    });
-  }
-
-  Future<void> _pickDate() async {
+  Future<void> _pickDateForPhoto(int index) async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _takenAt,
+      initialDate: _photoDates[index],
       firstDate: DateTime(2000),
       lastDate: DateTime.now(),
     );
     if (picked != null) {
-      setState(() {
-        _takenAt = picked;
-        _isDateManuallyEdited = true;
-      });
+      setState(() => _photoDates[index] = picked);
     }
   }
 
@@ -295,21 +423,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     setState(() {
       _isUploading = true;
-      _uploadProgress = 0;
       _failureMessages = {};
     });
+    _uploadProgress.value = 0;
 
     _showUploadDialog();
 
     try {
       final service = ref.read(_photoServiceProvider);
+      final takenAtDates = _photoDates.map((d) => _dateFormat.format(d)).toList();
       final response = await service.uploadPhotos(
         petId: selectedPet.id,
         files: _selectedFiles,
-        takenAt: _dateFormat.format(_takenAt),
+        takenAtDates: takenAtDates,
         onSendProgress: (sent, total) {
-          if (mounted && total > 0) {
-            setState(() => _uploadProgress = sent / total);
+          if (total > 0) {
+            _uploadProgress.value = sent / total;
           }
         },
       );
@@ -340,28 +469,30 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   void _showUploadDialog() {
+    final fileCount = _selectedFiles.length;
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => PopScope(
         canPop: false,
-        child: StatefulBuilder(
-          builder: (ctx, setDialogState) {
+        child: ValueListenableBuilder<double>(
+          valueListenable: _uploadProgress,
+          builder: (ctx, progress, _) {
             return AlertDialog(
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Text('正在上传照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                   const SizedBox(height: 16),
-                  LinearProgressIndicator(value: _uploadProgress),
+                  LinearProgressIndicator(value: progress),
                   const SizedBox(height: 8),
                   Text(
-                    '${(_uploadProgress * 100).toInt()}%',
+                    '${(progress * 100).toInt()}%',
                     style: const TextStyle(color: AppTheme.textSecondary),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '共 ${_selectedFiles.length} 张，请勿关闭页面',
+                    '共 $fileCount 张，请勿关闭页面',
                     style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
                   ),
                 ],
@@ -375,24 +506,25 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   void _handleUploadResult(PhotoUploadResponse response) {
     if (response.failureCount == 0) {
-      _showSnack('记录完成，已上传 ${response.successCount} 张照片');
+      _showSnack('上传成功，请在时间轴内查看吧！');
       setState(() {
         _selectedFiles.clear();
+        _photoDates.clear();
         _failureMessages = {};
-        _takenAt = DateTime.now();
-        _isDateManuallyEdited = false;
       });
     } else if (response.successCount > 0) {
       _showSnack('已成功上传 ${response.successCount} 张，失败 ${response.failureCount} 张');
 
       final successIndices = response.successes.map((s) => s.index).toSet();
       final newFiles = <File>[];
+      final newDates = <DateTime>[];
       final newFailures = <int, String>{};
 
       int newIdx = 0;
       for (int i = 0; i < _selectedFiles.length; i++) {
         if (!successIndices.contains(i)) {
           newFiles.add(_selectedFiles[i]);
+          newDates.add(_photoDates[i]);
           final failure = response.failures.where((f) => f.index == i).firstOrNull;
           if (failure != null) {
             newFailures[newIdx] = failure.message;
@@ -404,6 +536,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       setState(() {
         _selectedFiles.clear();
         _selectedFiles.addAll(newFiles);
+        _photoDates.clear();
+        _photoDates.addAll(newDates);
         _failureMessages = newFailures;
       });
     } else {

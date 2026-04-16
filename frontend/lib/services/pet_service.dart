@@ -64,7 +64,6 @@ class PetService {
     final resp = await _dio.post(
       '/pets/$petId/avatar',
       data: formData,
-      options: Options(contentType: 'multipart/form-data'),
       onSendProgress: onSendProgress,
     );
     return Pet.fromJson(resp.data as Map<String, dynamic>);
