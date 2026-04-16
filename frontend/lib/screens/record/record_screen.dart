@@ -101,31 +101,33 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   Widget _buildInitialState() {
     return GestureDetector(
       onTap: _showAddPhotoOptions,
-      child: Container(
-        color: AppTheme.secondaryColor.withValues(alpha: 0.15),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 72,
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppTheme.secondaryColor.withValues(alpha: 0.4),
-                shape: BoxShape.circle,
+      child: SizedBox.expand(
+        child: Container(
+          color: AppTheme.secondaryColor.withValues(alpha: 0.15),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: AppTheme.secondaryColor.withValues(alpha: 0.4),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.add_a_photo_outlined, size: 36, color: AppTheme.primaryColor),
               ),
-              child: const Icon(Icons.add_a_photo_outlined, size: 36, color: AppTheme.primaryColor),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              '点击添加照片',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '支持从相册选择或拍照，最多5张',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-            ),
-          ],
+              const SizedBox(height: 16),
+              const Text(
+                '点击添加照片',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '支持从相册选择或拍照，最多5张',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -283,6 +285,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         ],
       ),
       child: SizedBox(
+        width: double.infinity,
         height: 50,
         child: ElevatedButton(
           onPressed: _isUploading ? null : _submit,

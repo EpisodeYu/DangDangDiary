@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import math
 from datetime import date, datetime
@@ -101,7 +102,7 @@ async def upload_photos(
                 ))
                 continue
 
-            recognition = recognize_pet(file_data)
+            recognition = await asyncio.to_thread(recognize_pet, file_data)
             if not recognition["is_pet"]:
                 failures.append(PhotoUploadFailure(
                     index=idx, filename=filename,
@@ -112,8 +113,8 @@ async def upload_photos(
                 continue
 
             try:
-                storage_key, thumbnail_key = upload_photo(
-                    pet_id, file_data, file.content_type
+                storage_key, thumbnail_key = await asyncio.to_thread(
+                    upload_photo, pet_id, file_data, file.content_type
                 )
             except Exception as e:
                 logger.error("Failed to upload photo to storage: %s", e)

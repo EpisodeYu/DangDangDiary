@@ -31,7 +31,7 @@ class PhotoService {
       data: formData,
       options: Options(
         sendTimeout: const Duration(seconds: 120),
-        receiveTimeout: const Duration(seconds: 120),
+        receiveTimeout: const Duration(seconds: 300),
       ),
       onSendProgress: onSendProgress,
     );
