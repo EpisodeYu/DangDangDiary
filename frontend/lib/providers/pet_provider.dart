@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/pet.dart';
 import '../services/pet_service.dart';
+import 'auth_provider.dart';
 
 const _selectedPetIdKey = 'selected_pet_id';
 
@@ -14,6 +15,10 @@ final petListProvider =
 class PetListNotifier extends AsyncNotifier<PetListResult> {
   @override
   Future<PetListResult> build() async {
+    final authState = ref.watch(authProvider);
+    if (authState.status != AuthStatus.authenticated) {
+      return PetListResult(page: 1, pageSize: 0, total: 0, pets: []);
+    }
     final service = ref.read(petServiceProvider);
     return await service.getPets(page: 1, pageSize: 100);
   }
