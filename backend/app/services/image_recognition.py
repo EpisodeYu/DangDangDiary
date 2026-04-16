@@ -2,6 +2,8 @@ import io
 import logging
 from typing import TypedDict
 
+from PIL import Image
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -14,6 +16,11 @@ PET_KEYWORDS = {
 
 CONFIDENCE_THRESHOLD = 0.3
 
+RECOGNITION_MAX_SIZE = (800, 800)
+RECOGNITION_JPEG_QUALITY = 70
+
+_client = None
+
 
 class ImageRecognitionResult(TypedDict):
     is_pet: bool
@@ -23,6 +30,34 @@ class ImageRecognitionResult(TypedDict):
 
 def _is_configured() -> bool:
     return bool(settings.ALIYUN_ACCESS_KEY_ID and settings.ALIYUN_ACCESS_KEY_SECRET)
+
+
+def _get_client():
+    """Return a cached Aliyun ImageRecog client (singleton)."""
+    global _client
+    if _client is None:
+        from alibabacloud_imagerecog20190930.client import Client
+        from alibabacloud_tea_openapi.models import Config
+
+        config = Config(
+            access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
+            access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
+            endpoint=settings.ALIYUN_IMAGERECOG_ENDPOINT,
+            region_id=settings.ALIYUN_IMAGERECOG_REGION,
+        )
+        _client = Client(config)
+    return _client
+
+
+def _compress_for_recognition(image_data: bytes) -> bytes:
+    """Compress image to a small JPEG suitable for recognition API."""
+    img = Image.open(io.BytesIO(image_data))
+    img.thumbnail(RECOGNITION_MAX_SIZE, Image.LANCZOS)
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=RECOGNITION_JPEG_QUALITY)
+    return buf.getvalue()
 
 
 def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
@@ -36,22 +71,18 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
         return ImageRecognitionResult(is_pet=True, labels=[], skipped=True)
 
     try:
-        from alibabacloud_imagerecog20190930.client import Client
         from alibabacloud_imagerecog20190930.models import RecognizeSceneAdvanceRequest
-        from alibabacloud_tea_openapi.models import Config
         from alibabacloud_tea_util.models import RuntimeOptions
 
-        config = Config(
-            access_key_id=settings.ALIYUN_ACCESS_KEY_ID,
-            access_key_secret=settings.ALIYUN_ACCESS_KEY_SECRET,
-            endpoint=settings.ALIYUN_IMAGERECOG_ENDPOINT,
-            region_id=settings.ALIYUN_IMAGERECOG_REGION,
-        )
-        client = Client(config)
+        client = _get_client()
+
+        compressed = _compress_for_recognition(image_data)
 
         request = RecognizeSceneAdvanceRequest()
-        request.image_urlobject = io.BytesIO(image_data)
+        request.image_urlobject = io.BytesIO(compressed)
         runtime = RuntimeOptions()
+        runtime.connect_timeout = 5000   # 5s
+        runtime.read_timeout = 15000     # 15s
 
         response = client.recognize_scene_advance(request, runtime)
         tags = response.body.data.tags or []
