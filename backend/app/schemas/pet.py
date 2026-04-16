@@ -46,6 +46,10 @@ class PetResponse(BaseModel):
     invite_code: str | None
     internal_deworming_cycle_days: int | None
     external_deworming_cycle_days: int | None
+    combined_deworming_cycle_days: int | None
+    internal_reminder_enabled: bool
+    external_reminder_enabled: bool
+    combined_reminder_enabled: bool
     is_owner: bool
     my_role: MemberRole
     created_at: datetime

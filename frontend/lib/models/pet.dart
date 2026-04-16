@@ -8,6 +8,10 @@ class Pet {
   final String? inviteCode;
   final int? internalDewormingCycleDays;
   final int? externalDewormingCycleDays;
+  final int? combinedDewormingCycleDays;
+  final bool internalReminderEnabled;
+  final bool externalReminderEnabled;
+  final bool combinedReminderEnabled;
   final bool isOwner;
   final String myRole;
   final String createdAt;
@@ -23,6 +27,10 @@ class Pet {
     this.inviteCode,
     this.internalDewormingCycleDays,
     this.externalDewormingCycleDays,
+    this.combinedDewormingCycleDays,
+    required this.internalReminderEnabled,
+    required this.externalReminderEnabled,
+    required this.combinedReminderEnabled,
     required this.isOwner,
     required this.myRole,
     required this.createdAt,
@@ -40,6 +48,10 @@ class Pet {
       inviteCode: json['invite_code'] as String?,
       internalDewormingCycleDays: json['internal_deworming_cycle_days'] as int?,
       externalDewormingCycleDays: json['external_deworming_cycle_days'] as int?,
+      combinedDewormingCycleDays: json['combined_deworming_cycle_days'] as int?,
+      internalReminderEnabled: (json['internal_reminder_enabled'] as bool?) ?? false,
+      externalReminderEnabled: (json['external_reminder_enabled'] as bool?) ?? false,
+      combinedReminderEnabled: (json['combined_reminder_enabled'] as bool?) ?? false,
       isOwner: json['is_owner'] as bool,
       myRole: json['my_role'] as String,
       createdAt: json['created_at'] as String,
@@ -58,6 +70,10 @@ class Pet {
       'invite_code': inviteCode,
       'internal_deworming_cycle_days': internalDewormingCycleDays,
       'external_deworming_cycle_days': externalDewormingCycleDays,
+      'combined_deworming_cycle_days': combinedDewormingCycleDays,
+      'internal_reminder_enabled': internalReminderEnabled,
+      'external_reminder_enabled': externalReminderEnabled,
+      'combined_reminder_enabled': combinedReminderEnabled,
       'is_owner': isOwner,
       'my_role': myRole,
       'created_at': createdAt,

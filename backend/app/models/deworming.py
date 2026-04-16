@@ -10,6 +10,7 @@ from app.database import Base
 class DewormingType(str, enum.Enum):
     INTERNAL = "internal"
     EXTERNAL = "external"
+    COMBINED = "combined"
 
 
 class Deworming(Base):

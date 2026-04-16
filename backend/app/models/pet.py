@@ -1,7 +1,7 @@
 import enum
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, String, Date, DateTime, Integer, Enum, ForeignKey
+from sqlalchemy import BigInteger, Boolean, String, Date, DateTime, Integer, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -30,6 +30,10 @@ class Pet(Base):
     invite_code: Mapped[str] = mapped_column(String(20), unique=True, nullable=False)
     internal_deworming_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     external_deworming_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    combined_deworming_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    internal_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    external_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    combined_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
