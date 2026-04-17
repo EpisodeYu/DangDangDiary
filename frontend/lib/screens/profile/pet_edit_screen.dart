@@ -39,6 +39,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _breedController = TextEditingController();
+  final _breedFocusNode = FocusNode();
 
   String _petType = 'cat';
   DateTime? _birthday;
@@ -55,6 +56,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   void dispose() {
     _nameController.dispose();
     _breedController.dispose();
+    _breedFocusNode.dispose();
     super.dispose();
   }
 
@@ -255,17 +257,18 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
 
   Widget _buildBreedField() {
     final breeds = _petType == 'cat' ? _catBreeds : _dogBreeds;
-    return Autocomplete<String>(
+    return RawAutocomplete<String>(
+      textEditingController: _breedController,
+      focusNode: _breedFocusNode,
       optionsBuilder: (textEditingValue) {
         if (textEditingValue.text.isEmpty) return breeds;
-        return breeds.where(
-          (b) => b.contains(textEditingValue.text),
-        );
+        return breeds.where((b) => b.contains(textEditingValue.text));
       },
-      initialValue: TextEditingValue(text: _breedController.text),
-      onSelected: (value) => _breedController.text = value,
+      onSelected: (value) {
+        _breedController.text = value;
+        _breedFocusNode.unfocus();
+      },
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
-        _breedController.text = controller.text;
         return TextFormField(
           controller: controller,
           focusNode: focusNode,
@@ -276,7 +279,33 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             filled: true,
             fillColor: Colors.white,
           ),
-          onChanged: (v) => _breedController.text = v,
+        );
+      },
+      optionsViewBuilder: (context, onSelected, options) {
+        return Align(
+          alignment: Alignment.topLeft,
+          child: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 220),
+              child: ListView.builder(
+                padding: EdgeInsets.zero,
+                shrinkWrap: true,
+                itemCount: options.length,
+                itemBuilder: (context, index) {
+                  final option = options.elementAt(index);
+                  return InkWell(
+                    onTap: () => onSelected(option),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      child: Text(option, style: const TextStyle(fontSize: 15)),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
         );
       },
     );
@@ -389,6 +418,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   }
 
   Future<void> _pickBirthday() async {
+    FocusManager.instance.primaryFocus?.unfocus();
     final picked = await showDatePicker(
       context: context,
       initialDate: _birthday ?? DateTime.now(),

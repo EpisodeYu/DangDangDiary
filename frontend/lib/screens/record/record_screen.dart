@@ -343,28 +343,33 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   Future<void> _pickFromGallery(int remaining) async {
-    final picked = await _picker.pickMultiImage(limit: remaining);
+    // image_picker's pickMultiImage requires limit >= 2; fall back to pickImage for 1.
+    final List<XFile> picked;
+    if (remaining == 1) {
+      final one = await _picker.pickImage(source: ImageSource.gallery);
+      picked = one == null ? const <XFile>[] : [one];
+    } else {
+      picked = await _picker.pickMultiImage(limit: remaining);
+    }
     if (picked.isEmpty) return;
 
+    final toProcess = picked.take(5 - _selectedFiles.length).toList();
+    if (toProcess.isEmpty) return;
+
+    // Read EXIF from the original file before _ensureJpeg compresses it —
+    // FlutterImageCompress strips EXIF metadata, so the compressed copy has no DateTimeOriginal.
     final files = <File>[];
-    for (final xfile in picked) {
+    final dates = <DateTime>[];
+    for (final xfile in toProcess) {
+      final exifDate = await ExifHelper.extractDate(File(xfile.path));
       final converted = await _ensureJpeg(xfile);
       files.add(converted);
-    }
-
-    final actualToAdd = files.take(5 - _selectedFiles.length).toList();
-    if (actualToAdd.isEmpty) return;
-
-    // Extract EXIF dates for each new photo
-    final dates = <DateTime>[];
-    for (final file in actualToAdd) {
-      final exifDate = await ExifHelper.extractDate(file);
       dates.add(exifDate ?? DateTime.now());
     }
 
     if (!mounted) return;
     setState(() {
-      _selectedFiles.addAll(actualToAdd);
+      _selectedFiles.addAll(files);
       _photoDates.addAll(dates);
       _failureMessages = {};
     });
