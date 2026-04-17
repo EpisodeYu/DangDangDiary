@@ -109,6 +109,13 @@ class _RetryInterceptor extends Interceptor {
   bool _shouldRetry(DioException err) {
     if (err.requestOptions.extra['_retried'] == true) return false;
 
+    // FormData bodies are one-shot streams — replaying opts.data throws
+    // "FormData has already been finalized". Upload endpoints (e.g.
+    // POST /pets/{id}/photos) are also non-idempotent, so a blind retry
+    // risks duplicates if the first attempt actually reached the server.
+    // The caller handles user-facing retry instead.
+    if (err.requestOptions.data is FormData) return false;
+
     switch (err.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
