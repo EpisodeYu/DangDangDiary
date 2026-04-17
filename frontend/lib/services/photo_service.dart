@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dio/dio.dart';
 
 import '../models/photo.dart';
+import '../models/timeline.dart';
 import 'api_client.dart';
 
 class PhotoService {
@@ -54,5 +55,41 @@ class PhotoService {
   Future<String> getOriginalUrl(int photoId) async {
     final resp = await _dio.get('/photos/$photoId/url');
     return resp.data['url'] as String;
+  }
+
+  Future<TimelineWindowResponse> getTimeline({
+    List<int> petIds = const [],
+    int limit = 40,
+    String? cursor,
+    String direction = 'older',
+    String? anchorMonth,
+  }) async {
+    final params = <String, dynamic>{'limit': limit};
+    if (petIds.isNotEmpty) {
+      params['pet_ids'] = petIds.join(',');
+    }
+    if (cursor != null) {
+      params['cursor'] = cursor;
+      params['direction'] = direction;
+    }
+    if (anchorMonth != null) {
+      params['anchor_month'] = anchorMonth;
+    }
+    final resp = await _dio.get('/photos/timeline', queryParameters: params);
+    return TimelineWindowResponse.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<TimelineDatesResponse> getTimelineDates({
+    List<int> petIds = const [],
+  }) async {
+    final params = <String, dynamic>{};
+    if (petIds.isNotEmpty) {
+      params['pet_ids'] = petIds.join(',');
+    }
+    final resp = await _dio.get(
+      '/photos/timeline/dates',
+      queryParameters: params,
+    );
+    return TimelineDatesResponse.fromJson(resp.data as Map<String, dynamic>);
   }
 }

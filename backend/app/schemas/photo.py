@@ -48,3 +48,51 @@ class PhotoListResponse(BaseModel):
 class PhotoOriginalUrlResponse(BaseModel):
     url: str
     expires_in: int
+
+
+# ---------------- Timeline (Step 6) ----------------
+
+
+class TimelinePhotoItem(BaseModel):
+    id: int
+    pet_id: int
+    pet_name: str
+    pet_type: str
+    thumbnail_url: str
+    taken_at: date
+    created_at: datetime
+
+
+class TimelineGroup(BaseModel):
+    date: str  # "YYYY-MM"
+    label: str  # e.g. "2024年1月"
+    photos: list[TimelinePhotoItem]
+
+
+class TimelineDateRange(BaseModel):
+    earliest: date | None = None
+    latest: date | None = None
+
+
+class TimelineWindowResponse(BaseModel):
+    groups: list[TimelineGroup]
+    total: int
+    limit: int
+    prev_cursor: str | None = None
+    next_cursor: str | None = None
+    has_more_newer: bool = False
+    has_more_older: bool = False
+    requested_anchor_month: str | None = None
+    resolved_anchor_month: str | None = None
+    date_range: TimelineDateRange
+
+
+class DateDistributionItem(BaseModel):
+    date: str  # "YYYY-MM"
+    label: str
+    count: int
+
+
+class TimelineDatesResponse(BaseModel):
+    months: list[DateDistributionItem]
+    date_range: TimelineDateRange

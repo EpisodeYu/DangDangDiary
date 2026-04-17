@@ -21,6 +21,8 @@ from app.schemas.photo import (
     PhotoUploadFailure,
     PhotoUploadResponse,
     PhotoUploadSuccess,
+    TimelineDatesResponse,
+    TimelineWindowResponse,
 )
 from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
@@ -29,6 +31,12 @@ from app.services.storage import (
     delete_photo_objects,
     get_photo_presigned_url,
     upload_photo,
+)
+from app.services.timeline import (
+    DEFAULT_LIMIT as TIMELINE_DEFAULT_LIMIT,
+    MAX_LIMIT as TIMELINE_MAX_LIMIT,
+    get_timeline_dates,
+    get_timeline_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -268,7 +276,54 @@ async def get_photo_url(
     return PhotoOriginalUrlResponse(url=url, expires_in=expires_in)
 
 
-@router.get("/photos/timeline")
-async def get_timeline():
-    """Placeholder for Step 6 timeline."""
-    return {"photos": []}
+def _parse_pet_ids_param(raw: str | None) -> list[int] | None:
+    if raw is None or raw.strip() == "":
+        return None
+    ids: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            ids.append(int(part))
+        except ValueError:
+            raise AppException(
+                400, "INVALID_PET_IDS", "pet_ids 参数必须为逗号分隔的整数",
+            )
+    return ids or None
+
+
+@router.get("/photos/timeline", response_model=TimelineWindowResponse)
+async def get_timeline(
+    pet_ids: str | None = Query(default=None),
+    limit: int = Query(default=TIMELINE_DEFAULT_LIMIT, ge=1, le=TIMELINE_MAX_LIMIT),
+    cursor: str | None = Query(default=None),
+    direction: str = Query(default="older"),
+    anchor_month: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    requested_pet_ids = _parse_pet_ids_param(pet_ids)
+    return await get_timeline_window(
+        db,
+        current_user.id,
+        requested_pet_ids=requested_pet_ids,
+        limit=limit,
+        cursor_raw=cursor,
+        direction=direction,
+        anchor_month=anchor_month,
+    )
+
+
+@router.get("/photos/timeline/dates", response_model=TimelineDatesResponse)
+async def get_timeline_date_distribution(
+    pet_ids: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    requested_pet_ids = _parse_pet_ids_param(pet_ids)
+    return await get_timeline_dates(
+        db,
+        current_user.id,
+        requested_pet_ids=requested_pet_ids,
+    )
