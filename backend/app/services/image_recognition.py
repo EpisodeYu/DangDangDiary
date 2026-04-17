@@ -1,5 +1,6 @@
 import io
 import logging
+import threading
 from typing import TypedDict
 
 from PIL import Image
@@ -19,7 +20,7 @@ CONFIDENCE_THRESHOLD = 0.3
 RECOGNITION_MAX_SIZE = (800, 800)
 RECOGNITION_JPEG_QUALITY = 70
 
-_client = None
+_thread_local = threading.local()
 
 
 class ImageRecognitionResult(TypedDict):
@@ -33,9 +34,10 @@ def _is_configured() -> bool:
 
 
 def _get_client():
-    """Return a cached Aliyun ImageRecog client (singleton)."""
-    global _client
-    if _client is None:
+    """Return a thread-local Aliyun ImageRecog client to avoid contention
+    when multiple threads call the SDK concurrently."""
+    client = getattr(_thread_local, 'client', None)
+    if client is None:
         from alibabacloud_imagerecog20190930.client import Client
         from alibabacloud_tea_openapi.models import Config
 
@@ -45,8 +47,9 @@ def _get_client():
             endpoint=settings.ALIYUN_IMAGERECOG_ENDPOINT,
             region_id=settings.ALIYUN_IMAGERECOG_REGION,
         )
-        _client = Client(config)
-    return _client
+        _thread_local.client = Client(config)
+        client = _thread_local.client
+    return client
 
 
 def _compress_for_recognition(image_data: bytes) -> bytes:
@@ -83,6 +86,8 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
         runtime = RuntimeOptions()
         runtime.connect_timeout = 5000   # 5s
         runtime.read_timeout = 8000      # 8s
+        runtime.autoretry = False
+        runtime.max_attempts = 1
 
         response = client.recognize_scene_advance(request, runtime)
         tags = response.body.data.tags or []

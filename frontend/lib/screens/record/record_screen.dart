@@ -30,6 +30,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   final List<DateTime> _photoDates = [];
   bool _isUploading = false;
   final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
+  final ValueNotifier<bool> _isServerProcessing = ValueNotifier(false);
   Map<int, String> _failureMessages = {};
 
   final _picker = ImagePicker();
@@ -38,6 +39,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   @override
   void dispose() {
     _uploadProgress.dispose();
+    _isServerProcessing.dispose();
     super.dispose();
   }
 
@@ -430,6 +432,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _failureMessages = {};
     });
     _uploadProgress.value = 0;
+    _isServerProcessing.value = false;
 
     _showUploadDialog();
 
@@ -442,7 +445,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         takenAtDates: takenAtDates,
         onSendProgress: (sent, total) {
           if (total > 0) {
-            _uploadProgress.value = sent / total;
+            final progress = sent / total;
+            _uploadProgress.value = progress;
+            if (progress >= 1.0 && !_isServerProcessing.value) {
+              _isServerProcessing.value = true;
+            }
           }
         },
       );
@@ -479,28 +486,50 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       barrierDismissible: false,
       builder: (ctx) => PopScope(
         canPop: false,
-        child: ValueListenableBuilder<double>(
-          valueListenable: _uploadProgress,
-          builder: (ctx, progress, _) {
-            return AlertDialog(
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('正在上传照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 16),
-                  LinearProgressIndicator(value: progress),
-                  const SizedBox(height: 8),
-                  Text(
-                    '${(progress * 100).toInt()}%',
-                    style: const TextStyle(color: AppTheme.textSecondary),
+        child: ValueListenableBuilder<bool>(
+          valueListenable: _isServerProcessing,
+          builder: (ctx, isProcessing, _) {
+            if (isProcessing) {
+              return AlertDialog(
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('正在识别照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 16),
+                    const LinearProgressIndicator(),
+                    const SizedBox(height: 8),
+                    Text(
+                      '共 $fileCount 张，正在检测宠物内容',
+                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+              );
+            }
+            return ValueListenableBuilder<double>(
+              valueListenable: _uploadProgress,
+              builder: (ctx, progress, _) {
+                return AlertDialog(
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('正在上传照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 16),
+                      LinearProgressIndicator(value: progress),
+                      const SizedBox(height: 8),
+                      Text(
+                        '${(progress * 100).toInt()}%',
+                        style: const TextStyle(color: AppTheme.textSecondary),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '共 $fileCount 张，请勿关闭页面',
+                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '共 $fileCount 张，请勿关闭页面',
-                    style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-                  ),
-                ],
-              ),
+                );
+              },
             );
           },
         ),
