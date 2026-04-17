@@ -12,6 +12,12 @@ class Pet {
   final bool internalReminderEnabled;
   final bool externalReminderEnabled;
   final bool combinedReminderEnabled;
+  final int? bathCycleDays;
+  final int? nailTrimCycleDays;
+  final int? groomingCycleDays;
+  final bool bathReminderEnabled;
+  final bool nailTrimReminderEnabled;
+  final bool groomingReminderEnabled;
   final bool isOwner;
   final String myRole;
   final String createdAt;
@@ -31,6 +37,12 @@ class Pet {
     required this.internalReminderEnabled,
     required this.externalReminderEnabled,
     required this.combinedReminderEnabled,
+    this.bathCycleDays,
+    this.nailTrimCycleDays,
+    this.groomingCycleDays,
+    required this.bathReminderEnabled,
+    required this.nailTrimReminderEnabled,
+    required this.groomingReminderEnabled,
     required this.isOwner,
     required this.myRole,
     required this.createdAt,
@@ -52,6 +64,12 @@ class Pet {
       internalReminderEnabled: (json['internal_reminder_enabled'] as bool?) ?? false,
       externalReminderEnabled: (json['external_reminder_enabled'] as bool?) ?? false,
       combinedReminderEnabled: (json['combined_reminder_enabled'] as bool?) ?? false,
+      bathCycleDays: json['bath_cycle_days'] as int?,
+      nailTrimCycleDays: json['nail_trim_cycle_days'] as int?,
+      groomingCycleDays: json['grooming_cycle_days'] as int?,
+      bathReminderEnabled: (json['bath_reminder_enabled'] as bool?) ?? false,
+      nailTrimReminderEnabled: (json['nail_trim_reminder_enabled'] as bool?) ?? false,
+      groomingReminderEnabled: (json['grooming_reminder_enabled'] as bool?) ?? false,
       isOwner: json['is_owner'] as bool,
       myRole: json['my_role'] as String,
       createdAt: json['created_at'] as String,
@@ -74,6 +92,12 @@ class Pet {
       'internal_reminder_enabled': internalReminderEnabled,
       'external_reminder_enabled': externalReminderEnabled,
       'combined_reminder_enabled': combinedReminderEnabled,
+      'bath_cycle_days': bathCycleDays,
+      'nail_trim_cycle_days': nailTrimCycleDays,
+      'grooming_cycle_days': groomingCycleDays,
+      'bath_reminder_enabled': bathReminderEnabled,
+      'nail_trim_reminder_enabled': nailTrimReminderEnabled,
+      'grooming_reminder_enabled': groomingReminderEnabled,
       'is_owner': isOwner,
       'my_role': myRole,
       'created_at': createdAt,

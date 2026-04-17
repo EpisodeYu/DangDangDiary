@@ -14,6 +14,13 @@ from app.schemas.health import (
     DewormingResponse,
     DewormingStatusResponse,
     DewormingUpdate,
+    RoutineCreate,
+    RoutineCycleResponse,
+    RoutineCycleUpdate,
+    RoutineListResponse,
+    RoutineResponse,
+    RoutineStatusResponse,
+    RoutineUpdate,
     VaccinationCreate,
     VaccinationListResponse,
     VaccinationResponse,
@@ -190,3 +197,65 @@ async def get_vaccine_types(
         preset_types=VACCINE_PRESETS[pet_type],
         pet_type=pet_type,
     )
+
+
+# ================= Routines =================
+
+@router.post("/pets/{pet_id}/routines", response_model=RoutineResponse, status_code=201)
+async def create_routine(
+    pet_id: int,
+    data: RoutineCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await health_service.create_routine(db, pet_id, current_user.id, data)
+
+
+@router.get("/pets/{pet_id}/routines", response_model=RoutineListResponse)
+async def list_routines(
+    pet_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await health_service.list_routines(db, pet_id, current_user.id, page, page_size)
+
+
+@router.put("/routines/{routine_id}", response_model=RoutineResponse)
+async def update_routine(
+    routine_id: int,
+    data: RoutineUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await health_service.update_routine(db, routine_id, current_user.id, data)
+
+
+@router.delete("/routines/{routine_id}", status_code=204)
+async def delete_routine(
+    routine_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await health_service.delete_routine(db, routine_id, current_user.id)
+    return Response(status_code=204)
+
+
+@router.put("/pets/{pet_id}/routine-cycle", response_model=RoutineCycleResponse)
+async def update_routine_cycle(
+    pet_id: int,
+    data: RoutineCycleUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await health_service.update_routine_cycle(db, pet_id, current_user.id, data)
+
+
+@router.get("/pets/{pet_id}/routine-status", response_model=RoutineStatusResponse)
+async def get_routine_status(
+    pet_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return await health_service.get_routine_status(db, pet_id, current_user.id)

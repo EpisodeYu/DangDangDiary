@@ -6,6 +6,7 @@ import '../../config/theme.dart';
 import '../../providers/pet_provider.dart';
 import '../../widgets/pet_selector.dart';
 import 'deworming_tab.dart';
+import 'routine_tab.dart';
 import 'vaccination_tab.dart';
 import 'weight_tab.dart';
 
@@ -23,7 +24,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 4, vsync: this);
     _tabController.addListener(() {
       if (mounted) setState(() {});
     });
@@ -67,6 +68,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
               controller: _tabController,
               children: [
                 WeightTab(pet: selectedPet),
+                RoutineTab(pet: selectedPet),
                 DewormingTab(pet: selectedPet),
                 VaccinationTab(pet: selectedPet),
               ],
@@ -81,7 +83,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
   }
 
   Widget _buildTopTabs() {
-    const labels = ['体重', '驱虫', '疫苗'];
+    const labels = ['体重', '日常', '驱虫', '疫苗'];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(labels.length, (i) {
@@ -122,9 +124,12 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
         context.push('/health/weight/new?petId=$petId');
         break;
       case 1:
-        context.push('/health/deworming/new?petId=$petId');
+        context.push('/health/routine/new?petId=$petId');
         break;
       case 2:
+        context.push('/health/deworming/new?petId=$petId');
+        break;
+      case 3:
         context.push('/health/vaccination/new?petId=$petId');
         break;
     }

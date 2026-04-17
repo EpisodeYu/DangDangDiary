@@ -4,6 +4,7 @@ from app.models.photo import Photo
 from app.models.weight import Weight
 from app.models.deworming import Deworming, DewormingType
 from app.models.vaccination import Vaccination
+from app.models.routine import Routine, RoutineType
 
 __all__ = [
     "User",
@@ -12,4 +13,5 @@ __all__ = [
     "Weight",
     "Deworming", "DewormingType",
     "Vaccination",
+    "Routine", "RoutineType",
 ]

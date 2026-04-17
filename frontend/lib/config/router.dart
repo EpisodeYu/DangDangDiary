@@ -10,6 +10,8 @@ import '../screens/health/health_screen.dart';
 import '../screens/health/weight_record_screen.dart';
 import '../screens/health/deworming_record_screen.dart';
 import '../screens/health/deworming_cycle_screen.dart';
+import '../screens/health/routine_record_screen.dart';
+import '../screens/health/routine_cycle_screen.dart';
 import '../screens/health/vaccination_record_screen.dart';
 import '../screens/timeline/timeline_screen.dart';
 import '../screens/ai/ai_screen.dart';
@@ -123,6 +125,41 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) {
           final petId = int.parse(state.uri.queryParameters['petId']!);
           return DewormingCycleScreen(petId: petId);
+        },
+      ),
+      GoRoute(
+        path: '/health/routine/new',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final petId = int.parse(state.uri.queryParameters['petId']!);
+          return RoutineRecordScreen(petId: petId);
+        },
+      ),
+      GoRoute(
+        path: '/health/routine/edit',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final qp = state.uri.queryParameters;
+          RoutineTypeE? type;
+          if (qp['type'] != null) {
+            try {
+              type = RoutineTypeX.fromString(qp['type']!);
+            } catch (_) {}
+          }
+          return RoutineRecordScreen(
+            petId: int.parse(qp['petId']!),
+            routineId: int.tryParse(qp['routineId'] ?? ''),
+            initialType: type,
+            initialDate: qp['date'],
+          );
+        },
+      ),
+      GoRoute(
+        path: '/health/routine/cycle',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final petId = int.parse(state.uri.queryParameters['petId']!);
+          return RoutineCycleScreen(petId: petId);
         },
       ),
       GoRoute(

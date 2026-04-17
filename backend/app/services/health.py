@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import AppException
 from app.models.deworming import Deworming, DewormingType
 from app.models.pet import Pet
+from app.models.routine import Routine, RoutineType
 from app.models.vaccination import Vaccination
 from app.models.weight import Weight
 from app.schemas.health import (
@@ -18,6 +19,14 @@ from app.schemas.health import (
     DewormingStatusItem,
     DewormingStatusResponse,
     DewormingUpdate,
+    RoutineCreate,
+    RoutineCycleResponse,
+    RoutineCycleUpdate,
+    RoutineListResponse,
+    RoutineResponse,
+    RoutineStatusItem,
+    RoutineStatusResponse,
+    RoutineUpdate,
     VaccinationCreate,
     VaccinationListResponse,
     VaccinationResponse,
@@ -449,3 +458,202 @@ async def delete_vaccination(
 
     await db.delete(record)
     await db.flush()
+
+
+# ===================== Routine =====================
+
+async def create_routine(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+    data: RoutineCreate,
+) -> RoutineResponse:
+    await get_pet_membership(pet_id, user_id, db)
+
+    routine = Routine(
+        pet_id=pet_id,
+        user_id=user_id,
+        routine_type=data.routine_type,
+        performed_at=data.performed_at,
+        created_at=datetime.utcnow(),
+    )
+    db.add(routine)
+    await db.flush()
+    await db.refresh(routine)
+    return RoutineResponse.model_validate(routine)
+
+
+async def list_routines(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+    page: int,
+    page_size: int,
+) -> RoutineListResponse:
+    await get_pet_membership(pet_id, user_id, db)
+
+    total_result = await db.execute(
+        select(func.count()).select_from(Routine).where(Routine.pet_id == pet_id)
+    )
+    total = total_result.scalar() or 0
+    total_pages = math.ceil(total / page_size) if total > 0 else 0
+
+    offset = (page - 1) * page_size
+    result = await db.execute(
+        select(Routine)
+        .where(Routine.pet_id == pet_id)
+        .order_by(
+            Routine.performed_at.desc(),
+            Routine.created_at.desc(),
+            Routine.id.desc(),
+        )
+        .offset(offset)
+        .limit(page_size)
+    )
+    routines = result.scalars().all()
+
+    return RoutineListResponse(
+        routines=[RoutineResponse.model_validate(r) for r in routines],
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
+
+
+async def update_routine(
+    db: AsyncSession,
+    routine_id: int,
+    user_id: int,
+    data: RoutineUpdate,
+) -> RoutineResponse:
+    result = await db.execute(select(Routine).where(Routine.id == routine_id))
+    routine = result.scalar_one_or_none()
+    if routine is None:
+        raise AppException(404, "ROUTINE_NOT_FOUND", "日常记录不存在")
+
+    await get_pet_membership(routine.pet_id, user_id, db)
+
+    routine.routine_type = data.routine_type
+    routine.performed_at = data.performed_at
+    await db.flush()
+    await db.refresh(routine)
+    return RoutineResponse.model_validate(routine)
+
+
+async def delete_routine(
+    db: AsyncSession,
+    routine_id: int,
+    user_id: int,
+) -> None:
+    result = await db.execute(select(Routine).where(Routine.id == routine_id))
+    routine = result.scalar_one_or_none()
+    if routine is None:
+        raise AppException(404, "ROUTINE_NOT_FOUND", "日常记录不存在")
+
+    await get_pet_membership(routine.pet_id, user_id, db)
+
+    await db.delete(routine)
+    await db.flush()
+
+
+async def update_routine_cycle(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+    data: RoutineCycleUpdate,
+) -> RoutineCycleResponse:
+    pet, _ = await get_pet_membership(pet_id, user_id, db)
+
+    update_data = data.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(pet, key, value)
+
+    await db.flush()
+    await db.refresh(pet)
+
+    return RoutineCycleResponse(
+        bath_cycle_days=pet.bath_cycle_days,
+        nail_trim_cycle_days=pet.nail_trim_cycle_days,
+        grooming_cycle_days=pet.grooming_cycle_days,
+        bath_reminder_enabled=pet.bath_reminder_enabled,
+        nail_trim_reminder_enabled=pet.nail_trim_reminder_enabled,
+        grooming_reminder_enabled=pet.grooming_reminder_enabled,
+    )
+
+
+async def get_routine_status(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+) -> RoutineStatusResponse:
+    pet, _ = await get_pet_membership(pet_id, user_id, db)
+
+    bath = await _calc_routine_status(
+        db, pet_id, RoutineType.BATH,
+        pet.bath_cycle_days, pet.bath_reminder_enabled,
+    )
+    nail_trim = await _calc_routine_status(
+        db, pet_id, RoutineType.NAIL_TRIM,
+        pet.nail_trim_cycle_days, pet.nail_trim_reminder_enabled,
+    )
+    grooming = await _calc_routine_status(
+        db, pet_id, RoutineType.GROOMING,
+        pet.grooming_cycle_days, pet.grooming_reminder_enabled,
+    )
+    return RoutineStatusResponse(
+        bath=bath,
+        nail_trim=nail_trim,
+        grooming=grooming,
+    )
+
+
+async def _calc_routine_status(
+    db: AsyncSession,
+    pet_id: int,
+    routine_type: RoutineType,
+    cycle_days: int | None,
+    reminder_enabled: bool,
+) -> RoutineStatusItem:
+    result = await db.execute(
+        select(Routine)
+        .where(
+            Routine.pet_id == pet_id,
+            Routine.routine_type == routine_type,
+        )
+        .order_by(Routine.performed_at.desc(), Routine.id.desc())
+        .limit(1)
+    )
+    last = result.scalar_one_or_none()
+    last_date = last.performed_at if last else None
+
+    if not reminder_enabled:
+        return RoutineStatusItem(
+            reminder_enabled=False,
+            last_performed_at=last_date,
+            cycle_days=cycle_days,
+            next_due_at=None,
+            days_remaining=None,
+            is_overdue=None,
+        )
+
+    if last_date is None or not cycle_days:
+        return RoutineStatusItem(
+            reminder_enabled=True,
+            last_performed_at=last_date,
+            cycle_days=cycle_days,
+            next_due_at=None,
+            days_remaining=None,
+            is_overdue=None,
+        )
+
+    next_due = last_date + timedelta(days=cycle_days)
+    remaining = (next_due - date.today()).days
+    return RoutineStatusItem(
+        reminder_enabled=True,
+        last_performed_at=last_date,
+        cycle_days=cycle_days,
+        next_due_at=next_due,
+        days_remaining=remaining,
+        is_overdue=remaining < 0,
+    )

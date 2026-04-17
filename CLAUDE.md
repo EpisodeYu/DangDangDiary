@@ -121,7 +121,7 @@ The phone client **only** talks to Nginx. Internal service addresses (`minio:900
 | `docs/step2-auth-module.md` | SMS auth + JWT |
 | `docs/step3-pet-profile.md` | Pet CRUD + profile UI |
 | `docs/step4-photo-record.md` | Photo upload + validation + EXIF |
-| `docs/step5-health-management.md` | Weight / deworming / vaccination |
+| `docs/step5-health-management.md` | Weight / routine / deworming / vaccination |
 | `docs/step6-timeline.md` | Paginated timeline |
 | `docs/step7-push-notification.md` | Local push notifications |
 | `docs/step8-integration-polish.md` | Final polish and integration |

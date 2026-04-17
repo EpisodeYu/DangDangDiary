@@ -1,8 +1,8 @@
-# Step 5: 健康管理 (体重/驱虫/疫苗)
+# Step 5: 健康管理 (体重/日常/驱虫/疫苗)
 
 ## 项目背景
 
-「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤实现健康管理模块，包括体重记录、驱虫管理和疫苗管理三个子功能。
+「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤实现健康管理模块，包括体重记录、日常护理、驱虫管理和疫苗管理四个子功能。
 
 **前置依赖**: Step 3 已完成 (宠物档案管理)，宠物选择器组件可用。
 
@@ -13,31 +13,32 @@
 1. 后端实现体重 CRUD API + 历史列表查询
 2. 后端实现驱虫 CRUD API + 三类驱虫周期管理 + 倒计时计算
 3. 后端实现疫苗 CRUD API + 疫苗类型预设
-4. Flutter 实现「健康」页面，包含三个子 Tab、动态 FAB 和完整交互
+4. 后端实现日常 CRUD API + 三类日常项目（洗澡/剪指甲/梳毛）周期与提醒管理 + 倒计时计算
+5. Flutter 实现「健康」页面，包含四个子 Tab（体重/日常/驱虫/疫苗）、动态 FAB 和完整交互
 
 ---
 
 ## 1. 页面结构概览
 
 ```
-┌─────────────────────────────────┐
-│  橘子 ▼               体重 | 驱虫 | 疫苗 │
-├─────────────────────────────────┤
-│                                 │
-│         (子页面内容区域)          │
-│     根据右上角 Tab 切换展示       │
-│                                 │
-│                                 │
-│                          ┌────┐ │
-│                          │ ＋ │ │  ← 浮动记录按钮
-│                          └────┘ │
-├─────────────────────────────────┤
-│  记录  │  健康  │ 时间轴 │  AI  │ 我的 │
-└─────────────────────────────────┘
+┌──────────────────────────────────────────┐
+│  橘子 ▼         体重 | 日常 | 驱虫 | 疫苗 │
+├──────────────────────────────────────────┤
+│                                          │
+│         (子页面内容区域)                  │
+│     根据右上角 Tab 切换展示               │
+│                                          │
+│                                          │
+│                                   ┌────┐ │
+│                                   │ ＋ │ │  ← 浮动记录按钮
+│                                   └────┘ │
+├──────────────────────────────────────────┤
+│  记录  │  健康  │ 时间轴 │  AI  │ 我的   │
+└──────────────────────────────────────────┘
 ```
 
 - 顶部左侧: 宠物选择器 (单选模式)
-- 顶部右侧: 体重/驱虫/疫苗三个 Tab 按钮
+- 顶部右侧: 体重/日常/驱虫/疫苗四个 Tab 按钮（顺序固定为：体重 → 日常 → 驱虫 → 疫苗）
 - 中间: 根据 Tab 展示对应内容
 - 右下角: 浮动的「+」记录按钮，点击进入对应的记录页面
 
@@ -56,6 +57,12 @@
 - 猫和狗都统一支持三类驱虫: `internal` (内驱)、`external` (外驱)、`combined` (内外同驱)
 - 三类驱虫分别拥有各自的最近记录时间、周期配置和状态
 - 驱虫提醒不是默认全开，只有用户为某一类驱虫勾选提醒后，才按该类周期计算和展示状态
+
+日常说明:
+- 猫和狗都统一支持三类日常: `bath` (洗澡)、`nail_trim` (剪指甲)、`grooming` (梳毛)
+- 三类日常分别拥有各自的最近记录时间、周期配置和状态
+- 日常提醒同样不是默认全开，只有用户为某一类日常勾选提醒后，才按该类周期计算和展示状态
+- 日常模块的字段/接口/状态计算逻辑与驱虫完全对齐，仅字段命名不同（`dewormed_at` → `performed_at`，`deworming_type` → `routine_type`）
 
 ### 2.1 体重模块
 
@@ -438,6 +445,176 @@ GET /api/v1/vaccine-types?pet_type=cat
 
 ---
 
+### 2.4 日常模块
+
+日常模块的接口与驱虫完全对齐，仅将 `dewormings/deworming_type/dewormed_at` 替换为 `routines/routine_type/performed_at`。
+
+#### 记录日常
+
+```
+POST /api/v1/pets/{pet_id}/routines
+Content-Type: application/json
+```
+
+请求体:
+```json
+{
+  "routine_type": "bath",
+  "performed_at": "2024-01-15"
+}
+```
+
+成功响应 (201):
+```json
+{
+  "id": 1,
+  "pet_id": 1,
+  "user_id": 1,
+  "routine_type": "bath",
+  "performed_at": "2024-01-15",
+  "created_at": "2024-01-20T10:30:00"
+}
+```
+
+验证规则:
+- `routine_type`: 必须是 `bath` (洗澡)、`nail_trim` (剪指甲) 或 `grooming` (梳毛)
+- `performed_at`: 有效日期，不能是未来日期
+
+#### 获取日常历史
+
+```
+GET /api/v1/pets/{pet_id}/routines?page=1&page_size=50
+```
+
+成功响应 (200):
+```json
+{
+  "routines": [
+    {
+      "id": 1,
+      "pet_id": 1,
+      "user_id": 1,
+      "routine_type": "bath",
+      "performed_at": "2024-01-15",
+      "created_at": "2024-01-20T10:30:00"
+    }
+  ],
+  "total": 20,
+  "page": 1,
+  "page_size": 50,
+  "total_pages": 1
+}
+```
+
+排序: `performed_at desc, created_at desc, id desc`
+
+#### 更新日常记录
+
+```
+PUT /api/v1/routines/{routine_id}
+Content-Type: application/json
+```
+
+请求体:
+```json
+{
+  "routine_type": "nail_trim",
+  "performed_at": "2024-01-16"
+}
+```
+
+成功响应 (200): 返回更新后的完整对象，字段与"记录日常"一致
+
+#### 删除日常记录
+
+```
+DELETE /api/v1/routines/{routine_id}
+```
+
+成功响应 (204)
+
+#### 设置日常周期与提醒开关
+
+```
+PUT /api/v1/pets/{pet_id}/routine-cycle
+Content-Type: application/json
+```
+
+请求体:
+```json
+{
+  "bath_cycle_days": 14,
+  "nail_trim_cycle_days": 30,
+  "grooming_cycle_days": 7,
+  "bath_reminder_enabled": true,
+  "nail_trim_reminder_enabled": false,
+  "grooming_reminder_enabled": true
+}
+```
+
+成功响应 (200):
+```json
+{
+  "bath_cycle_days": 14,
+  "nail_trim_cycle_days": 30,
+  "grooming_cycle_days": 7,
+  "bath_reminder_enabled": true,
+  "nail_trim_reminder_enabled": false,
+  "grooming_reminder_enabled": true
+}
+```
+
+验证规则:
+- 三个周期字段都可选，只更新传入字段
+- 周期范围: `1-365`
+- 三个提醒布尔字段都可选
+- 取消某类提醒后，该类历史记录仍保留，且允许继续录入该类日常记录
+
+#### 获取日常状态 (倒计时)
+
+```
+GET /api/v1/pets/{pet_id}/routine-status
+```
+
+成功响应 (200):
+```json
+{
+  "bath": {
+    "reminder_enabled": true,
+    "last_performed_at": "2024-01-01",
+    "cycle_days": 14,
+    "next_due_at": "2024-01-15",
+    "days_remaining": 5,
+    "is_overdue": false
+  },
+  "nail_trim": {
+    "reminder_enabled": false,
+    "last_performed_at": "2023-12-15",
+    "cycle_days": 30,
+    "next_due_at": null,
+    "days_remaining": null,
+    "is_overdue": null
+  },
+  "grooming": {
+    "reminder_enabled": true,
+    "last_performed_at": null,
+    "cycle_days": 7,
+    "next_due_at": null,
+    "days_remaining": null,
+    "is_overdue": null
+  }
+}
+```
+
+计算逻辑完全对齐驱虫状态：
+- `next_due_at = 最后一次记录日期 + 周期天数`
+- `days_remaining = next_due_at - 今天`，正数表示剩余天数，负数表示已过期天数
+- `is_overdue = days_remaining < 0`
+- 未勾选提醒时 `reminder_enabled=false`，倒计时字段返回 `null`，但 `last_performed_at` / `cycle_days` 保持原值
+- 已勾选提醒但缺少周期或记录时，其余倒计时字段返回 `null`
+
+---
+
 ## 3. 后端实现要点
 
 ### 3.1 Pydantic Schema (`app/schemas/health.py`)
@@ -752,14 +929,29 @@ api_v1_router.include_router(health.router)
 
 `PetResponse` 同步暴露上述六个字段，前端可在初始化驱虫周期页面时直接读取。
 
+日常模块后续再新增以下字段和迁移：
+
+- `bath_cycle_days: Integer NULL`
+- `nail_trim_cycle_days: Integer NULL`
+- `grooming_cycle_days: Integer NULL`
+- `bath_reminder_enabled: Boolean NOT NULL DEFAULT false`
+- `nail_trim_reminder_enabled: Boolean NOT NULL DEFAULT false`
+- `grooming_reminder_enabled: Boolean NOT NULL DEFAULT false`
+
+对应迁移 `alembic/versions/b2c3d4e5f6a7_step5_routine.py`：
+- 新建 `routines` 表 + `routinetype` PostgreSQL 枚举（`BATH / NAIL_TRIM / GROOMING`）
+- 在 `pets` 上新增上述 6 列；布尔列同样使用 `server_default=sa.false()` 回填再取消默认值
+
+`PetResponse` 同步暴露日常模块的 6 个字段，前端日常周期页可直接读取并作为初始值。
+
 ---
 
 ## 4. Flutter 页面设计
 
 ### 4.1 健康页面主框架 (`screens/health/health_screen.dart`)
 
-顶部使用宠物选择器 (单选) + 右侧 Tab 切换 (体重/驱虫/疫苗)。
-使用 `TabBarView` 实现三个子页面的切换。
+顶部使用宠物选择器 (单选) + 右侧 Tab 切换 (体重/日常/驱虫/疫苗，顺序固定)。
+使用 `TabBarView` 实现四个子页面的切换。
 页面右下角使用动态 FAB，根据当前 Tab 跳转到对应的独立记录页面。
 
 ### 4.2 体重 Tab (`screens/health/weight_tab.dart`)
@@ -969,6 +1161,32 @@ api_v1_router.include_router(health.router)
 - 点击预设标签自动填入输入框
 - 也支持手动输入自定义疫苗名称
 
+### 4.9 日常 Tab (`screens/health/routine_tab.dart`)
+
+布局、交互、状态文案完全对齐驱虫 Tab，只做以下替换：
+
+- 三行状态行：`洗澡` / `剪指甲` / `梳毛`（对应 `bath` / `nail_trim` / `grooming`）
+- 正常文案 "距离下次日常 XX 天"；过期文案 "距离日常日期已过 XX 天"（红字）
+- 未勾选提醒展示 "已关闭提醒"；已勾选但缺少周期展示 "请先设置日常周期"；已勾选但无记录展示 "请先记录日常日期"
+- "设置周期" 按钮跳 `/health/routine/cycle?petId=`
+- 底部历史列表展示 `洗澡` / `剪指甲` / `梳毛` 标签，左滑编辑/删除
+
+### 4.10 日常记录页面 (`screens/health/routine_record_screen.dart`)
+
+与驱虫记录页一一对应：
+
+- `ChoiceChip` 三选一：洗澡 / 剪指甲 / 梳毛
+- 日常日期：默认今天，可改为历史日期，最大值为今天
+- 确认按钮调用 `createRoutine` / `updateRoutine` 并刷新 `routineListProvider` + `routineStatusProvider`
+
+### 4.11 日常周期设置页面 (`screens/health/routine_cycle_screen.dart`)
+
+- 三段卡片：洗澡 / 剪指甲 / 梳毛
+- 每段一个 `Switch`（提醒开关）+ 一个周期输入框（`FilteringTextInputFormatter.digitsOnly`）
+- 默认值：洗澡 14、剪指甲 30、梳毛 7；提交前客户端校验 1-365
+- 只提交用户实际填写/调整过的字段；后端 `exclude_unset=True` 仅更新传入字段
+- 保存后 `invalidate(routineStatusProvider(petId))` 并刷新 `petListProvider`
+
 ---
 
 ## 5. 疫苗类型预设值
@@ -1000,13 +1218,15 @@ api_v1_router.include_router(health.router)
 ## 6. 需要创建/修改的文件清单
 
 ### 后端
-- `backend/app/models/pet.py` - 增加三类驱虫周期 (`combined_deworming_cycle_days`) 和三个提醒开关字段
+- `backend/app/models/pet.py` - 增加三类驱虫周期 (`combined_deworming_cycle_days`) 和三个驱虫提醒开关字段；日常模块再增加 `bath_cycle_days / nail_trim_cycle_days / grooming_cycle_days` 和三个日常提醒开关字段
 - `backend/app/models/weight.py` - 体重 ORM (新建)
 - `backend/app/models/deworming.py` - 驱虫 ORM + `DewormingType` 枚举 (新建)
 - `backend/app/models/vaccination.py` - 疫苗 ORM (新建)
+- `backend/app/models/routine.py` - 日常 ORM + `RoutineType` 枚举 (新建)
 - `backend/alembic/versions/a1b2c3d4e5f6_step5_health_fields.py` - 扩展 `dewormingtype` 枚举、补全 pets 上的新字段 (新建)
-- `backend/app/schemas/health.py` - 健康管理 Schema (新建)
-- `backend/app/schemas/pet.py` - 暴露新增驱虫配置字段
+- `backend/alembic/versions/b2c3d4e5f6a7_step5_routine.py` - 新建 `routines` 表 + `routinetype` 枚举，补全 pets 上的日常字段 (新建)
+- `backend/app/schemas/health.py` - 健康管理 Schema，包含体重/驱虫/疫苗/日常四块 (新建)
+- `backend/app/schemas/pet.py` - 暴露新增驱虫/日常配置字段
 - `backend/app/services/health.py` - 健康业务逻辑 + `VACCINE_PRESETS` 常量 (新建)
 - `backend/app/api/v1/health.py` - 健康管理路由 (新建)
 - `backend/app/api/v1/router.py` - 注册 health 路由 (修改)
@@ -1015,17 +1235,21 @@ api_v1_router.include_router(health.router)
 
 ### 前端
 - `frontend/lib/models/health.dart` - 健康数据模型 (新建)
+- `frontend/lib/models/pet.dart` - Pet 模型同步新增驱虫/日常配置字段
 - `frontend/lib/services/health_service.dart` - 健康 API 服务 (新建)
 - `frontend/lib/providers/health_provider.dart` - 健康相关 Riverpod providers (新建)
-- `frontend/lib/screens/health/health_screen.dart` - 健康主页面 (实现)
+- `frontend/lib/screens/health/health_screen.dart` - 健康主页面，Tab 顺序：体重 → 日常 → 驱虫 → 疫苗
 - `frontend/lib/screens/health/weight_tab.dart` - 体重 Tab (新建)
 - `frontend/lib/screens/health/deworming_tab.dart` - 驱虫 Tab (新建)
 - `frontend/lib/screens/health/vaccination_tab.dart` - 疫苗 Tab (新建)
+- `frontend/lib/screens/health/routine_tab.dart` - 日常 Tab (新建)
 - `frontend/lib/screens/health/weight_record_screen.dart` - 体重记录/编辑页 (新建)
 - `frontend/lib/screens/health/deworming_record_screen.dart` - 驱虫记录/编辑页 (新建)
 - `frontend/lib/screens/health/vaccination_record_screen.dart` - 疫苗记录/编辑页 (新建)
+- `frontend/lib/screens/health/routine_record_screen.dart` - 日常记录/编辑页 (新建)
 - `frontend/lib/screens/health/deworming_cycle_screen.dart` - 驱虫周期设置页 (新建)
-- `frontend/lib/config/router.dart` - 注册 `/health/weight/(new|edit)`、`/health/deworming/(new|edit|cycle)`、`/health/vaccination/(new|edit)` 路由 (修改)
+- `frontend/lib/screens/health/routine_cycle_screen.dart` - 日常周期设置页 (新建)
+- `frontend/lib/config/router.dart` - 注册 `/health/weight/(new|edit)`、`/health/deworming/(new|edit|cycle)`、`/health/vaccination/(new|edit)`、`/health/routine/(new|edit|cycle)` 路由 (修改)
 
 > 路由约定（GoRouter，全部走根 Navigator，参数走 query string）：
 > - `/health/weight/new?petId=`
@@ -1035,6 +1259,9 @@ api_v1_router.include_router(health.router)
 > - `/health/deworming/cycle?petId=`
 > - `/health/vaccination/new?petId=`
 > - `/health/vaccination/edit?petId=&vaccinationId=&type=&date=` （`type` 需 `Uri.encodeQueryComponent` 处理中文）
+> - `/health/routine/new?petId=`
+> - `/health/routine/edit?petId=&routineId=&type=&date=`
+> - `/health/routine/cycle?petId=`
 
 ---
 
@@ -1065,9 +1292,21 @@ api_v1_router.include_router(health.router)
 - [ ] Flutter 记录疫苗: 预设标签快选 + 自定义输入 + 日期
 - [ ] Flutter 预设标签根据宠物类型动态变化
 
+### 日常
+- [ ] 后端日常 CRUD API 正常工作
+- [ ] 后端日常周期设置 API 正常工作
+- [ ] 后端三类日常状态 API 正确计算倒计时
+- [ ] 三类日常的提醒开关能正确控制状态计算
+- [ ] Flutter 日常倒计时卡片正确显示
+- [ ] Flutter 倒计时过期时红字显示 "距离日常日期已过 XX 天"
+- [ ] Flutter 未勾选提醒时展示 "已关闭提醒"
+- [ ] Flutter 未设置周期时提示设置
+- [ ] Flutter 记录日常: 选择洗澡/剪指甲/梳毛 + 日期
+- [ ] Flutter 日常周期设置页面正常工作
+
 ### 通用
-- [ ] Flutter 健康页面三个 Tab 切换流畅
+- [ ] Flutter 健康页面四个 Tab (体重/日常/驱虫/疫苗) 切换流畅，顺序固定
 - [ ] Flutter 宠物选择器切换后数据正确刷新
 - [ ] 所有记录的日期默认为当天，支持手动修改
-- [ ] 三类驱虫的状态、周期和提醒开关彼此独立
+- [ ] 三类驱虫、三类日常的状态、周期和提醒开关彼此独立
 - [ ] 空列表时展示友好的提示信息

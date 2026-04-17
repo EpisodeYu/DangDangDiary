@@ -4,6 +4,7 @@ from decimal import Decimal
 from pydantic import BaseModel, field_validator
 
 from app.models.deworming import DewormingType
+from app.models.routine import RoutineType
 
 
 # ---------------- Weight ----------------
@@ -182,3 +183,84 @@ class VaccinationListResponse(BaseModel):
 class VaccineTypePresetResponse(BaseModel):
     preset_types: list[str]
     pet_type: str
+
+
+# ---------------- Routine ----------------
+
+class RoutineCreate(BaseModel):
+    routine_type: RoutineType
+    performed_at: date
+
+    @field_validator("performed_at")
+    @classmethod
+    def validate_date(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError("日常记录日期不能是未来日期")
+        return v
+
+
+class RoutineUpdate(RoutineCreate):
+    pass
+
+
+class RoutineResponse(BaseModel):
+    id: int
+    pet_id: int
+    user_id: int
+    routine_type: RoutineType
+    performed_at: date
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class RoutineListResponse(BaseModel):
+    routines: list[RoutineResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class RoutineCycleUpdate(BaseModel):
+    bath_cycle_days: int | None = None
+    nail_trim_cycle_days: int | None = None
+    grooming_cycle_days: int | None = None
+    bath_reminder_enabled: bool | None = None
+    nail_trim_reminder_enabled: bool | None = None
+    grooming_reminder_enabled: bool | None = None
+
+    @field_validator(
+        "bath_cycle_days",
+        "nail_trim_cycle_days",
+        "grooming_cycle_days",
+    )
+    @classmethod
+    def validate_cycle(cls, v: int | None) -> int | None:
+        if v is not None and (v < 1 or v > 365):
+            raise ValueError("日常周期必须在 1-365 天之间")
+        return v
+
+
+class RoutineCycleResponse(BaseModel):
+    bath_cycle_days: int | None
+    nail_trim_cycle_days: int | None
+    grooming_cycle_days: int | None
+    bath_reminder_enabled: bool
+    nail_trim_reminder_enabled: bool
+    grooming_reminder_enabled: bool
+
+
+class RoutineStatusItem(BaseModel):
+    reminder_enabled: bool
+    last_performed_at: date | None
+    cycle_days: int | None
+    next_due_at: date | None
+    days_remaining: int | None
+    is_overdue: bool | None
+
+
+class RoutineStatusResponse(BaseModel):
+    bath: RoutineStatusItem
+    nail_trim: RoutineStatusItem
+    grooming: RoutineStatusItem

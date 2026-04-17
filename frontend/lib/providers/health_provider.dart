@@ -40,3 +40,17 @@ final vaccineTypesProvider =
   final service = ref.watch(healthServiceProvider);
   return service.getVaccineTypes(petType);
 });
+
+// ---------------- Routine ----------------
+
+final routineListProvider =
+    FutureProvider.family.autoDispose<RoutineListResult, int>((ref, petId) async {
+  final service = ref.watch(healthServiceProvider);
+  return service.getRoutines(petId);
+});
+
+final routineStatusProvider =
+    FutureProvider.family.autoDispose<RoutineStatus, int>((ref, petId) async {
+  final service = ref.watch(healthServiceProvider);
+  return service.getRoutineStatus(petId);
+});

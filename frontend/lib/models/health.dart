@@ -298,3 +298,188 @@ class VaccinationListResult {
     );
   }
 }
+
+enum RoutineTypeE { bath, nailTrim, grooming }
+
+extension RoutineTypeX on RoutineTypeE {
+  String get apiValue {
+    switch (this) {
+      case RoutineTypeE.bath:
+        return 'bath';
+      case RoutineTypeE.nailTrim:
+        return 'nail_trim';
+      case RoutineTypeE.grooming:
+        return 'grooming';
+    }
+  }
+
+  String get label {
+    switch (this) {
+      case RoutineTypeE.bath:
+        return '洗澡';
+      case RoutineTypeE.nailTrim:
+        return '剪指甲';
+      case RoutineTypeE.grooming:
+        return '梳毛';
+    }
+  }
+
+  static RoutineTypeE fromString(String raw) {
+    switch (raw) {
+      case 'bath':
+        return RoutineTypeE.bath;
+      case 'nail_trim':
+        return RoutineTypeE.nailTrim;
+      case 'grooming':
+        return RoutineTypeE.grooming;
+      default:
+        throw ArgumentError('Unknown routine type: $raw');
+    }
+  }
+}
+
+class RoutineRecord {
+  final int id;
+  final int petId;
+  final int userId;
+  final RoutineTypeE routineType;
+  final String performedAt;
+  final String createdAt;
+
+  const RoutineRecord({
+    required this.id,
+    required this.petId,
+    required this.userId,
+    required this.routineType,
+    required this.performedAt,
+    required this.createdAt,
+  });
+
+  factory RoutineRecord.fromJson(Map<String, dynamic> json) {
+    return RoutineRecord(
+      id: json['id'] as int,
+      petId: json['pet_id'] as int,
+      userId: json['user_id'] as int,
+      routineType: RoutineTypeX.fromString(json['routine_type'] as String),
+      performedAt: json['performed_at'] as String,
+      createdAt: json['created_at'] as String,
+    );
+  }
+}
+
+class RoutineListResult {
+  final List<RoutineRecord> routines;
+  final int total;
+  final int page;
+  final int pageSize;
+  final int totalPages;
+
+  const RoutineListResult({
+    required this.routines,
+    required this.total,
+    required this.page,
+    required this.pageSize,
+    required this.totalPages,
+  });
+
+  factory RoutineListResult.fromJson(Map<String, dynamic> json) {
+    return RoutineListResult(
+      routines: (json['routines'] as List<dynamic>)
+          .map((e) => RoutineRecord.fromJson(e as Map<String, dynamic>))
+          .toList(),
+      total: json['total'] as int,
+      page: json['page'] as int,
+      pageSize: json['page_size'] as int,
+      totalPages: json['total_pages'] as int,
+    );
+  }
+}
+
+class RoutineCycleConfig {
+  final int? bathCycleDays;
+  final int? nailTrimCycleDays;
+  final int? groomingCycleDays;
+  final bool bathReminderEnabled;
+  final bool nailTrimReminderEnabled;
+  final bool groomingReminderEnabled;
+
+  const RoutineCycleConfig({
+    this.bathCycleDays,
+    this.nailTrimCycleDays,
+    this.groomingCycleDays,
+    required this.bathReminderEnabled,
+    required this.nailTrimReminderEnabled,
+    required this.groomingReminderEnabled,
+  });
+
+  factory RoutineCycleConfig.fromJson(Map<String, dynamic> json) {
+    return RoutineCycleConfig(
+      bathCycleDays: json['bath_cycle_days'] as int?,
+      nailTrimCycleDays: json['nail_trim_cycle_days'] as int?,
+      groomingCycleDays: json['grooming_cycle_days'] as int?,
+      bathReminderEnabled: json['bath_reminder_enabled'] as bool,
+      nailTrimReminderEnabled: json['nail_trim_reminder_enabled'] as bool,
+      groomingReminderEnabled: json['grooming_reminder_enabled'] as bool,
+    );
+  }
+}
+
+class RoutineStatusItem {
+  final bool reminderEnabled;
+  final String? lastPerformedAt;
+  final int? cycleDays;
+  final String? nextDueAt;
+  final int? daysRemaining;
+  final bool? isOverdue;
+
+  const RoutineStatusItem({
+    required this.reminderEnabled,
+    this.lastPerformedAt,
+    this.cycleDays,
+    this.nextDueAt,
+    this.daysRemaining,
+    this.isOverdue,
+  });
+
+  factory RoutineStatusItem.fromJson(Map<String, dynamic> json) {
+    return RoutineStatusItem(
+      reminderEnabled: json['reminder_enabled'] as bool,
+      lastPerformedAt: json['last_performed_at'] as String?,
+      cycleDays: json['cycle_days'] as int?,
+      nextDueAt: json['next_due_at'] as String?,
+      daysRemaining: json['days_remaining'] as int?,
+      isOverdue: json['is_overdue'] as bool?,
+    );
+  }
+}
+
+class RoutineStatus {
+  final RoutineStatusItem bath;
+  final RoutineStatusItem nailTrim;
+  final RoutineStatusItem grooming;
+
+  const RoutineStatus({
+    required this.bath,
+    required this.nailTrim,
+    required this.grooming,
+  });
+
+  factory RoutineStatus.fromJson(Map<String, dynamic> json) {
+    return RoutineStatus(
+      bath: RoutineStatusItem.fromJson(json['bath'] as Map<String, dynamic>),
+      nailTrim: RoutineStatusItem.fromJson(json['nail_trim'] as Map<String, dynamic>),
+      grooming: RoutineStatusItem.fromJson(json['grooming'] as Map<String, dynamic>),
+    );
+  }
+
+  RoutineStatusItem itemOf(RoutineTypeE type) {
+    switch (type) {
+      case RoutineTypeE.bath:
+        return bath;
+      case RoutineTypeE.nailTrim:
+        return nailTrim;
+      case RoutineTypeE.grooming:
+        return grooming;
+    }
+  }
+}

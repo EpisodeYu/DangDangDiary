@@ -165,4 +165,71 @@ class HealthService {
     final data = resp.data as Map<String, dynamic>;
     return (data['preset_types'] as List<dynamic>).map((e) => e as String).toList();
   }
+
+  // ---------------- Routine ----------------
+
+  Future<RoutineListResult> getRoutines(int petId, {int page = 1, int pageSize = 50}) async {
+    final resp = await _dio.get(
+      '/pets/$petId/routines',
+      queryParameters: {'page': page, 'page_size': pageSize},
+    );
+    return RoutineListResult.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<RoutineRecord> createRoutine(int petId, {
+    required RoutineTypeE routineType,
+    required String performedAt,
+  }) async {
+    final resp = await _dio.post(
+      '/pets/$petId/routines',
+      data: {
+        'routine_type': routineType.apiValue,
+        'performed_at': performedAt,
+      },
+    );
+    return RoutineRecord.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<RoutineRecord> updateRoutine(int routineId, {
+    required RoutineTypeE routineType,
+    required String performedAt,
+  }) async {
+    final resp = await _dio.put(
+      '/routines/$routineId',
+      data: {
+        'routine_type': routineType.apiValue,
+        'performed_at': performedAt,
+      },
+    );
+    return RoutineRecord.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<void> deleteRoutine(int routineId) async {
+    await _dio.delete('/routines/$routineId');
+  }
+
+  Future<RoutineCycleConfig> updateRoutineCycle(int petId, {
+    int? bathCycleDays,
+    int? nailTrimCycleDays,
+    int? groomingCycleDays,
+    bool? bathReminderEnabled,
+    bool? nailTrimReminderEnabled,
+    bool? groomingReminderEnabled,
+  }) async {
+    final body = <String, dynamic>{};
+    if (bathCycleDays != null) body['bath_cycle_days'] = bathCycleDays;
+    if (nailTrimCycleDays != null) body['nail_trim_cycle_days'] = nailTrimCycleDays;
+    if (groomingCycleDays != null) body['grooming_cycle_days'] = groomingCycleDays;
+    if (bathReminderEnabled != null) body['bath_reminder_enabled'] = bathReminderEnabled;
+    if (nailTrimReminderEnabled != null) body['nail_trim_reminder_enabled'] = nailTrimReminderEnabled;
+    if (groomingReminderEnabled != null) body['grooming_reminder_enabled'] = groomingReminderEnabled;
+
+    final resp = await _dio.put('/pets/$petId/routine-cycle', data: body);
+    return RoutineCycleConfig.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<RoutineStatus> getRoutineStatus(int petId) async {
+    final resp = await _dio.get('/pets/$petId/routine-status');
+    return RoutineStatus.fromJson(resp.data as Map<String, dynamic>);
+  }
 }

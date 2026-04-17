@@ -34,6 +34,12 @@ class Pet(Base):
     internal_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     external_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     combined_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    bath_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    nail_trim_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    grooming_cycle_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    bath_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    nail_trim_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    grooming_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

@@ -50,6 +50,12 @@ class PetResponse(BaseModel):
     internal_reminder_enabled: bool
     external_reminder_enabled: bool
     combined_reminder_enabled: bool
+    bath_cycle_days: int | None
+    nail_trim_cycle_days: int | None
+    grooming_cycle_days: int | None
+    bath_reminder_enabled: bool
+    nail_trim_reminder_enabled: bool
+    grooming_reminder_enabled: bool
     is_owner: bool
     my_role: MemberRole
     created_at: datetime
