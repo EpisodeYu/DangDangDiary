@@ -384,19 +384,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     });
   }
 
+  /// Compress image for upload: 1920x1080, quality 90.
+  /// To upload the original file instead, return File(xfile.path) directly.
   Future<File> _ensureJpeg(XFile xfile) async {
-    final path = xfile.path.toLowerCase();
-    if (path.endsWith('.heic') || path.endsWith('.heif')) {
-      final dir = await getTemporaryDirectory();
-      final outPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
-      final result = await FlutterImageCompress.compressAndGetFile(
-        xfile.path,
-        outPath,
-        format: CompressFormat.jpeg,
-        quality: 90,
-      );
-      if (result != null) return File(result.path);
-    }
+    final dir = await getTemporaryDirectory();
+    final outPath = '${dir.path}/${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final result = await FlutterImageCompress.compressAndGetFile(
+      xfile.path,
+      outPath,
+      minWidth: 1920,
+      minHeight: 1080,
+      format: CompressFormat.jpeg,
+      quality: 90,
+    );
+    if (result != null) return File(result.path);
     return File(xfile.path);
   }
 

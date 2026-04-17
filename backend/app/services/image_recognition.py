@@ -82,7 +82,7 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
         request.image_urlobject = io.BytesIO(compressed)
         runtime = RuntimeOptions()
         runtime.connect_timeout = 5000   # 5s
-        runtime.read_timeout = 15000     # 15s
+        runtime.read_timeout = 8000      # 8s
 
         response = client.recognize_scene_advance(request, runtime)
         tags = response.body.data.tags or []

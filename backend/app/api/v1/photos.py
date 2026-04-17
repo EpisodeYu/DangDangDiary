@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import logging
 import math
 from datetime import date, datetime
@@ -78,77 +79,107 @@ async def upload_photos(
         except (ValueError, TypeError):
             raise AppException(400, "INVALID_TAKEN_AT", f"拍摄日期格式不正确：{ta}，请使用 YYYY-MM-DD 格式")
 
-    successes: list[PhotoUploadSuccess] = []
-    failures: list[PhotoUploadFailure] = []
+    # --- Read all files upfront and do quick validation ---
+    file_entries: list[tuple[int, str, bytes, str]] = []  # (idx, filename, data, content_type)
+    early_failures: list[PhotoUploadFailure] = []
 
     for idx, file in enumerate(files):
         filename = file.filename or f"photo_{idx}"
+        if file.content_type not in ALLOWED_CONTENT_TYPES:
+            early_failures.append(PhotoUploadFailure(
+                index=idx, filename=filename,
+                code="UNSUPPORTED_IMAGE_TYPE",
+                message="不支持的图片格式，请上传 JPG、PNG 或 WEBP",
+            ))
+            continue
+
+        file_data = await file.read()
+
+        if len(file_data) > MAX_FILE_SIZE:
+            early_failures.append(PhotoUploadFailure(
+                index=idx, filename=filename,
+                code="FILE_TOO_LARGE",
+                message="文件大小超过 15MB 限制",
+            ))
+            continue
+
+        file_entries.append((idx, filename, file_data, file.content_type))
+
+    # --- Process valid files concurrently (recognition + upload) ---
+
+    @dataclasses.dataclass
+    class _UploadOk:
+        idx: int
+        filename: str
+        storage_key: str
+        thumbnail_key: str
+
+    async def _process_one(
+        idx: int, filename: str, file_data: bytes, content_type: str,
+    ) -> _UploadOk | PhotoUploadFailure:
         try:
-            if file.content_type not in ALLOWED_CONTENT_TYPES:
-                failures.append(PhotoUploadFailure(
-                    index=idx, filename=filename,
-                    code="UNSUPPORTED_IMAGE_TYPE",
-                    message="不支持的图片格式，请上传 JPG、PNG 或 WEBP",
-                ))
-                continue
-
-            file_data = await file.read()
-
-            if len(file_data) > MAX_FILE_SIZE:
-                failures.append(PhotoUploadFailure(
-                    index=idx, filename=filename,
-                    code="FILE_TOO_LARGE",
-                    message="文件大小超过 15MB 限制",
-                ))
-                continue
-
             recognition = await asyncio.to_thread(recognize_pet, file_data)
             if not recognition["is_pet"]:
-                failures.append(PhotoUploadFailure(
+                return PhotoUploadFailure(
                     index=idx, filename=filename,
                     code="PET_NOT_DETECTED",
                     message="未识别到宠物，请换一张图片试试吧！",
                     details={"detected_labels": recognition["labels"]},
-                ))
-                continue
+                )
 
             try:
                 storage_key, thumbnail_key = await asyncio.to_thread(
-                    upload_photo, pet_id, file_data, file.content_type
+                    upload_photo, pet_id, file_data, content_type
                 )
             except Exception as e:
                 logger.error("Failed to upload photo to storage: %s", e)
-                failures.append(PhotoUploadFailure(
+                return PhotoUploadFailure(
                     index=idx, filename=filename,
                     code="PHOTO_UPLOAD_FAILED",
                     message="照片上传失败，请稍后重试",
-                ))
-                continue
+                )
 
-            photo = Photo(
-                pet_id=pet_id,
-                user_id=current_user.id,
-                storage_key=storage_key,
-                thumbnail_key=thumbnail_key,
-                taken_at=parsed_dates[idx],
-                created_at=datetime.utcnow(),
+            return _UploadOk(
+                idx=idx, filename=filename,
+                storage_key=storage_key, thumbnail_key=thumbnail_key,
             )
-            db.add(photo)
-            await db.flush()
-
-            successes.append(PhotoUploadSuccess(
-                index=idx,
-                filename=filename,
-                photo=_photo_to_response(photo),
-            ))
-
         except Exception as e:
             logger.error("Unexpected error processing file %d (%s): %s", idx, filename, e)
-            failures.append(PhotoUploadFailure(
+            return PhotoUploadFailure(
                 index=idx, filename=filename,
                 code="PHOTO_UPLOAD_FAILED",
                 message="照片处理失败",
-            ))
+            )
+
+    results = await asyncio.gather(
+        *(_process_one(idx, fn, data, ct) for idx, fn, data, ct in file_entries)
+    )
+
+    # --- DB inserts (sequential to keep DB session safe) ---
+    successes: list[PhotoUploadSuccess] = []
+    failures: list[PhotoUploadFailure] = list(early_failures)
+
+    for result in results:
+        if isinstance(result, PhotoUploadFailure):
+            failures.append(result)
+            continue
+
+        photo = Photo(
+            pet_id=pet_id,
+            user_id=current_user.id,
+            storage_key=result.storage_key,
+            thumbnail_key=result.thumbnail_key,
+            taken_at=parsed_dates[result.idx],
+            created_at=datetime.utcnow(),
+        )
+        db.add(photo)
+        await db.flush()
+
+        successes.append(PhotoUploadSuccess(
+            index=result.idx,
+            filename=result.filename,
+            photo=_photo_to_response(photo),
+        ))
 
     return PhotoUploadResponse(
         successes=successes,
