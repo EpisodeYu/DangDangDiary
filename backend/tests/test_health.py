@@ -238,7 +238,7 @@ async def test_vaccination_crud(client):
 
     resp = await c.post(
         f"/pets/{pet_id}/vaccinations",
-        json={"vaccine_type": "猫三联", "vaccinated_at": "2024-01-15"},
+        json={"vaccine_type": "猫三联疫苗", "vaccinated_at": "2024-01-15"},
         headers=headers,
     )
     assert resp.status_code == 201
@@ -249,11 +249,11 @@ async def test_vaccination_crud(client):
 
     resp = await c.put(
         f"/vaccinations/{vac_id}",
-        json={"vaccine_type": "狂犬疫苗", "vaccinated_at": "2024-02-20"},
+        json={"vaccine_type": "狂犬病疫苗", "vaccinated_at": "2024-02-20"},
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["vaccine_type"] == "狂犬疫苗"
+    assert resp.json()["vaccine_type"] == "狂犬病疫苗"
 
     resp = await c.delete(f"/vaccinations/{vac_id}", headers=headers)
     assert resp.status_code == 204
@@ -268,13 +268,15 @@ async def test_vaccine_type_presets(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["pet_type"] == "cat"
-    assert "猫三联" in data["preset_types"]
-    assert "狂犬疫苗" in data["preset_types"]
+    assert "猫三联疫苗" in data["preset_types"]
+    assert "狂犬病疫苗" in data["preset_types"]
+    assert data["preset_types"][0] == "猫三联疫苗"
 
     resp = await c.get("/vaccine-types?pet_type=dog", headers=headers)
     data = resp.json()
     assert data["pet_type"] == "dog"
-    assert "犬二联" in data["preset_types"]
+    assert "犬二联疫苗" in data["preset_types"]
+    assert data["preset_types"][0] == "狂犬病疫苗"
 
     resp = await c.get("/vaccine-types?pet_type=fish", headers=headers)
     assert resp.status_code == 400
