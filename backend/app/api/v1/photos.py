@@ -24,6 +24,7 @@ from app.schemas.photo import (
     TimelineDatesResponse,
     TimelineWindowResponse,
 )
+from app.config import settings
 from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
 from app.services.storage import (
@@ -126,14 +127,15 @@ async def upload_photos(
         idx: int, filename: str, file_data: bytes, content_type: str,
     ) -> _UploadOk | PhotoUploadFailure:
         try:
-            recognition = await asyncio.to_thread(recognize_pet, file_data)
-            if not recognition["is_pet"]:
-                return PhotoUploadFailure(
-                    index=idx, filename=filename,
-                    code="PET_NOT_DETECTED",
-                    message="未识别到宠物，请换一张图片试试吧！",
-                    details={"detected_labels": recognition["labels"]},
-                )
+            if settings.ENABLE_SERVER_PET_RECOGNITION:
+                recognition = await asyncio.to_thread(recognize_pet, file_data)
+                if not recognition["is_pet"]:
+                    return PhotoUploadFailure(
+                        index=idx, filename=filename,
+                        code="PET_NOT_DETECTED",
+                        message="未识别到宠物，请换一张图片试试吧！",
+                        details={"detected_labels": recognition["labels"]},
+                    )
 
             try:
                 storage_key, thumbnail_key = await asyncio.to_thread(

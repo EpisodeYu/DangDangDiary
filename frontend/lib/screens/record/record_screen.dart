@@ -13,6 +13,7 @@ import '../../config/theme.dart';
 import '../../models/photo.dart';
 import '../../providers/pet_provider.dart';
 import '../../services/original_photo_cache.dart';
+import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
 import '../../utils/exif_helper.dart';
 import '../../widgets/pet_selector.dart';
@@ -366,14 +367,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final toProcess = picked.take(5 - _selectedFiles.length).toList();
     if (toProcess.isEmpty) return;
 
+    _showRecognizingDialog();
+
     // Read EXIF from the original file before _ensureJpeg compresses it —
     // FlutterImageCompress strips EXIF metadata, so the compressed copy has no DateTimeOriginal.
     final files = <File>[];
     final dates = <DateTime>[];
     final tokens = <String>[];
+    var rejected = 0;
     for (final xfile in toProcess) {
       final exifDate = await ExifHelper.extractDate(File(xfile.path));
       final converted = await _ensureJpeg(xfile);
+      final result = await PetClassifier.instance.classify(converted);
+      if (!result.isPet && !result.skipped) {
+        rejected++;
+        continue;
+      }
       final token = await _cachePending(converted);
       files.add(converted);
       tokens.add(token);
@@ -381,30 +390,75 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
 
     if (!mounted) return;
-    setState(() {
-      _selectedFiles.addAll(files);
-      _pendingTokens.addAll(tokens);
-      _photoDates.addAll(dates);
-      _failureMessages = {};
-    });
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (files.isNotEmpty) {
+      setState(() {
+        _selectedFiles.addAll(files);
+        _pendingTokens.addAll(tokens);
+        _photoDates.addAll(dates);
+        _failureMessages = {};
+      });
+    }
+    if (rejected > 0) {
+      _showSnack(
+        rejected == toProcess.length
+            ? '未识别到猫狗，请换一张图片试试吧！'
+            : '已跳过 $rejected 张未识别到猫狗的图片',
+      );
+    }
   }
 
   Future<void> _takePhoto() async {
     final xfile = await _picker.pickImage(source: ImageSource.camera);
     if (xfile == null) return;
 
-    final converted = await _ensureJpeg(xfile);
-    final token = await _cachePending(converted);
-
     if (_selectedFiles.length >= 5) return;
 
+    _showRecognizingDialog();
+
+    final converted = await _ensureJpeg(xfile);
+    final result = await PetClassifier.instance.classify(converted);
+
     if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (!result.isPet && !result.skipped) {
+      _showSnack('未识别到猫狗，请换一张图片试试吧！');
+      return;
+    }
+
+    final token = await _cachePending(converted);
     setState(() {
       _selectedFiles.add(converted);
       _pendingTokens.add(token);
       _photoDates.add(DateTime.now());
       _failureMessages = {};
     });
+  }
+
+  void _showRecognizingDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 12),
+              Text('正在识别照片...'),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// Copy the compressed JPEG into the persistent cache so that once the

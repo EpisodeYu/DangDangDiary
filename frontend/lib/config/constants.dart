@@ -11,4 +11,25 @@ class AppConstants {
 
   /// Page size for list APIs
   static const int defaultPageSize = 20;
+
+  /// When true, run an on-device TFLite model to check that the uploaded
+  /// image contains a cat or dog before sending it to the server.
+  /// Set to false to fall back to server-side recognition (see
+  /// backend setting ENABLE_SERVER_PET_RECOGNITION).
+  static const bool enableClientPetRecognition = true;
+
+  /// TFLite model bundled under assets/models/. Expected to be a
+  /// MobileNet-family ImageNet classifier (float32, 1x224x224x3 input,
+  /// 1x1000 or 1x1001 output).
+  static const String petClassifierModelAsset =
+      'assets/models/pet_classifier.tflite';
+
+  /// Minimum summed probability over ImageNet cat+dog classes required to
+  /// accept an image as a pet.
+  static const double petClassifierThreshold = 0.30;
+
+  /// Float32 input normalization for the bundled model.
+  ///   'zero_to_one'      -> px / 255            (TF Hub classification signature)
+  ///   'minus_one_to_one' -> (px / 127.5) - 1    (Keras preprocess_input)
+  static const String petClassifierNormalization = 'zero_to_one';
 }

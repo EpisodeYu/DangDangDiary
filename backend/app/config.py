@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     ALIYUN_SMS_TEMPLATE_CODE: str = "100001"
 
     # Image recognition (Aliyun RecognizeScene)
+    # Client runs a TFLite model locally; server-side recognition is kept as
+    # a switchable fallback. Flip to True to re-enable Aliyun RecognizeScene.
+    ENABLE_SERVER_PET_RECOGNITION: bool = False
     ALIYUN_IMAGERECOG_ENDPOINT: str = "imagerecog.cn-shanghai.aliyuncs.com"
     ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
