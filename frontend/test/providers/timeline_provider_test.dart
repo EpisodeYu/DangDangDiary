@@ -1,5 +1,6 @@
 import 'package:dangdang_diary/models/timeline.dart';
 import 'package:dangdang_diary/providers/timeline_provider.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 TimelinePhoto _photo({
@@ -239,6 +240,25 @@ void main() {
       const a = TimelineFilter(petIds: [1, 2]);
       const b = TimelineFilter(petIds: [1, 3]);
       expect(a == b, isFalse);
+    });
+  });
+
+  group('timelineViewModeProvider', () {
+    test('defaults to calendar mode', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      expect(container.read(timelineViewModeProvider), TimelineViewMode.calendar);
+    });
+
+    test('can toggle to immersive and back', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(timelineViewModeProvider.notifier).state =
+          TimelineViewMode.immersive;
+      expect(container.read(timelineViewModeProvider), TimelineViewMode.immersive);
+      container.read(timelineViewModeProvider.notifier).state =
+          TimelineViewMode.calendar;
+      expect(container.read(timelineViewModeProvider), TimelineViewMode.calendar);
     });
   });
 }

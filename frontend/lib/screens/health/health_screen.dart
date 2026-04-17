@@ -44,6 +44,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
+        centerTitle: false,
         title: Row(
           children: [
             PetSelector(

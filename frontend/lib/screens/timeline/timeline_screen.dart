@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -5,10 +6,14 @@ import '../../config/theme.dart';
 import '../../models/timeline.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
+import '../../services/photo_service.dart';
+import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/photo_grid_tile.dart';
 import '../../widgets/timeline_scrollbar.dart';
 import 'photo_viewer_screen.dart';
+
+final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 
 class TimelineScreen extends ConsumerStatefulWidget {
   const TimelineScreen({super.key});
@@ -18,36 +23,47 @@ class TimelineScreen extends ConsumerStatefulWidget {
 }
 
 class _TimelineScreenState extends ConsumerState<TimelineScreen> {
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _calendarScrollController = ScrollController();
+  final ScrollController _immersiveScrollController = ScrollController();
 
-  // Keyed per month so we can scroll-to on jumpToMonth.
+  // Keyed per month so we can scroll-to on jumpToMonth (calendar mode only).
   final Map<String, GlobalKey> _monthKeys = {};
   String? _activeMonth;
 
   @override
   void initState() {
     super.initState();
-    _scrollController.addListener(_onScroll);
+    _calendarScrollController.addListener(_onCalendarScroll);
+    _immersiveScrollController.addListener(_onImmersiveScroll);
   }
 
   @override
   void dispose() {
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
+    _calendarScrollController.removeListener(_onCalendarScroll);
+    _calendarScrollController.dispose();
+    _immersiveScrollController.removeListener(_onImmersiveScroll);
+    _immersiveScrollController.dispose();
     super.dispose();
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients) return;
-    final pos = _scrollController.position;
+  void _onCalendarScroll() {
+    if (!_calendarScrollController.hasClients) return;
+    final pos = _calendarScrollController.position;
     if (pos.pixels > pos.maxScrollExtent - 600) {
       ref.read(timelineProvider.notifier).loadOlder();
     }
     _updateActiveMonth();
   }
 
+  void _onImmersiveScroll() {
+    if (!_immersiveScrollController.hasClients) return;
+    final pos = _immersiveScrollController.position;
+    if (pos.pixels > pos.maxScrollExtent - 800) {
+      ref.read(timelineProvider.notifier).loadOlder();
+    }
+  }
+
   void _updateActiveMonth() {
-    // Find the top-most month header currently visible.
     String? candidate;
     for (final entry in _monthKeys.entries) {
       final ctx = entry.value.currentContext;
@@ -83,7 +99,6 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     final resolved =
         await ref.read(timelineProvider.notifier).jumpToMonth(month);
     if (resolved == null || !mounted) return;
-    // Let the list rebuild before scrolling.
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     await _scrollToMonth(resolved);
@@ -97,12 +112,92 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
   }
 
+  Future<void> _onLongPressPhoto(TimelinePhoto photo) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: AppTheme.errorColor),
+              title: const Text(
+                '删除',
+                style: TextStyle(color: AppTheme.errorColor),
+              ),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || action != 'delete') return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确定删除这张照片吗？'),
+        content: const Text('删除后不可恢复'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) return;
+
+    await _deletePhoto(photo.id);
+  }
+
+  Future<void> _deletePhoto(int photoId) async {
+    final service = ref.read(_photoServiceProvider);
+    try {
+      await service.deletePhoto(photoId);
+      if (!mounted) return;
+      _showSnack('已删除');
+      await ref.read(timelineProvider.notifier).refresh();
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final data = e.response?.data;
+      String message = '删除失败，请稍后重试';
+      if (data is Map<String, dynamic>) {
+        message = (data['message'] as String?) ?? message;
+      }
+      _showSnack(message);
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack('删除失败，请稍后重试');
+    }
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
+  }
+
   @override
   Widget build(BuildContext context) {
     final petListAsync = ref.watch(petListProvider);
     final selectedPetIds = ref.watch(selectedTimelinePetIdsProvider);
     final pets = petListAsync.valueOrNull?.pets ?? const [];
     final state = ref.watch(timelineProvider);
+    final viewMode = ref.watch(timelineViewModeProvider);
 
     // Decide whether to show the pet-name overlay label on each tile.
     final filterMulti = selectedPetIds.isEmpty
@@ -116,67 +211,65 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: PetSelector(
-          multiSelect: true,
-          pets: pets,
-          selectedPetIds: selectedPetIds,
-          onMultiChanged: (ids) {
-            ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
-          },
+        titleSpacing: 16,
+        centerTitle: false,
+        title: Row(
+          children: [
+            PetSelector(
+              multiSelect: true,
+              pets: pets,
+              selectedPetIds: selectedPetIds,
+              onMultiChanged: (ids) {
+                ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
+              },
+            ),
+            const Spacer(),
+            _ViewModeSwitcher(
+              current: viewMode,
+              onChanged: (mode) {
+                ref.read(timelineViewModeProvider.notifier).state = mode;
+              },
+            ),
+          ],
         ),
       ),
-      body: _buildBody(state, filterMulti),
+      body: _buildBody(state, filterMulti, viewMode),
     );
   }
 
-  Widget _buildBody(TimelineState state, bool filterMulti) {
+  Widget _buildBody(
+    TimelineState state,
+    bool filterMulti,
+    TimelineViewMode viewMode,
+  ) {
     if (state.isInitialLoading && state.orderedPhotoIds.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
     if (state.isEmpty) {
-      return _EmptyView(onRefresh: () => ref.read(timelineProvider.notifier).refresh());
+      return _EmptyView(
+        onRefresh: () => ref.read(timelineProvider.notifier).refresh(),
+      );
     }
 
+    if (viewMode == TimelineViewMode.immersive) {
+      return _buildImmersive(state, filterMulti);
+    }
+    return _buildCalendar(state, filterMulti);
+  }
+
+  Widget _buildCalendar(TimelineState state, bool filterMulti) {
     return Stack(
       children: [
         RefreshIndicator(
           onRefresh: () => ref.read(timelineProvider.notifier).refresh(),
           child: CustomScrollView(
-            controller: _scrollController,
+            controller: _calendarScrollController,
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
-              for (final group in state.groups) ..._buildGroupSlivers(group, filterMulti),
-              if (state.isLoadingOlder)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Center(
-                      child: SizedBox(
-                        width: 22,
-                        height: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    ),
-                  ),
-                )
-              else if (!state.hasMoreOlder && state.orderedPhotoIds.isNotEmpty)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 24),
-                    child: Center(
-                      child: Text(
-                        '— 没有更多照片了 —',
-                        style: TextStyle(
-                          color: AppTheme.textSecondary,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              else
-                const SliverToBoxAdapter(child: SizedBox(height: 40)),
+              for (final group in state.groups)
+                ..._buildGroupSlivers(group, filterMulti),
+              _buildTailSliver(state),
             ],
           ),
         ),
@@ -192,6 +285,93 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildImmersive(TimelineState state, bool filterMulti) {
+    final photos = state.orderedPhotoIds
+        .map((id) => state.photoMap[id])
+        .whereType<TimelinePhoto>()
+        .toList(growable: false);
+
+    return RefreshIndicator(
+      onRefresh: () => ref.read(timelineProvider.notifier).refresh(),
+      child: ListView.builder(
+        controller: _immersiveScrollController,
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+        itemCount: photos.length + 1,
+        itemBuilder: (context, index) {
+          if (index == photos.length) {
+            return _buildImmersiveTail(state);
+          }
+          final photo = photos[index];
+          return ImmersivePhotoTile(
+            photo: photo,
+            showPetLabel: filterMulti,
+            onTap: () => _openViewer(photo.id),
+            onLongPress: () => _onLongPressPhoto(photo),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildImmersiveTail(TimelineState state) {
+    if (state.isLoadingOlder) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        ),
+      );
+    }
+    if (!state.hasMoreOlder && state.orderedPhotoIds.isNotEmpty) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 24),
+        child: Center(
+          child: Text(
+            '— 没有更多照片了 —',
+            style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+          ),
+        ),
+      );
+    }
+    return const SizedBox(height: 40);
+  }
+
+  Widget _buildTailSliver(TimelineState state) {
+    if (state.isLoadingOlder) {
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: Center(
+            child: SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          ),
+        ),
+      );
+    }
+    if (!state.hasMoreOlder && state.orderedPhotoIds.isNotEmpty) {
+      return const SliverToBoxAdapter(
+        child: Padding(
+          padding: EdgeInsets.symmetric(vertical: 24),
+          child: Center(
+            child: Text(
+              '— 没有更多照片了 —',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+            ),
+          ),
+        ),
+      );
+    }
+    return const SliverToBoxAdapter(child: SizedBox(height: 40));
   }
 
   List<Widget> _buildGroupSlivers(TimelineGroup group, bool filterMulti) {
@@ -247,6 +427,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                 photo: photo,
                 showPetLabel: filterMulti,
                 onTap: () => _openViewer(photo.id),
+                onLongPress: () => _onLongPressPhoto(photo),
               );
             },
             childCount: group.photos.length,
@@ -254,6 +435,79 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         ),
       ),
     ];
+  }
+}
+
+class _ViewModeSwitcher extends StatelessWidget {
+  final TimelineViewMode current;
+  final ValueChanged<TimelineViewMode> onChanged;
+
+  const _ViewModeSwitcher({
+    required this.current,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ModeIconButton(
+          icon: Icons.grid_view_rounded,
+          selected: current == TimelineViewMode.calendar,
+          tooltip: '日历模式',
+          onTap: () => onChanged(TimelineViewMode.calendar),
+        ),
+        const SizedBox(width: 4),
+        _ModeIconButton(
+          icon: Icons.view_agenda_outlined,
+          selected: current == TimelineViewMode.immersive,
+          tooltip: '沉浸模式',
+          onTap: () => onChanged(TimelineViewMode.immersive),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModeIconButton extends StatelessWidget {
+  final IconData icon;
+  final bool selected;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _ModeIconButton({
+    required this.icon,
+    required this.selected,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: selected
+                ? AppTheme.primaryColor.withValues(alpha: 0.15)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(18),
+          ),
+          alignment: Alignment.center,
+          child: Icon(
+            icon,
+            size: 20,
+            color: selected ? AppTheme.primaryColor : AppTheme.textSecondary,
+          ),
+        ),
+      ),
+    );
   }
 }
 

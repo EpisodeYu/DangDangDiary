@@ -8,18 +8,21 @@ class PhotoGridTile extends StatelessWidget {
   final TimelinePhoto photo;
   final bool showPetLabel;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
 
   const PhotoGridTile({
     super.key,
     required this.photo,
     required this.showPetLabel,
     this.onTap,
+    this.onLongPress,
   });
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: AspectRatio(
         aspectRatio: 1,
         child: ClipRRect(

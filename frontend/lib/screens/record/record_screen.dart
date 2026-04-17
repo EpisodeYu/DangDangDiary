@@ -51,14 +51,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: PetSelector(
-          pets: pets,
-          selectedPet: selectedPet,
-          onSingleChanged: (pet) {
-            if (pet != null) {
-              ref.read(selectedPetIdProvider.notifier).select(pet.id);
-            }
-          },
+        titleSpacing: 16,
+        centerTitle: false,
+        title: Row(
+          children: [
+            PetSelector(
+              pets: pets,
+              selectedPet: selectedPet,
+              onSingleChanged: (pet) {
+                if (pet != null) {
+                  ref.read(selectedPetIdProvider.notifier).select(pet.id);
+                }
+              },
+            ),
+          ],
         ),
       ),
       body: _buildBody(selectedPet, pets.isEmpty),

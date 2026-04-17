@@ -7,6 +7,17 @@ import 'pet_provider.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 
+/// Timeline browsing mode. Lives in a lightweight UI-only provider so it is not
+/// coupled to [TimelineState] and does not trigger data reloads on change.
+enum TimelineViewMode {
+  calendar,
+  immersive,
+}
+
+final timelineViewModeProvider = StateProvider<TimelineViewMode>(
+  (ref) => TimelineViewMode.calendar,
+);
+
 @immutable
 class TimelineFilter {
   final List<int> petIds;

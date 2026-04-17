@@ -349,6 +349,10 @@ Authorization: Bearer {access_token}
 - `404 PHOTO_NOT_FOUND`
 - `403 PHOTO_FORBIDDEN`
 
+前端删除入口:
+- Step 4 阶段只要求后端接口可用，前端暂不强制提供删除 UI
+- Step 6 的时间轴补充需求中，会在时间轴页面长按缩略图触发本接口，详见 `docs/step6-timeline.md` 3.5 节
+
 ### 2.4 获取照片原图 URL
 
 ```http
