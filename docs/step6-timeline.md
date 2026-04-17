@@ -399,18 +399,102 @@ Authorization: Bearer {access_token}
 
 ### 3.5 长按删除照片
 
-删除入口只出现在时间轴主页面，两种浏览模式都支持:
+删除入口只出现在时间轴主页面，两种浏览模式的交互路径不同，但最终都走 `DELETE /api/v1/photos/{photo_id}`（Step 4 已有接口）。大图查看器内不再承担删除交互。
 
-1. 用户长按任意缩略图，弹出底部操作菜单（`showModalBottomSheet`）
-2. 菜单中包含 `删除` 与 `取消` 两个选项
-3. 点击 `删除` 后弹出二次确认对话框（`AlertDialog`），提示“确定删除该照片吗？删除后不可恢复”
-4. 用户确认后调用 `DELETE /api/v1/photos/{photo_id}`（Step 4 已有接口）
-5. 删除成功提示 "已删除"，并刷新时间轴；失败时提示错误信息
+#### 3.5.1 日历模式 —— 长按进入多选批量删除
 
-实现要点:
-- `PhotoGridTile` 增加 `onLongPress` 回调，由页面层统一处理弹菜单与确认逻辑
-- 请求由 `PhotoService.deletePhoto(photoId)` 发起，成功后调用 `timelineProvider.notifier.refresh()` 触发整页重载，避免与分页/月份索引状态冲突
-- 大图查看器内不再承担删除交互，避免与沉浸模式删除入口混淆
+> 当前实现以 `PhotoGridTile.selectionMode / selected` + `TimelineScreen._selectionMode / _selectedIds` 为准。
+
+1. 长按任意缩略图 → 进入"选择模式"，该张缩略图立即被选中
+2. 选择模式下 `AppBar` 切换为"已选 N/9"的选择态标题 + 左上角关闭按钮；右侧月份滚动条隐藏
+3. 选择模式下单击缩略图为"切换选中状态"，不再进入大图查看器
+4. 支持累计选择，**单次最多 9 张**；超过上限时轻量提示"一次最多选择 9 张照片"，不静默丢弃
+5. 页面底部出现操作条，仅包含"删除 (N)"按钮，N 为当前已选数量；`N = 0` 时按钮禁用
+6. 点击"删除 (N)" → 弹出二次确认 `AlertDialog`：
+   - 多于 1 张: "确定删除这 N 张照片吗？"
+   - 恰好 1 张: "确定删除这张照片吗？"
+   - 副文案统一为"删除后不可恢复"
+7. 确认后逐个串行调用 `PhotoService.deletePhoto(id)`，结果聚合展示:
+   - 全部成功: "已删除 N 张"
+   - 全部失败: "删除失败，请稍后重试"
+   - 部分成功: "已删除 X 张，Y 张失败"
+8. 成功的 id 通过 `timelineProvider.notifier.removePhotos(ids)` 从本地状态中**乐观移除**，不触发整页 `refresh()`
+9. 退出选择模式的方式：点击 AppBar 左侧关闭按钮、硬件返回键（通过 `PopScope` 拦截）、或下拉刷新（刷新前会先退出选择模式）
+10. 切换到沉浸模式、或下拉刷新、或被移除的照片已不在 `photoMap` 中时，会自动退出选择模式 / 清理失效 id
+
+#### 3.5.2 沉浸模式 —— 长按单张删除
+
+沉浸模式下由于每行只有一张图，不做多选：
+
+1. 长按任一图片 → 底部弹出 `showModalBottomSheet`，含"删除"与"取消"两项
+2. 选择"删除" → 弹出 `AlertDialog` 二次确认"确定删除这张照片吗？删除后不可恢复"
+3. 确认后调用 `PhotoService.deletePhoto(photoId)`，成功后同样通过 `removePhotos([photoId])` 乐观移除；失败时通过解析 `DioException` 的 `code/message` 字段给出提示
+
+#### 3.5.3 乐观删除的状态更新
+
+删除成功后**不**重拉列表，而是在本地直接更新，避免滚动位置跳动和月份索引抖动：
+
+- `TimelineNotifier.removePhotos(Iterable<int> ids)`：
+  - 从 `photoMap` / `orderedPhotoIds` 中剔除指定 id
+  - 基于新的 `orderedPhotoIds` 重新 `regroupByMonth` + `rebuildMonthIndex`
+  - 按月扣减 `monthDistribution[*].count`，`count` 归零的月份会被过滤掉
+  - `total` 同步减去删除成功的数量，并做 `clamp(0, state.total)` 防御
+  - 同时调用 `OriginalPhotoCache.instance.removePhoto(id)` 释放本地原图缓存（见 3.6）
+
+#### 3.5.4 实现要点汇总
+
+- `PhotoGridTile` 暴露 `onLongPress`、`selectionMode`、`selected`；选中态以半透明黑色蒙层 + 右上角勾选圆点呈现
+- `TimelineScreen` 保存 `_selectionMode`/`_selectedIds`；`_onTapPhoto` 根据 `_selectionMode` 决定是切换选中还是打开查看器
+- 请求并发度：日历模式的批量删除当前是**串行**的 `for`，不做并发，以便准确分辨每张的成功/失败
+- 选择模式仅作用于日历模式；进入沉浸模式时会在下一帧自动退出选择模式
+
+### 3.6 原图本地持久化缓存 (`OriginalPhotoCache`)
+
+沉浸模式下每张图片独占一行，如果每次都加载缩略图，会出现像素化 + 体验掉档；同时大图查看器也频繁请求签名原图。为此前端新增了一个跨页面共享的**原图持久化缓存**，位于 `frontend/lib/services/original_photo_cache.dart`，作为全局单例：
+
+- 存储位置: `ApplicationSupportDirectory/original_photo_cache/`
+- 缓存键: 稳定的 `photo_<photo_id>`（服务端 id），上传前过渡态使用 `pending_<token>`
+- 持久化索引: `index.json`，记录每个 entry 的 `key / size / last_access`
+- 配额: 默认 **1 GiB (`_defaultMaxBytes`)**，超配额时按 LRU 淘汰到 90% 低水位
+- 原子写: 下载/索引持久化都走临时文件 + `rename`，避免半写入
+- 启动时会把索引与磁盘现状做 reconcile：补齐 size、删除索引里已不存在的文件、清理无索引的孤儿文件
+
+#### 3.6.1 写入路径
+
+1. **上传前 (Step 4 记录页)**:
+   - 记录页在 `_ensureJpeg` 得到压缩后的 JPEG 后，会调用 `OriginalPhotoCache.cacheUploadSource(file)` 把字节拷贝进缓存，得到一个不透明的 `pending` token，并与选中的照片一一对应保存在 `_pendingTokens` 中
+   - 上传成功时遍历 `response.successes`，逐个调用 `bindPendingToPhoto(token, photo.id)`，把 `pending_<token>` 文件**原地 rename** 成 `photo_<id>`，LRU 时间刷新
+   - 删除一张未上传的选中照片 / 重置页面时会 `releasePending(token)`，把 `pending_` 条目删掉
+   - 上传失败时 **不**释放 pending，让用户重试上传时可以复用同一份字节
+
+2. **下载路径 (时间轴/查看器/沉浸模式)**:
+   - `fetchOriginal(photoId)`: 命中 `photo_<id>` 直接返回本地 `File`；未命中则向后端请求 `GET /api/v1/photos/{id}/url` 拿到短期签名 URL → `Dio.download` 到 `.tmp_` 临时文件 → 原子 `rename` 为最终文件 → 更新索引 → 触发 `revision++`
+   - `prefetch(photoId)`: 后台 fire-and-forget 版本，内部走 `fetchOriginal`；并发重复调用会被 `_inflightDownloads` / `_prefetching` 去重
+
+3. **删除路径**: `TimelineNotifier.removePhotos` 在乐观删除本地状态时会对每个被删除的 id 调 `removePhoto(photoId)`，把缓存文件和索引条目一起清掉。
+
+#### 3.6.2 读取路径
+
+- `OriginalPhotoImage` widget (`frontend/lib/widgets/original_photo_image.dart`)
+  - 沉浸模式每一行用这个组件展示，优先 `Image.file(cachedOriginal)`，原图还未就绪时回退到 `CachedNetworkImage(thumbnailUrl)`，三种错误态共用同一 `errorBuilder`
+  - 监听 `OriginalPhotoCache.instance.revision`（`ValueNotifier<int>`）：其他照片的缓存变化会让它再调一次 `getCachedOriginalFile(photoId)`，把刚下完的原图无感切换进来
+
+- 大图查看器 (`photo_viewer_screen.dart`)
+  - 每页通过 `_futureCache.putIfAbsent(id, () => OriginalPhotoCache.instance.fetchOriginal(id))` 拿 `Future<File>`，再用 `PhotoView(imageProvider: FileImage(file))` 渲染
+  - 不再直接调用 `PhotoService.getOriginalUrl`，也不再走 `NetworkImage`
+
+#### 3.6.3 预取策略
+
+- 沉浸模式 `TimelineScreen._prefetchAround`: 以当前可见项为中心，向前 `1`、向后 `2` 预取（`_immersivePrefetchBehind / _immersivePrefetchAhead`）
+- 大图查看器 `_prefetchNeighbors`: 当前页左右各 `_viewerPrefetchRadius = 2` 预取，`onPageChanged` 时重算
+- 预取全部走 `OriginalPhotoCache.prefetch`，由缓存内部做 in-flight 去重，调用方不必判重
+
+#### 3.6.4 后端/签名 URL 约束不变
+
+缓存层的引入不改变 Step 4 / Step 6 的后端协议：
+- 原图仍只通过 `GET /api/v1/photos/{photo_id}/url` 暴露短期签名 URL，`expires_in` 默认 `3600`
+- 客户端不长期保存签名 URL 本身，只保存按 `photo_id` 命名的二进制
+- 所以签名过期/轮换不会让旧缓存失效；而服务端删除照片后，前端通过 `DELETE` 成功回调里的 `removePhoto(id)` 同步释放本地副本
 
 ---
 
@@ -610,10 +694,11 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 
 - 打开查看器时，根据 `initialPhotoId` 找到在 `orderedPhotoIds` 中的索引
 - `PageView.builder` 以 `orderedPhotoIds.length` 为当前长度
-- 每一页按需调用 `getOriginalUrl(photoId)`，拿到签名 URL 后交给 `PhotoView`
-- 当当前索引距离头部或尾部不足 3 张时，触发预加载:
-  - 靠近头部且 `hasMoreNewer == true` 时，请求 `direction=newer`
-  - 靠近尾部且 `hasMoreOlder == true` 时，请求 `direction=older`
+- 每一页通过 `OriginalPhotoCache.instance.fetchOriginal(photoId)` 拿到本地 `File`，再用 `PhotoView(imageProvider: FileImage(file))` 渲染（详见 3.6）：
+  - 命中本地缓存直接返回 `File`，不发网络请求
+  - 未命中时缓存内部会调用 `PhotoService.getOriginalUrl` 得到短期签名 URL 后下载到磁盘，并通过 `revision` 通知其他监听者
+  - 查看器自身还有 `_futureCache` 做同 `photo_id` 的 Future 去重，避免左右滑动时重复发请求
+- 当当前索引距离头部或尾部不足 3 张时，触发**时间轴游标方向**上的补片（`hasMoreNewer` / `hasMoreOlder`）；额外调用 `OriginalPhotoCache.prefetch` 预取当前页左右各 2 张的原图
 
 ### 5.4 宠物筛选切换
 
@@ -630,7 +715,10 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 ## 6. 性能与实现约束
 
 1. 缩略图统一走 `/media/...` 固定路径，配合 `cached_network_image` 做缓存
-2. 原图只在查看器中懒加载，避免主时间轴页面请求大图
+2. 原图由 `OriginalPhotoCache` 统一管理：
+   - 日历模式列表页**不**主动拉原图，仍只用缩略图
+   - 沉浸模式和大图查看器直接读缓存（命中即走本地 `FileImage`），并在视口附近做前后几张的预取
+   - 签名 URL 保持短期，不持久化；持久化的只是按 `photo_id` 命名的本地文件
 3. 主列表使用 `Sliver` 体系，避免一次性构建大量网格子项
 4. 月份标题和网格高度尽量稳定，便于右侧月份跳转后的滚动定位
 5. `timeline/dates` 应只返回有照片的月份，减少滚动条无效标记
@@ -678,9 +766,22 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 
 - `frontend/lib/widgets/photo_grid_tile.dart`
   - 新建缩略图格子组件
+  - 沉浸模式下不用；日历模式额外支持 `selectionMode / selected / onLongPress`
+
+- `frontend/lib/widgets/immersive_photo_tile.dart`
+  - 沉浸模式单行大图，内部走 `OriginalPhotoImage`，在多宠物混合时叠加宠物标签
+
+- `frontend/lib/widgets/original_photo_image.dart`
+  - 统一的"优先显示原图，退回缩略图"组件，监听 `OriginalPhotoCache.revision`
+
+- `frontend/lib/services/original_photo_cache.dart`
+  - 原图持久化缓存单例，含 LRU 配额、pending token、下载去重、revision 通知
 
 - `frontend/test/providers/timeline_provider_test.dart`
-  - 新增 provider 合并逻辑测试
+  - 新增 provider 合并/乐观删除/模式切换逻辑测试
+
+- `frontend/test/services/original_photo_cache_test.dart`
+  - 覆盖缓存初始化、LRU 淘汰、pending 绑定 / 释放、删除路径等核心场景
 
 ### 已存在依赖
 
@@ -769,8 +870,16 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 - [ ] Flutter 时间轴支持日历模式与沉浸模式切换，切换不改变筛选条件、不触发整页刷新
 - [ ] Flutter 沉浸模式下每张图片独占一行，无月份标题与右侧滚动条，可连续上下滑动
 - [ ] Flutter 沉浸模式下点击图片仍能进入全屏查看器
-- [ ] Flutter 两种模式下长按缩略图均可弹出菜单并二次确认后删除照片
-- [ ] 照片删除成功后时间轴自动刷新，且保持当前筛选条件
+- [ ] 日历模式长按缩略图进入"选择模式"，支持累计多选（最多 9 张），底部出现"删除 (N)"按钮
+- [ ] 日历模式选择模式下：右侧月份滚动条隐藏、AppBar 切换为"已选 N/9" + 关闭按钮、硬件返回键会先退出选择模式
+- [ ] 日历模式批量删除二次确认后串行调用 `DELETE /api/v1/photos/{id}`，并聚合展示全部成功 / 部分成功 / 全部失败的提示
+- [ ] 沉浸模式长按单张弹 `showModalBottomSheet` → 二次确认 → 单张删除
+- [ ] 删除成功后通过 `TimelineNotifier.removePhotos` 乐观更新本地状态，不再调用 `refresh()`，滚动位置和月份索引不抖动
+- [ ] 删除成功同时清除 `OriginalPhotoCache` 中对应 `photo_<id>` 本地副本
+- [ ] `OriginalPhotoCache` 存在 1 GiB LRU 配额，超出时按 `last_access` 升序淘汰到 90% 低水位
+- [ ] 上传前写入 `pending_<token>`；上传成功后 `bindPendingToPhoto` 原地 rename 为 `photo_<id>`，索引与磁盘保持一致
+- [ ] 沉浸模式内 `OriginalPhotoImage` 优先显示本地原图，未就绪时显示缩略图作为占位
+- [ ] 大图查看器使用 `FileImage(cachedOriginal)` 渲染，并对当前页左右各 2 张做预取
 - [ ] 记录、健康、时间轴三页 `AppBar` 中的 `PetSelector` 统一位于左侧
 
 ---

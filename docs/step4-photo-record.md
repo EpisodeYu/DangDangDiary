@@ -52,6 +52,17 @@
   - 识别 SDK Client 由全局单例改为 `threading.local()` 线程本地缓存，避免 `asyncio.gather` 触发的并发线程争用同一 Client
   - 识别 `RuntimeOptions` 新增 `autoretry=False` + `max_attempts=1`，禁止 SDK 在超时时重试，配合 `read_timeout=8s` 让识别快速失败 → 走"放行上传"
   - 前端上传弹窗改为两阶段：上传字节进度 100% 后切换到不确定进度的"正在识别照片..." 文案，避免长时间停在 100% 让用户误以为卡死
+- `0a792c3 Bug fix`
+  - `image_picker.pickMultiImage(limit: ...)` 在 `limit < 2` 时会抛错；记录页在"剩余可选 = 1"时退回到 `pickImage(source: gallery)` 单选，统一封装到同一分支逻辑里
+  - **EXIF 日期改为在 `_ensureJpeg` 压缩之前提取**：`flutter_image_compress` 会在压缩过程中丢失 `DateTimeOriginal`，此前从压缩后的文件提取常常拿不到拍摄日期
+  - 宠物档案编辑页的品种自动补全从 `Autocomplete` 切换到 `RawAutocomplete`，并修复了生日日期选择器弹出前未 `unfocus` 导致的焦点错乱
+- `b69e658 Add temp of pic`
+  - 新增 `OriginalPhotoCache` 持久化原图缓存（详见 `docs/step6-timeline.md` 3.6 节）
+  - 记录页每次把 `_ensureJpeg` 产出的压缩 JPEG 额外 `cacheUploadSource` 一份，拿到 `pending` token；与 `_selectedFiles` 并行维护 `_pendingTokens`
+  - 上传成功时对每个 `success.index` 调 `bindPendingToPhoto(token, photo.id)`，把 `pending_<token>` 转成 `photo_<photo_id>`，让沉浸模式/查看器立即复用本地字节
+  - 单张照片被移除或页面重置时 `releasePending(token)` 释放对应缓存；上传失败不释放，便于重试复用
+- `c996ef4 Fix upload failed`
+  - `_RetryInterceptor` 对 `err.requestOptions.data is FormData` 直接返回 `false`：`FormData` 是一次性流，重放会抛 `FormData has already been finalized`；上传接口也非幂等，重试存在重复入库风险。失败后由用户在记录页通过"部分失败继续重试"的产品路径手动重发
 
 与 Step 4 无直接关系的后续提交（例如 Android SDK 配置）不在本文档范围内。
 
@@ -72,6 +83,10 @@
 - 当前实现把图片识别和 MinIO 上传都放到工作线程中执行（`asyncio.to_thread`），并用 `asyncio.gather` 让同一批次内的所有合法文件**并发**完成识别 + 上传，DB 写入串行执行
 - 阿里云识别 SDK Client 按线程缓存（`threading.local()`），并禁用 SDK 自动重试，配合较短的 read_timeout 让识别快速失败时立即走"放行上传"
 - 前端上传前会**对所有图片**统一压缩为 1920×1080 JPEG（质量 90），不再只针对 HEIC/HEIF；该步骤同时承担了"格式归一化"和"减小上传体积"两个目的
+- **EXIF 提取必须在 `_ensureJpeg` 之前进行**：`flutter_image_compress` 会剥掉 `DateTimeOriginal`，对压缩后的文件再读 EXIF 往往拿不到拍摄日期
+- 相册多选使用 `pickMultiImage(limit: remaining)`；当 `remaining == 1` 时必须退回 `pickImage(source: gallery)` 单选，因为 `pickMultiImage` 要求 `limit >= 2`
+- 每张入选照片在 `_ensureJpeg` 之后会被写入 `OriginalPhotoCache`（`pending_<token>`），上传成功后通过 `bindPendingToPhoto` 晋升为 `photo_<id>`；这份数据被 Step 6 的沉浸模式 / 大图查看器复用
+- 上传请求使用 `FormData`，因此 Dio 的重试拦截器对 `FormData` 请求一律跳过重试（非幂等 + 流只能消费一次）
 - 当前上传链路的超时基线是: 前端 `sendTimeout=120s`、`receiveTimeout=300s`，Nginx `proxy_read_timeout=300s`
 
 ---
@@ -535,18 +550,20 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
    - 相册支持多选，相机一次新增 1 张
    - 总数最多 5 张，超过上限时禁止继续添加
    - 当前实现为纵向卡片列表，每张卡片右上角有删除按钮
-3. 入选预处理（`_ensureJpeg`）:
-   - 不论原始格式是什么，所有入选照片都会先用 `flutter_image_compress` 压缩为 1920×1080 / JPEG / 质量 90 的临时文件
-   - HEIC/HEIF 在这一步顺便转成 JPEG，不再需要单独判断扩展名
-   - 后续 EXIF 提取、卡片预览、上传 `MultipartFile` 全部基于该压缩后的临时文件
-   - `flutter_image_compress` 默认会保留 EXIF 中的 `DateTimeOriginal`，所以仍能在压缩后的文件上正确提取拍摄日期
+3. 入选预处理顺序（从相册选择时，每张照片）:
+   1. **先** `ExifHelper.extractDate(File(xfile.path))` 读原始文件的 `DateTimeOriginal`（压缩会丢 EXIF）
+   2. 再 `_ensureJpeg(xfile)` 用 `flutter_image_compress` 把原始文件压缩为 1920×1080 / JPEG / 质量 90 的临时文件；HEIC/HEIF 在这里顺带转成 JPEG
+   3. 然后调用 `OriginalPhotoCache.cacheUploadSource(compressed)` 把压缩后的字节拷贝进持久化缓存，得到 `pending` token 写入 `_pendingTokens`
+   4. `setState` 把压缩文件、token、EXIF 日期（读失败时回退 `DateTime.now()`）追加到对应并行列表
+   - 上传的 `MultipartFile` 发的是压缩后的临时文件；卡片预览同样读压缩后的文件
+   - `image_picker.pickMultiImage` 至少要求 `limit >= 2`，所以 `remaining == 1` 时必须走 `pickImage(source: gallery)` 单选分支
 4. 日期处理:
    - 当前实现是**每张照片单独维护一个日期**
-   - 从相册选择时，会在 `_ensureJpeg` 之后逐张调用 `ExifHelper.extractDate(file)` 提取 EXIF 日期（即基于压缩后的 JPEG，而不是原始相册文件）
+   - 从相册选择时，按上面第 3 条顺序在压缩前就读出 EXIF 日期
    - 单张提取失败时，该照片日期回退为 `DateTime.now()`
-   - 当前拍照分支直接以 `DateTime.now()` 作为默认日期，没有再读相机返回文件的 EXIF
+   - 拍照分支直接以 `DateTime.now()` 作为默认日期，不读相机返回文件的 EXIF；拍照的文件一样会被 `_ensureJpeg` + `cacheUploadSource` 处理
    - 每张卡片底部都有自己的日期行，点击后可单独修改该照片日期
-   - 添加或删除其它照片时，不会覆盖已存在照片的日期；删除照片时同步移除其日期
+   - 添加或删除其它照片时，不会覆盖已存在照片的日期；删除照片时同步移除其日期，同时调用 `OriginalPhotoCache.releasePending(token)` 释放缓存
 5. 点击“记录完成”:
    - 必须满足“已选宠物 + 至少 1 张照片”
    - 提交期间禁用按钮和删除操作
@@ -573,8 +590,7 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
 
 当前页面实际用法:
 - `record_screen.dart` 当前使用的是 `extractDate(...)`，按照片逐张初始化默认日期
-- 调用时机在 `_ensureJpeg` **之后**，因此提取的是压缩后的 JPEG。`flutter_image_compress` 默认保留 `DateTimeOriginal`，常规相机/手机拍摄的照片仍能命中
-- 若后续要换成"基于原图"提取，需要在 `_ensureJpeg` 之前先用 `xfile.path` 调一次 `extractDate`
+- **调用时机在 `_ensureJpeg` 之前**：`flutter_image_compress` 压缩过程中会丢弃 `DateTimeOriginal`，所以必须先用 `File(xfile.path)` 读 EXIF，再把 xfile 交给 `_ensureJpeg` 压缩。旧版先压缩再读 EXIF 的顺序会导致拍摄日期几乎总是回退到"今天"
 - `extractFirstValidDate(...)` 仍保留在工具类中，但当前记录页未使用这条逻辑
 
 ### 4.4 照片选择与预览组件
@@ -687,6 +703,24 @@ class PhotoUploadResponse {
 - 使用 `onSendProgress` 更新上传进度
 - 当前实现超时配置为 `sendTimeout=120s`、`receiveTimeout=300s`
 
+### 4.8 上传前原图缓存（与 Step 6 沉浸模式/查看器联动）
+
+> 细节见 `docs/step6-timeline.md` 3.6 节 `OriginalPhotoCache`；这里只描述记录页侧的调用义务。
+
+- 记录页维护一个与 `_selectedFiles` 平行的 `List<String> _pendingTokens`
+- 每次添加照片（相册多选 / 相册单选兜底 / 拍照）时，在 `_ensureJpeg` 产出压缩 JPEG 后调用 `OriginalPhotoCache.cacheUploadSource(file)` 拿到 token；写入失败时用空字符串占位，不阻塞上传流程
+- 单张删除 / 页面切换 / 全部成功重置 `_selectedFiles` 时，同步从 `_pendingTokens` 对应位置移除 / `releasePending` 掉
+- 上传响应 `PhotoUploadResponse` 返回后，对每个 `successes[i]` 调用 `bindPendingToPhoto(_pendingTokens[i.index], i.photo.id)`；这一步是 best-effort，失败时照片仍然可用，只是首次打开沉浸模式/查看器会重新从后端下载原图
+- 部分成功时保留失败项对应的 token，下一次重试可直接复用已缓存的字节
+
+### 4.9 Dio 重试拦截器对 FormData 的排除
+
+- `api_client.dart` 中的 `_RetryInterceptor` 在判断是否重试时，额外检查 `err.requestOptions.data is FormData`，命中则直接 `return false`
+- 原因：
+  - `FormData` 是一次性流，第二次发送会抛 `FormData has already been finalized`
+  - 上传接口非幂等，即使服务端已经写成功但返回层网络异常，盲重试可能造成重复入库
+- 上传失败的兜底策略是**由用户在记录页手动点击"重新提交"**，记录页会保留失败项及其日期/缓存 token
+
 ---
 
 ## 5. 需要创建或修改的文件清单
@@ -702,7 +736,9 @@ class PhotoUploadResponse {
 ### 前端
 - `frontend/lib/models/photo.dart` - 照片数据模型
 - `frontend/lib/services/photo_service.dart` - 照片 API 服务
-- `frontend/lib/screens/record/record_screen.dart` - 记录页面
+- `frontend/lib/services/api_client.dart` - Dio 客户端；`_RetryInterceptor` 对 `FormData` 一律跳过重试
+- `frontend/lib/services/original_photo_cache.dart` - 原图持久化缓存；记录页调用 `cacheUploadSource / bindPendingToPhoto / releasePending`
+- `frontend/lib/screens/record/record_screen.dart` - 记录页面；维护 `_selectedFiles` / `_pendingTokens` / `_photoDates` 三条平行列表
 - `frontend/lib/utils/exif_helper.dart` - EXIF 日期提取
 - `frontend/lib/widgets/photo_picker_grid.dart` - 早期创建的照片选择组件，当前记录页未直接使用
 
@@ -732,9 +768,13 @@ class PhotoUploadResponse {
 - [ ] Flutter 记录页面展示宠物选择器和无档案空状态
 - [ ] Flutter 可以从相册多选照片，并支持拍照追加
 - [ ] Flutter 照片预览正确显示，可以删除单张
-- [ ] Flutter 从相册选择时，会为每张照片单独尝试提取 EXIF 日期
+- [ ] Flutter 从相册选择时，会在 `_ensureJpeg` **之前**为每张照片尝试提取 EXIF 日期（压缩后会丢 `DateTimeOriginal`）
 - [ ] 单张照片 EXIF 缺失或解析失败时，会回退到当前时间
+- [ ] Flutter 相册多选在"剩余可选 = 1"时自动退回 `pickImage` 单选分支，避免 `pickMultiImage(limit: 1)` 抛错
 - [ ] Flutter 支持逐张修改照片日期，且不会因继续加图或删图覆盖其它照片日期
+- [ ] Flutter 每张入选照片会被写入 `OriginalPhotoCache`（`pending_<token>`），上传成功后晋升为 `photo_<photo_id>`
+- [ ] Flutter 删除未上传的照片 / 全部成功重置时，对应 `pending` 缓存会被释放
+- [ ] Flutter 的 Dio `_RetryInterceptor` 对 `FormData` 请求不做自动重试，由记录页的"保留失败项重试"承担
 - [ ] Flutter 上传时显示总进度百分比
 - [ ] 全部成功后页面重置
 - [ ] 部分成功时保留失败项及其日期，便于重试
