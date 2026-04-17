@@ -7,6 +7,8 @@ import '../models/timeline.dart';
 class PhotoGridTile extends StatelessWidget {
   final TimelinePhoto photo;
   final bool showPetLabel;
+  final bool selectionMode;
+  final bool selected;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -14,6 +16,8 @@ class PhotoGridTile extends StatelessWidget {
     super.key,
     required this.photo,
     required this.showPetLabel,
+    this.selectionMode = false,
+    this.selected = false,
     this.onTap,
     this.onLongPress,
   });
@@ -86,10 +90,40 @@ class PhotoGridTile extends StatelessWidget {
                     ),
                   ),
                 ),
+              if (selectionMode && selected)
+                Container(color: Colors.black.withValues(alpha: 0.25)),
+              if (selectionMode)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: _SelectionCheck(selected: selected),
+                ),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SelectionCheck extends StatelessWidget {
+  final bool selected;
+  const _SelectionCheck({required this.selected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 22,
+      height: 22,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: selected ? AppTheme.primaryColor : Colors.black.withValues(alpha: 0.25),
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      alignment: Alignment.center,
+      child: selected
+          ? const Icon(Icons.check, size: 14, color: Colors.white)
+          : null,
     );
   }
 }

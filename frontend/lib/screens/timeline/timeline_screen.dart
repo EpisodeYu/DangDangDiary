@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
+import '../../models/pet.dart';
 import '../../models/timeline.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
@@ -14,6 +15,8 @@ import '../../widgets/timeline_scrollbar.dart';
 import 'photo_viewer_screen.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
+
+const int _maxBatchSelection = 9;
 
 class TimelineScreen extends ConsumerStatefulWidget {
   const TimelineScreen({super.key});
@@ -29,6 +32,9 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   // Keyed per month so we can scroll-to on jumpToMonth (calendar mode only).
   final Map<String, GlobalKey> _monthKeys = {};
   String? _activeMonth;
+
+  bool _selectionMode = false;
+  final Set<int> _selectedIds = <int>{};
 
   @override
   void initState() {
@@ -112,7 +118,52 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
   }
 
-  Future<void> _onLongPressPhoto(TimelinePhoto photo) async {
+  void _enterSelection(int firstId) {
+    setState(() {
+      _selectionMode = true;
+      _selectedIds
+        ..clear()
+        ..add(firstId);
+    });
+  }
+
+  void _exitSelection() {
+    if (!_selectionMode && _selectedIds.isEmpty) return;
+    setState(() {
+      _selectionMode = false;
+      _selectedIds.clear();
+    });
+  }
+
+  void _toggleSelection(int id) {
+    if (_selectedIds.contains(id)) {
+      setState(() {
+        _selectedIds.remove(id);
+        if (_selectedIds.isEmpty) _selectionMode = false;
+      });
+      return;
+    }
+    if (_selectedIds.length >= _maxBatchSelection) {
+      _showSnack('一次最多选择 $_maxBatchSelection 张照片');
+      return;
+    }
+    setState(() => _selectedIds.add(id));
+  }
+
+  Future<void> _onTapPhoto(TimelinePhoto photo) async {
+    if (_selectionMode) {
+      _toggleSelection(photo.id);
+      return;
+    }
+    _openViewer(photo.id);
+  }
+
+  Future<void> _onLongPressCalendar(TimelinePhoto photo) async {
+    if (_selectionMode) return;
+    _enterSelection(photo.id);
+  }
+
+  Future<void> _onLongPressImmersive(TimelinePhoto photo) async {
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -138,10 +189,18 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
     if (!mounted || action != 'delete') return;
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await _confirmDelete(1);
+    if (!mounted || confirmed != true) return;
+
+    await _deleteSinglePhoto(photo.id);
+  }
+
+  Future<bool?> _confirmDelete(int count) {
+    final title = count > 1 ? '确定删除这 $count 张照片吗？' : '确定删除这张照片吗？';
+    return showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('确定删除这张照片吗？'),
+        title: Text(title),
         content: const Text('删除后不可恢复'),
         actions: [
           TextButton(
@@ -156,18 +215,15 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         ],
       ),
     );
-    if (!mounted || confirmed != true) return;
-
-    await _deletePhoto(photo.id);
   }
 
-  Future<void> _deletePhoto(int photoId) async {
+  Future<void> _deleteSinglePhoto(int photoId) async {
     final service = ref.read(_photoServiceProvider);
     try {
       await service.deletePhoto(photoId);
       if (!mounted) return;
+      ref.read(timelineProvider.notifier).removePhotos([photoId]);
       _showSnack('已删除');
-      await ref.read(timelineProvider.notifier).refresh();
     } on DioException catch (e) {
       if (!mounted) return;
       final data = e.response?.data;
@@ -179,6 +235,37 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     } catch (_) {
       if (!mounted) return;
       _showSnack('删除失败，请稍后重试');
+    }
+  }
+
+  Future<void> _deleteSelected() async {
+    if (_selectedIds.isEmpty) return;
+    final ids = _selectedIds.toList(growable: false);
+    final confirmed = await _confirmDelete(ids.length);
+    if (!mounted || confirmed != true) return;
+
+    final service = ref.read(_photoServiceProvider);
+    final deleted = <int>[];
+    final failed = <int>[];
+    for (final id in ids) {
+      try {
+        await service.deletePhoto(id);
+        deleted.add(id);
+      } catch (_) {
+        failed.add(id);
+      }
+    }
+    if (!mounted) return;
+    if (deleted.isNotEmpty) {
+      ref.read(timelineProvider.notifier).removePhotos(deleted);
+    }
+    _exitSelection();
+    if (failed.isEmpty) {
+      _showSnack('已删除 ${deleted.length} 张');
+    } else if (deleted.isEmpty) {
+      _showSnack('删除失败，请稍后重试');
+    } else {
+      _showSnack('已删除 ${deleted.length} 张，${failed.length} 张失败');
     }
   }
 
@@ -199,41 +286,125 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     final state = ref.watch(timelineProvider);
     final viewMode = ref.watch(timelineViewModeProvider);
 
+    // Selection only applies to calendar mode — leaving the mode drops it.
+    if (_selectionMode && viewMode != TimelineViewMode.calendar) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _exitSelection();
+      });
+    }
+
+    // Drop stale selected IDs (e.g., if photos were removed from state).
+    if (_selectionMode) {
+      final stale = _selectedIds
+          .where((id) => !state.photoMap.containsKey(id))
+          .toList(growable: false);
+      if (stale.isNotEmpty) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          setState(() {
+            _selectedIds.removeAll(stale);
+            if (_selectedIds.isEmpty) _selectionMode = false;
+          });
+        });
+      }
+    }
+
     // Decide whether to show the pet-name overlay label on each tile.
     final filterMulti = selectedPetIds.isEmpty
         ? pets.length > 1
         : selectedPetIds.length > 1;
 
-    // Ensure keys for every group present in state.
     for (final g in state.groups) {
       _monthKeys.putIfAbsent(g.date, () => GlobalKey());
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 16,
-        centerTitle: false,
-        title: Row(
+    return PopScope(
+      canPop: !_selectionMode,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _selectionMode) _exitSelection();
+      },
+      child: Scaffold(
+        appBar: _selectionMode
+            ? _buildSelectionAppBar()
+            : _buildDefaultAppBar(pets, selectedPetIds, viewMode),
+        body: _buildBody(state, filterMulti, viewMode),
+        bottomNavigationBar: _selectionMode ? _buildSelectionBar() : null,
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildDefaultAppBar(
+    List<Pet> pets,
+    List<int> selectedPetIds,
+    TimelineViewMode viewMode,
+  ) {
+    return AppBar(
+      titleSpacing: 16,
+      centerTitle: false,
+      title: Row(
+        children: [
+          PetSelector(
+            multiSelect: true,
+            pets: pets,
+            selectedPetIds: selectedPetIds,
+            onMultiChanged: (ids) {
+              ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
+            },
+          ),
+          const Spacer(),
+          _ViewModeSwitcher(
+            current: viewMode,
+            onChanged: (mode) {
+              ref.read(timelineViewModeProvider.notifier).state = mode;
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  PreferredSizeWidget _buildSelectionAppBar() {
+    return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.close),
+        tooltip: '取消',
+        onPressed: _exitSelection,
+      ),
+      title: Text('已选 ${_selectedIds.length}/$_maxBatchSelection'),
+    );
+  }
+
+  Widget _buildSelectionBar() {
+    final count = _selectedIds.length;
+    final enabled = count > 0;
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          border: Border(
+            top: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            PetSelector(
-              multiSelect: true,
-              pets: pets,
-              selectedPetIds: selectedPetIds,
-              onMultiChanged: (ids) {
-                ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
-              },
-            ),
-            const Spacer(),
-            _ViewModeSwitcher(
-              current: viewMode,
-              onChanged: (mode) {
-                ref.read(timelineViewModeProvider.notifier).state = mode;
-              },
+            TextButton.icon(
+              onPressed: enabled ? _deleteSelected : null,
+              icon: const Icon(Icons.delete_outline),
+              label: Text(enabled ? '删除 ($count)' : '删除'),
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.errorColor,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 10,
+                ),
+              ),
             ),
           ],
         ),
       ),
-      body: _buildBody(state, filterMulti, viewMode),
     );
   }
 
@@ -262,7 +433,10 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     return Stack(
       children: [
         RefreshIndicator(
-          onRefresh: () => ref.read(timelineProvider.notifier).refresh(),
+          onRefresh: () async {
+            _exitSelection();
+            await ref.read(timelineProvider.notifier).refresh();
+          },
           child: CustomScrollView(
             controller: _calendarScrollController,
             physics: const AlwaysScrollableScrollPhysics(),
@@ -273,16 +447,17 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             ],
           ),
         ),
-        Positioned(
-          top: 0,
-          right: 0,
-          bottom: 0,
-          child: TimelineScrollbar(
-            months: state.monthDistribution,
-            activeMonth: _activeMonth,
-            onJump: _onJumpToMonth,
+        if (!_selectionMode)
+          Positioned(
+            top: 0,
+            right: 0,
+            bottom: 0,
+            child: TimelineScrollbar(
+              months: state.monthDistribution,
+              activeMonth: _activeMonth,
+              onJump: _onJumpToMonth,
+            ),
           ),
-        ),
       ],
     );
   }
@@ -309,7 +484,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             photo: photo,
             showPetLabel: filterMulti,
             onTap: () => _openViewer(photo.id),
-            onLongPress: () => _onLongPressPhoto(photo),
+            onLongPress: () => _onLongPressImmersive(photo),
           );
         },
       ),
@@ -426,8 +601,10 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
               return PhotoGridTile(
                 photo: photo,
                 showPetLabel: filterMulti,
-                onTap: () => _openViewer(photo.id),
-                onLongPress: () => _onLongPressPhoto(photo),
+                selectionMode: _selectionMode,
+                selected: _selectedIds.contains(photo.id),
+                onTap: () => _onTapPhoto(photo),
+                onLongPress: () => _onLongPressCalendar(photo),
               );
             },
             childCount: group.photos.length,

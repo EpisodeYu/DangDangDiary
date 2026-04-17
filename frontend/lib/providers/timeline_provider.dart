@@ -454,6 +454,52 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     }
   }
 
+  /// Remove photos from local state without reloading from the server.
+  /// Keeps scroll position and avoids re-fetching — used after a successful
+  /// delete. Also decrements month distribution counts and total.
+  void removePhotos(Iterable<int> ids) {
+    final removing = ids.where(state.photoMap.containsKey).toSet();
+    if (removing.isEmpty) return;
+
+    final removedPerMonth = <String, int>{};
+    for (final id in removing) {
+      final p = state.photoMap[id];
+      if (p == null) continue;
+      final key = TimelineMerge.monthKey(p.takenAt);
+      removedPerMonth[key] = (removedPerMonth[key] ?? 0) + 1;
+    }
+
+    final photoMap = Map<int, TimelinePhoto>.from(state.photoMap)
+      ..removeWhere((k, _) => removing.contains(k));
+    final orderedIds = state.orderedPhotoIds
+        .where((id) => !removing.contains(id))
+        .toList(growable: false);
+    final groups = TimelineMerge.regroupByMonth(orderedIds, photoMap);
+    final monthIndex = TimelineMerge.rebuildMonthIndex(groups);
+
+    final newDistribution = state.monthDistribution
+        .map((d) {
+          final removed = removedPerMonth[d.date] ?? 0;
+          if (removed == 0) return d;
+          return DateDistribution(
+            date: d.date,
+            label: d.label,
+            count: (d.count - removed).clamp(0, d.count),
+          );
+        })
+        .where((d) => d.count > 0)
+        .toList(growable: false);
+
+    state = state.copyWith(
+      photoMap: photoMap,
+      orderedPhotoIds: orderedIds,
+      groups: groups,
+      monthFirstPhotoIndex: monthIndex,
+      monthDistribution: newDistribution,
+      total: (state.total - removing.length).clamp(0, state.total),
+    );
+  }
+
   /// Trigger edge-loading from the photo viewer.
   Future<void> ensureNeighborsLoaded(int currentIndex) async {
     const threshold = 3;
