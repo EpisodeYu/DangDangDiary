@@ -1,14 +1,16 @@
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../config/theme.dart';
 import '../models/timeline.dart';
+import 'original_photo_image.dart';
 
 /// Single-row photo tile used in the immersive timeline mode.
 ///
 /// Each tile takes the full width of the list and keeps the source aspect ratio
-/// so no part of the photo gets cropped. A pet-name badge can be overlaid when
-/// browsing multiple pets at once.
+/// so no part of the photo gets cropped. The original photo (from the
+/// persistent cache or fetched on demand) is shown whenever available; the
+/// server-side thumbnail is only used as a placeholder while the original is
+/// loading for the first time.
 class ImmersivePhotoTile extends StatelessWidget {
   final TimelinePhoto photo;
   final bool showPetLabel;
@@ -35,16 +37,13 @@ class ImmersivePhotoTile extends StatelessWidget {
           child: Stack(
             alignment: Alignment.bottomLeft,
             children: [
-              if (photo.thumbnailUrl.isNotEmpty)
-                CachedNetworkImage(
-                  imageUrl: photo.thumbnailUrl,
-                  width: double.infinity,
-                  fit: BoxFit.fitWidth,
-                  placeholder: (context, _) => const _Placeholder(),
-                  errorWidget: (context, _, err) => const _ErrorTile(),
-                )
-              else
-                const _ErrorTile(),
+              OriginalPhotoImage(
+                photoId: photo.id,
+                thumbnailUrl: photo.thumbnailUrl,
+                fit: BoxFit.fitWidth,
+                width: double.infinity,
+                errorBuilder: (context) => const _ErrorTile(),
+              ),
               if (showPetLabel)
                 Padding(
                   padding: const EdgeInsets.all(8),
@@ -86,18 +85,6 @@ class ImmersivePhotoTile extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 4 / 3,
-      child: Container(color: const Color(0xFFEFE5DD)),
     );
   }
 }

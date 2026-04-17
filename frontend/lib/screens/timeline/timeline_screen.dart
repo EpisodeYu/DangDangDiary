@@ -7,6 +7,7 @@ import '../../models/pet.dart';
 import '../../models/timeline.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
+import '../../services/original_photo_cache.dart';
 import '../../services/photo_service.dart';
 import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
@@ -17,6 +18,12 @@ import 'photo_viewer_screen.dart';
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 
 const int _maxBatchSelection = 9;
+
+/// How many upcoming items to prefetch (originals) as the user scrolls
+/// through the immersive timeline. The current-item original is always
+/// fetched by [OriginalPhotoImage] itself.
+const int _immersivePrefetchAhead = 2;
+const int _immersivePrefetchBehind = 1;
 
 class TimelineScreen extends ConsumerStatefulWidget {
   const TimelineScreen({super.key});
@@ -480,6 +487,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             return _buildImmersiveTail(state);
           }
           final photo = photos[index];
+          _prefetchAround(photos, index);
           return ImmersivePhotoTile(
             photo: photo,
             showPetLabel: filterMulti,
@@ -489,6 +497,19 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         },
       ),
     );
+  }
+
+  /// Ask the cache to download originals for a small window around [index].
+  /// The cache deduplicates concurrent requests, so calling this repeatedly
+  /// as tiles enter the viewport is safe.
+  void _prefetchAround(List<TimelinePhoto> photos, int index) {
+    final start =
+        (index - _immersivePrefetchBehind).clamp(0, photos.length - 1);
+    final end =
+        (index + _immersivePrefetchAhead).clamp(0, photos.length - 1);
+    for (var i = start; i <= end; i++) {
+      OriginalPhotoCache.instance.prefetch(photos[i].id);
+    }
   }
 
   Widget _buildImmersiveTail(TimelineState state) {

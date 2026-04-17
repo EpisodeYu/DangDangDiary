@@ -1,11 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 
 import '../../providers/timeline_provider.dart';
-import '../../services/photo_service.dart';
+import '../../services/original_photo_cache.dart';
 
-final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
+/// How many neighbors on either side of the current page to prefetch.
+const int _viewerPrefetchRadius = 2;
 
 class PhotoViewerScreen extends ConsumerStatefulWidget {
   final int initialPhotoId;
@@ -18,7 +21,10 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
   late PageController _pageController;
   late int _currentIndex;
-  final Map<int, Future<String>> _urlCache = {};
+
+  /// Cache the fetch future per photo id so scrolling left/right doesn't kick
+  /// off duplicate network calls for pages we already started fetching.
+  final Map<int, Future<File>> _futureCache = {};
 
   @override
   void initState() {
@@ -27,6 +33,9 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
     _currentIndex = state.orderedPhotoIds.indexOf(widget.initialPhotoId);
     if (_currentIndex < 0) _currentIndex = 0;
     _pageController = PageController(initialPage: _currentIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _prefetchNeighbors();
+    });
   }
 
   @override
@@ -35,11 +44,26 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
     super.dispose();
   }
 
-  Future<String> _getUrl(int photoId) {
-    return _urlCache.putIfAbsent(
+  Future<File> _getFile(int photoId) {
+    return _futureCache.putIfAbsent(
       photoId,
-      () => ref.read(_photoServiceProvider).getOriginalUrl(photoId),
+      () => OriginalPhotoCache.instance.fetchOriginal(photoId),
     );
+  }
+
+  /// Kick off background downloads for pages within [_viewerPrefetchRadius]
+  /// of [_currentIndex]. Safe to call on every page change.
+  void _prefetchNeighbors() {
+    final ids = ref.read(timelineProvider).orderedPhotoIds;
+    if (ids.isEmpty) return;
+    final start =
+        (_currentIndex - _viewerPrefetchRadius).clamp(0, ids.length - 1);
+    final end =
+        (_currentIndex + _viewerPrefetchRadius).clamp(0, ids.length - 1);
+    for (var i = start; i <= end; i++) {
+      if (i == _currentIndex) continue;
+      OriginalPhotoCache.instance.prefetch(ids[i]);
+    }
   }
 
   @override
@@ -102,11 +126,12 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
         onPageChanged: (i) {
           setState(() => _currentIndex = i);
           ref.read(timelineProvider.notifier).ensureNeighborsLoaded(i);
+          _prefetchNeighbors();
         },
         itemBuilder: (context, index) {
           final id = ids[index];
-          return FutureBuilder<String>(
-            future: _getUrl(id),
+          return FutureBuilder<File>(
+            future: _getFile(id),
             builder: (context, snap) {
               if (snap.connectionState != ConnectionState.done) {
                 return const Center(
@@ -126,7 +151,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
                 );
               }
               return PhotoView(
-                imageProvider: NetworkImage(snap.data!),
+                imageProvider: FileImage(snap.data!),
                 heroAttributes: PhotoViewHeroAttributes(tag: 'photo_$id'),
                 minScale: PhotoViewComputedScale.contained,
                 maxScale: PhotoViewComputedScale.covered * 3,

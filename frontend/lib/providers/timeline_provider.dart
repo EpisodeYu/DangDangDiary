@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../models/timeline.dart';
+import '../services/original_photo_cache.dart';
 import '../services/photo_service.dart';
 import 'pet_provider.dart';
 
@@ -456,10 +457,15 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
 
   /// Remove photos from local state without reloading from the server.
   /// Keeps scroll position and avoids re-fetching — used after a successful
-  /// delete. Also decrements month distribution counts and total.
+  /// delete. Also decrements month distribution counts and total, and evicts
+  /// the on-disk original-photo cache entry so deleted photos don't linger.
   void removePhotos(Iterable<int> ids) {
     final removing = ids.where(state.photoMap.containsKey).toSet();
     if (removing.isEmpty) return;
+
+    for (final id in removing) {
+      OriginalPhotoCache.instance.removePhoto(id);
+    }
 
     final removedPerMonth = <String, int>{};
     for (final id in removing) {

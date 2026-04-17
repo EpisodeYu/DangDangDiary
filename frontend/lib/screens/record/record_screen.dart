@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 import '../../config/theme.dart';
 import '../../models/photo.dart';
 import '../../providers/pet_provider.dart';
+import '../../services/original_photo_cache.dart';
 import '../../services/photo_service.dart';
 import '../../utils/exif_helper.dart';
 import '../../widgets/pet_selector.dart';
@@ -28,6 +29,9 @@ class RecordScreen extends ConsumerStatefulWidget {
 class _RecordScreenState extends ConsumerState<RecordScreen> {
   final List<File> _selectedFiles = [];
   final List<DateTime> _photoDates = [];
+  // Parallel to [_selectedFiles]; each pending token points at an entry in the
+  // persistent original-photo cache so the bytes are reused after upload.
+  final List<String> _pendingTokens = [];
   bool _isUploading = false;
   final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
   final ValueNotifier<bool> _isServerProcessing = ValueNotifier(false);
@@ -366,16 +370,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     // FlutterImageCompress strips EXIF metadata, so the compressed copy has no DateTimeOriginal.
     final files = <File>[];
     final dates = <DateTime>[];
+    final tokens = <String>[];
     for (final xfile in toProcess) {
       final exifDate = await ExifHelper.extractDate(File(xfile.path));
       final converted = await _ensureJpeg(xfile);
+      final token = await _cachePending(converted);
       files.add(converted);
+      tokens.add(token);
       dates.add(exifDate ?? DateTime.now());
     }
 
     if (!mounted) return;
     setState(() {
       _selectedFiles.addAll(files);
+      _pendingTokens.addAll(tokens);
       _photoDates.addAll(dates);
       _failureMessages = {};
     });
@@ -386,15 +394,30 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     if (xfile == null) return;
 
     final converted = await _ensureJpeg(xfile);
+    final token = await _cachePending(converted);
 
     if (_selectedFiles.length >= 5) return;
 
     if (!mounted) return;
     setState(() {
       _selectedFiles.add(converted);
+      _pendingTokens.add(token);
       _photoDates.add(DateTime.now());
       _failureMessages = {};
     });
+  }
+
+  /// Copy the compressed JPEG into the persistent cache so that once the
+  /// upload succeeds we can bind it to the new `photo_id` and reuse the bytes
+  /// across restarts. Returns an opaque token.
+  Future<String> _cachePending(File source) async {
+    try {
+      return await OriginalPhotoCache.instance.cacheUploadSource(source);
+    } catch (_) {
+      // Falling back to an empty token means the cache simply won't have this
+      // photo until it is later viewed; we don't block the upload flow.
+      return '';
+    }
   }
 
   /// Compress image for upload: 1920x1080, quality 90.
@@ -415,8 +438,15 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   void _removePhoto(int index) {
+    final token = index < _pendingTokens.length ? _pendingTokens[index] : '';
+    if (token.isNotEmpty) {
+      OriginalPhotoCache.instance.releasePending(token);
+    }
     setState(() {
       _selectedFiles.removeAt(index);
+      if (index < _pendingTokens.length) {
+        _pendingTokens.removeAt(index);
+      }
       _photoDates.removeAt(index);
       _failureMessages = {};
     });
@@ -468,6 +498,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
 
+      await _bindUploadedToCache(response);
       _handleUploadResult(response);
     } on DioException catch (e) {
       if (!mounted) return;
@@ -548,11 +579,30 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     );
   }
 
+  /// Promote pending cache entries to photo-id bound entries for each upload
+  /// success. Failures keep their pending token so the file can be reused on
+  /// retry.
+  Future<void> _bindUploadedToCache(PhotoUploadResponse response) async {
+    for (final success in response.successes) {
+      if (success.index < 0 || success.index >= _pendingTokens.length) continue;
+      final token = _pendingTokens[success.index];
+      if (token.isEmpty) continue;
+      try {
+        await OriginalPhotoCache.instance
+            .bindPendingToPhoto(token, success.photo.id);
+      } catch (_) {
+        // Binding is best-effort; the original will simply be re-downloaded
+        // next time the user views it.
+      }
+    }
+  }
+
   void _handleUploadResult(PhotoUploadResponse response) {
     if (response.failureCount == 0) {
       _showSnack('上传成功，请在时间轴内查看吧！');
       setState(() {
         _selectedFiles.clear();
+        _pendingTokens.clear();
         _photoDates.clear();
         _failureMessages = {};
       });
@@ -562,6 +612,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       final successIndices = response.successes.map((s) => s.index).toSet();
       final newFiles = <File>[];
       final newDates = <DateTime>[];
+      final newTokens = <String>[];
       final newFailures = <int, String>{};
 
       int newIdx = 0;
@@ -569,6 +620,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         if (!successIndices.contains(i)) {
           newFiles.add(_selectedFiles[i]);
           newDates.add(_photoDates[i]);
+          newTokens.add(
+              i < _pendingTokens.length ? _pendingTokens[i] : '');
           final failure = response.failures.where((f) => f.index == i).firstOrNull;
           if (failure != null) {
             newFailures[newIdx] = failure.message;
@@ -582,6 +635,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         _selectedFiles.addAll(newFiles);
         _photoDates.clear();
         _photoDates.addAll(newDates);
+        _pendingTokens.clear();
+        _pendingTokens.addAll(newTokens);
         _failureMessages = newFailures;
       });
     } else {
