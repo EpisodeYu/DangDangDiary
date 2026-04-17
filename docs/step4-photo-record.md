@@ -44,6 +44,14 @@
   - 阿里云识别前先把图片压缩到较小 JPEG，再发识别请求
   - 识别客户端改成单例缓存，避免每张图重复初始化 SDK Client
   - 为识别请求加 `connect_timeout=5s`、`read_timeout=15s`，慢请求异常时继续按“放行上传”策略处理
+- `3eea954 Fix photo upload too slow`
+  - 后端 `upload_photos` 重构为三段式：①顺序读文件 + 类型/大小校验 → ②对所有合法文件 `asyncio.gather` 并发执行"识别 + MinIO 上传" → ③串行写库
+  - 阿里云识别请求 `read_timeout` 由 `15s` 收紧到 `8s`
+  - 前端 `_ensureJpeg` 改为对**所有**入选图片统一压缩为 1920×1080 JPEG（质量 90），不再只处理 HEIC/HEIF；EXIF 日期改为基于压缩后的文件提取
+- `ecf1bfc Multi thread to recognize`
+  - 识别 SDK Client 由全局单例改为 `threading.local()` 线程本地缓存，避免 `asyncio.gather` 触发的并发线程争用同一 Client
+  - 识别 `RuntimeOptions` 新增 `autoretry=False` + `max_attempts=1`，禁止 SDK 在超时时重试，配合 `read_timeout=8s` 让识别快速失败 → 走"放行上传"
+  - 前端上传弹窗改为两阶段：上传字节进度 100% 后切换到不确定进度的"正在识别照片..." 文案，避免长时间停在 100% 让用户误以为卡死
 
 与 Step 4 无直接关系的后续提交（例如 Android SDK 配置）不在本文档范围内。
 
@@ -61,7 +69,9 @@
 - 阿里云识别服务异常、超时、未配置时，**放行上传**，优先保证主流程可用
 - 当前实现中，`taken_at` 是**与文件一一对应的数组字段**，每张照片有自己的拍摄日期
 - 上传响应中保留 `storage_key`、`thumbnail_key`
-- 当前实现已把图片识别和存储上传放到工作线程中执行，避免阻塞 FastAPI 异步请求
+- 当前实现把图片识别和 MinIO 上传都放到工作线程中执行（`asyncio.to_thread`），并用 `asyncio.gather` 让同一批次内的所有合法文件**并发**完成识别 + 上传，DB 写入串行执行
+- 阿里云识别 SDK Client 按线程缓存（`threading.local()`），并禁用 SDK 自动重试，配合较短的 read_timeout 让识别快速失败时立即走"放行上传"
+- 前端上传前会**对所有图片**统一压缩为 1920×1080 JPEG（质量 90），不再只针对 HEIC/HEIF；该步骤同时承担了"格式归一化"和"减小上传体积"两个目的
 - 当前上传链路的超时基线是: 前端 `sendTimeout=120s`、`receiveTimeout=300s`，Nginx `proxy_read_timeout=300s`
 
 ---
@@ -80,7 +90,7 @@ MinIO Buckets:
 
 约定说明:
 - 原图保持上传后的实际格式，支持 `jpg` / `png` / `webp`
-- 如果用户原始选择的是 `HEIC/HEIF`，Flutter 端必须先转成 `JPEG` 再上传
+- Flutter 端在所有图片入选后会统一通过 `flutter_image_compress` 压缩到 ≤ 1920×1080 / JPEG / 质量 90 再上传，HEIC/HEIF 自然在这一步被转为 JPEG。如果未来需要保留原图，可在 `_ensureJpeg` 里直接 `return File(xfile.path)` 跳过压缩
 - 缩略图由后端生成，统一为 `JPEG`
 - 文件名使用 UUID，按 `pet_id` 分目录，方便删除宠物时按前缀清理
 - `storage_key` 与 `thumbnail_key` 仅保存对象 key，不重复包含 bucket 名
@@ -189,26 +199,37 @@ Authorization: Bearer {access_token}
 
 #### 2.1.3 处理流程
 
-1. 校验当前用户是否可以访问 `pet_id`
-2. 校验请求级条件:
+整体分为四个阶段，**前两个阶段串行、第三个阶段并发、第四个阶段串行**：
+
+1. 校验当前用户是否可以访问 `pet_id`，校验请求级条件:
    - `files` 非空
    - 文件总数不超过 5
    - `taken_at` 数量与文件数一致
    - 每个 `taken_at` 都能解析为合法日期
-3. 按顺序遍历每个文件，**继续处理完整批次**
-4. 单文件处理流程:
-   - 校验类型是否为 `image/jpeg`、`image/png`、`image/webp`
-   - 校验文件大小是否 <= 15MB
-   - 在工作线程中调用阿里云 `RecognizeScene` 判断是否包含猫或狗
-   - 如果明确识别为非宠物，则写入 `failures`
-   - 如果识别服务异常、超时或未配置，则记录日志并继续上传
-   - 生成 UUID 文件名
-   - 在工作线程中上传原图到 `pet-photos`
-   - 生成缩略图并上传到 `pet-thumbnails`
-   - 创建 `photos` 表记录
-   - 该条记录的 `taken_at` 使用当前文件对应的 `parsed_dates[idx]`
-   - 把成功结果写入 `successes`
+2. **阶段 ①：串行读文件 + 轻量校验**
+   - 按顺序遍历每个文件，调用 `await file.read()` 读出二进制
+   - 校验 `content_type` ∈ `{image/jpeg, image/png, image/webp}`，否则写入 `early_failures (UNSUPPORTED_IMAGE_TYPE)`
+   - 校验文件大小 ≤ 15MB，否则写入 `early_failures (FILE_TOO_LARGE)`
+   - 通过校验的文件以 `(idx, filename, file_data, content_type)` 形式追加到 `file_entries`
+   - 这一步必须串行：`UploadFile.read()` 不能并发触发，否则可能读到空数据
+3. **阶段 ②：并发执行识别 + 存储**
+   - 对 `file_entries` 中所有合法文件用 `asyncio.gather(*(_process_one(...) for ...))` 并发处理
+   - 每个 `_process_one`：
+     - 在工作线程中调用 `recognize_pet(file_data)`（阿里云 `RecognizeScene`）
+     - 明确识别为非宠物 → 返回 `PhotoUploadFailure(PET_NOT_DETECTED)`，并附 `details.detected_labels`
+     - 识别服务异常 / 超时 / 未配置 → 视为放行（`is_pet=True, skipped=True`），继续上传
+     - 在工作线程中调用 `upload_photo(...)` 写入 MinIO，失败 → `PhotoUploadFailure(PHOTO_UPLOAD_FAILED)`
+     - 成功 → 返回 `_UploadOk(idx, filename, storage_key, thumbnail_key)`
+   - 任何未捕获异常都被外层 try/except 兜底为 `PhotoUploadFailure(PHOTO_UPLOAD_FAILED)`，不会抛到 gather 之外
+4. **阶段 ③：串行写库 + 聚合结果**
+   - 从 `early_failures` 初始化 `failures`
+   - 顺序遍历 gather 结果：
+     - `PhotoUploadFailure` → 直接 append 到 `failures`
+     - `_UploadOk` → 用 `parsed_dates[result.idx]` 构造 `Photo` ORM 对象，`db.add(photo) + await db.flush()` 后追加到 `successes`
+   - 串行写库的目的：避免共享同一个 `AsyncSession` 时的并发安全问题
 5. 汇总返回 `successes`、`failures`、`success_count`、`failure_count`、`total_count`
+
+> 设计要点：识别和 MinIO 上传都是 IO 密集，串行会让总耗时 ≈ Σ单张耗时；改成 gather 后总耗时 ≈ max(单张耗时)，对 5 张图的批次提升明显。
 
 #### 2.1.4 宠物图片校验策略
 
@@ -221,7 +242,8 @@ Authorization: Bearer {access_token}
 - 识别结果明确不含宠物时，返回文件级失败 `PET_NOT_DETECTED`
 - 第三方服务异常时**放行上传**
 - 当前实现会先把图片压缩到约 `800x800` 的 JPEG（质量 `70`）再调用识别接口
-- 当前实现会复用单例 Aliyun Client，并为识别请求设置连接/读取超时
+- Aliyun Client 按线程缓存（`threading.local()` + `_get_client()`），原因是 `_process_one` 通过 `asyncio.to_thread` 把识别调用扔到线程池中并发执行，单例 Client 在多线程下可能产生连接池争用
+- 识别请求的 `RuntimeOptions` 配置：`connect_timeout=5000ms`、`read_timeout=8000ms`、`autoretry=False`、`max_attempts=1`，让识别在慢请求时快速失败 → 立即走"放行上传"分支，不让重试拖慢整批耗时
 
 这里的“放行”是**产品决策**，表示“第三方识别不可用时不阻塞主流程”，并不等于识别成功。
 
@@ -406,6 +428,40 @@ class ImageRecognitionResult(TypedDict):
 - `is_pet=False, skipped=False`: 明确识别为非宠物图片
 - `is_pet=True, skipped=True`: 因服务异常或未配置而放行
 
+并发与超时实现要点（与 `upload_photos` 的 `asyncio.gather` 配合）:
+
+```python
+import threading
+
+_thread_local = threading.local()
+
+
+def _get_client():
+    """Return a thread-local Aliyun ImageRecog client to avoid contention
+    when multiple threads call the SDK concurrently."""
+    client = getattr(_thread_local, "client", None)
+    if client is None:
+        # ... 用 settings 初始化 Config + Client ...
+        _thread_local.client = Client(config)
+        client = _thread_local.client
+    return client
+
+
+def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
+    # ... 压缩 + 构造 request ...
+    runtime = RuntimeOptions()
+    runtime.connect_timeout = 5000   # 5s
+    runtime.read_timeout = 8000      # 8s
+    runtime.autoretry = False
+    runtime.max_attempts = 1
+    response = client.recognize_scene_advance(request, runtime)
+    # ... 命中关键词且置信度 > 0.3 → is_pet=True ...
+```
+
+要点：
+- **不要**用全局 `_client` 单例，必须用 `threading.local()`；批量上传场景下 `asyncio.to_thread` 会把若干个 `recognize_pet` 调用分发到不同线程，单例 Client 在某些 SDK 版本上会成为瓶颈或抛异常
+- `autoretry=False + max_attempts=1` 是有意为之：识别失败本来就走"放行"，让 SDK 自己重试只会让单张请求耗时变成 `read_timeout × N`，反而拖慢整批
+
 ### 3.4 错误处理风格
 
 整个 Step 4 继续沿用项目统一错误结构:
@@ -475,13 +531,14 @@ class ImageRecognitionResult(TypedDict):
    - 相册支持多选，相机一次新增 1 张
    - 总数最多 5 张，超过上限时禁止继续添加
    - 当前实现为纵向卡片列表，每张卡片右上角有删除按钮
-3. HEIC/HEIF 处理:
-   - 选图后先检查格式
-   - 如果是 `HEIC/HEIF`，客户端先转为 `JPEG`
-   - 转换后的临时文件继续参与 EXIF 处理与上传
+3. 入选预处理（`_ensureJpeg`）:
+   - 不论原始格式是什么，所有入选照片都会先用 `flutter_image_compress` 压缩为 1920×1080 / JPEG / 质量 90 的临时文件
+   - HEIC/HEIF 在这一步顺便转成 JPEG，不再需要单独判断扩展名
+   - 后续 EXIF 提取、卡片预览、上传 `MultipartFile` 全部基于该压缩后的临时文件
+   - `flutter_image_compress` 默认会保留 EXIF 中的 `DateTimeOriginal`，所以仍能在压缩后的文件上正确提取拍摄日期
 4. 日期处理:
    - 当前实现是**每张照片单独维护一个日期**
-   - 从相册选择时，会逐张调用 `ExifHelper.extractDate(file)` 提取 EXIF 日期
+   - 从相册选择时，会在 `_ensureJpeg` 之后逐张调用 `ExifHelper.extractDate(file)` 提取 EXIF 日期（即基于压缩后的 JPEG，而不是原始相册文件）
    - 单张提取失败时，该照片日期回退为 `DateTime.now()`
    - 当前拍照分支直接以 `DateTime.now()` 作为默认日期，没有再读相机返回文件的 EXIF
    - 每张卡片底部都有自己的日期行，点击后可单独修改该照片日期
@@ -512,6 +569,8 @@ class ImageRecognitionResult(TypedDict):
 
 当前页面实际用法:
 - `record_screen.dart` 当前使用的是 `extractDate(...)`，按照片逐张初始化默认日期
+- 调用时机在 `_ensureJpeg` **之后**，因此提取的是压缩后的 JPEG。`flutter_image_compress` 默认保留 `DateTimeOriginal`，常规相机/手机拍摄的照片仍能命中
+- 若后续要换成"基于原图"提取，需要在 `_ensureJpeg` 之前先用 `xfile.path` 调一次 `extractDate`
 - `extractFirstValidDate(...)` 仍保留在工具类中，但当前记录页未使用这条逻辑
 
 ### 4.4 照片选择与预览组件
@@ -529,9 +588,9 @@ class ImageRecognitionResult(TypedDict):
 
 ### 4.5 上传进度展示
 
-由于上传采用单次 `multipart/form-data` 请求，进度展示以**总字节百分比**为准，不以“第几张 / 第几张”作为唯一进度来源。
+由于上传采用单次 `multipart/form-data` 请求，进度展示以**总字节百分比**为准，不以“第几张 / 第几张”作为唯一进度来源。同时由于服务端识别 + MinIO 上传需要时间，弹窗采用**两阶段**展示，避免长时间停在 100% 让用户误以为卡死。
 
-推荐展示:
+阶段 ①：客户端上传字节进度
 
 ```text
 ┌─────────────────────┐
@@ -541,11 +600,25 @@ class ImageRecognitionResult(TypedDict):
 └─────────────────────┘
 ```
 
+阶段 ②：客户端发完字节后，等待服务端识别 + 写库
+
+```text
+┌──────────────────────────┐
+│   正在识别照片...          │
+│   ▓▓▓▓▓▓▓▓▓▓ (不确定进度)  │
+│   共 5 张，正在检测宠物内容  │
+└──────────────────────────┘
+```
+
 实现建议:
 - 使用 Dio 的 `onSendProgress(sent, total)`
-- 当前实现使用 `ValueNotifier<double>` 驱动进度弹窗刷新
-- UI 展示百分比和已选总张数
+- 当前实现用两个 `ValueNotifier` 共同驱动弹窗：
+  - `ValueNotifier<double> _uploadProgress` —— 阶段 ① 的字节百分比
+  - `ValueNotifier<bool> _isServerProcessing` —— 当 `sent / total >= 1.0` 时翻转为 `true`，弹窗切换到阶段 ②
+- 阶段 ② 使用不带 `value` 的 `LinearProgressIndicator`（不确定进度）
 - 请求完成后关闭进度框，再处理成功/失败摘要
+- 在 `_submit` 启动时把两个 ValueNotifier 都 reset（`_uploadProgress = 0`、`_isServerProcessing = false`），避免连续提交时残留旧状态
+- `dispose` 时记得释放两个 ValueNotifier
 
 ### 4.6 上传结果反馈
 

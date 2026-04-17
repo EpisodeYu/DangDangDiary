@@ -316,7 +316,7 @@ GET /api/v1/pets/{pet_id}/deworming-status
 - `next_due_at = 最后一次驱虫日期 + 周期天数`
 - `days_remaining = next_due_at - 今天`，正数表示剩余天数，负数表示已过期天数
 - `is_overdue = days_remaining < 0`
-- 若某类驱虫未勾选提醒，则该类返回 `reminder_enabled=false`，并且 `next_due_at`、`days_remaining`、`is_overdue` 返回 `null`
+- 若某类驱虫未勾选提醒，则该类返回 `reminder_enabled=false`，`next_due_at`、`days_remaining`、`is_overdue` 返回 `null`，但 `last_dewormed_at` / `cycle_days` 仍按现状返回（便于前端在重新打开提醒时直接展示）
 - 若已勾选提醒，但尚未设置周期或没有对应记录，则 `last_dewormed_at` / `cycle_days` 按现状返回，其余倒计时字段返回 `null`
 
 ---
@@ -333,7 +333,7 @@ Content-Type: application/json
 请求体:
 ```json
 {
-  "vaccine_type": "猫三联",
+  "vaccine_type": "猫三联疫苗",
   "vaccinated_at": "2024-01-15"
 }
 ```
@@ -344,7 +344,7 @@ Content-Type: application/json
   "id": 1,
   "pet_id": 1,
   "user_id": 1,
-  "vaccine_type": "猫三联",
+  "vaccine_type": "猫三联疫苗",
   "vaccinated_at": "2024-01-15",
   "created_at": "2024-01-20T10:30:00"
 }
@@ -368,7 +368,7 @@ GET /api/v1/pets/{pet_id}/vaccinations?page=1&page_size=50
       "id": 1,
       "pet_id": 1,
       "user_id": 1,
-      "vaccine_type": "猫三联",
+      "vaccine_type": "猫三联疫苗",
       "vaccinated_at": "2024-01-15",
       "created_at": "2024-01-20T10:30:00"
     }
@@ -392,7 +392,7 @@ Content-Type: application/json
 请求体:
 ```json
 {
-  "vaccine_type": "狂犬疫苗",
+  "vaccine_type": "狂犬病疫苗",
   "vaccinated_at": "2024-01-20"
 }
 ```
@@ -416,14 +416,25 @@ GET /api/v1/vaccine-types?pet_type=cat
 成功响应 (200):
 ```json
 {
-  "preset_types": ["猫三联", "狂犬疫苗", "猫五联"],
+  "preset_types": [
+    "猫三联疫苗",
+    "狂犬病疫苗",
+    "猫四联疫苗",
+    "猫白血病疫苗",
+    "猫五联疫苗",
+    "猫传染性腹膜炎疫苗"
+  ],
   "pet_type": "cat"
 }
 ```
 
-此 API 不需要数据库，直接返回硬编码的预设值:
-- 猫: 猫三联、猫五联、狂犬疫苗
-- 狗: 犬二联、犬四联、犬六联、犬八联、狂犬疫苗
+此 API 不需要数据库，直接返回 `app/services/health.py` 中硬编码的 `VACCINE_PRESETS`（按"国内常见度从高到低"排序，顺序须与响应保持一致）:
+- 猫 (6 项): 猫三联疫苗、狂犬病疫苗、猫四联疫苗、猫白血病疫苗、猫五联疫苗、猫传染性腹膜炎疫苗
+- 狗 (8 项): 狂犬病疫苗、犬八联疫苗、犬六联疫苗、犬四联疫苗、犬二联疫苗、犬窝咳疫苗、莱姆病疫苗、犬流感疫苗
+
+`pet_type` 仅接受 `cat` / `dog`，否则返回 `400 INVALID_PET_TYPE`。
+
+注：列表只用作前端的快选标签建议，后端不做白名单校验，用户仍可自定义输入任意名称（满足 1-100 字符即可）。修改预设时请同步本节及 §5。
 
 ---
 
@@ -431,29 +442,42 @@ GET /api/v1/vaccine-types?pet_type=cat
 
 ### 3.1 Pydantic Schema (`app/schemas/health.py`)
 
+> 实现要点：`*Update` 直接继承同名 `*Create`，复用全部校验逻辑；列表响应统一带 `total / page / page_size / total_pages` 四个分页字段。
+
 ```python
-from pydantic import BaseModel, field_validator
 from datetime import date, datetime
 from decimal import Decimal
+
+from pydantic import BaseModel, field_validator
+
 from app.models.deworming import DewormingType
 
+
+# ---------------- Weight ----------------
 class WeightCreate(BaseModel):
     weight_kg: Decimal
     recorded_at: date
 
     @field_validator("weight_kg")
     @classmethod
-    def validate_weight(cls, v):
-        if v <= 0 or v > 200:
+    def validate_weight(cls, v: Decimal) -> Decimal:
+        if v <= 0 or v > Decimal("200"):
             raise ValueError("体重必须在 0-200kg 之间")
+        if v.as_tuple().exponent < -2:
+            raise ValueError("体重最多保留两位小数")
         return v
 
     @field_validator("recorded_at")
     @classmethod
-    def validate_date(cls, v):
+    def validate_date(cls, v: date) -> date:
         if v > date.today():
             raise ValueError("记录日期不能是未来日期")
         return v
+
+
+class WeightUpdate(WeightCreate):
+    pass
+
 
 class WeightResponse(BaseModel):
     id: int
@@ -465,16 +489,31 @@ class WeightResponse(BaseModel):
 
     model_config = {"from_attributes": True}
 
+
+class WeightListResponse(BaseModel):
+    weights: list[WeightResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+# ---------------- Deworming ----------------
 class DewormingCreate(BaseModel):
     deworming_type: DewormingType
     dewormed_at: date
 
     @field_validator("dewormed_at")
     @classmethod
-    def validate_date(cls, v):
+    def validate_date(cls, v: date) -> date:
         if v > date.today():
             raise ValueError("驱虫日期不能是未来日期")
         return v
+
+
+class DewormingUpdate(DewormingCreate):
+    pass
+
 
 class DewormingResponse(BaseModel):
     id: int
@@ -485,6 +524,15 @@ class DewormingResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class DewormingListResponse(BaseModel):
+    dewormings: list[DewormingResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
 
 class DewormingCycleUpdate(BaseModel):
     internal_cycle_days: int | None = None
@@ -500,10 +548,20 @@ class DewormingCycleUpdate(BaseModel):
         "combined_cycle_days",
     )
     @classmethod
-    def validate_cycle(cls, v):
+    def validate_cycle(cls, v: int | None) -> int | None:
         if v is not None and (v < 1 or v > 365):
             raise ValueError("驱虫周期必须在 1-365 天之间")
         return v
+
+
+class DewormingCycleResponse(BaseModel):
+    internal_cycle_days: int | None
+    external_cycle_days: int | None
+    combined_cycle_days: int | None
+    internal_reminder_enabled: bool
+    external_reminder_enabled: bool
+    combined_reminder_enabled: bool
+
 
 class DewormingStatusItem(BaseModel):
     reminder_enabled: bool
@@ -513,22 +571,37 @@ class DewormingStatusItem(BaseModel):
     days_remaining: int | None
     is_overdue: bool | None
 
+
 class DewormingStatusResponse(BaseModel):
     internal: DewormingStatusItem
     external: DewormingStatusItem
     combined: DewormingStatusItem
 
+
+# ---------------- Vaccination ----------------
 class VaccinationCreate(BaseModel):
     vaccine_type: str
     vaccinated_at: date
 
     @field_validator("vaccine_type")
     @classmethod
-    def validate_type(cls, v):
+    def validate_type(cls, v: str) -> str:
         v = v.strip()
         if not v or len(v) > 100:
             raise ValueError("疫苗类型长度为1-100个字符")
         return v
+
+    @field_validator("vaccinated_at")
+    @classmethod
+    def validate_date(cls, v: date) -> date:
+        if v > date.today():
+            raise ValueError("接种日期不能是未来日期")
+        return v
+
+
+class VaccinationUpdate(VaccinationCreate):
+    pass
+
 
 class VaccinationResponse(BaseModel):
     id: int
@@ -539,91 +612,145 @@ class VaccinationResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class VaccinationListResponse(BaseModel):
+    vaccinations: list[VaccinationResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+class VaccineTypePresetResponse(BaseModel):
+    preset_types: list[str]
+    pet_type: str
 ```
 
-### 3.2 驱虫状态计算逻辑
+### 3.2 业务服务（`app/services/health.py`）
+
+所有写操作进入服务前，先调用 `app.services.pet.get_pet_membership(pet_id, user_id, db)` 校验：当前用户是否对该宠物存在 `owner` 或 `member` 角色，不存在则抛 `403`。该函数返回 `(pet, member_role)`，可以复用 pet 对象。
+
+驱虫周期更新使用 `model_dump(exclude_unset=True)` 仅写入显式传入的字段，并通过 `field_map` 把 schema 字段名映射到 ORM 列名（`internal_cycle_days → internal_deworming_cycle_days` 等）。
+
+驱虫状态计算逻辑：
 
 ```python
 from datetime import date, timedelta
 
-async def get_deworming_status(pet_id: int, db: AsyncSession) -> DewormingStatusResponse:
-    pet = await db.get(Pet, pet_id)
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-    internal_status = await _calc_status(
-        pet_id=pet_id,
-        deworming_type=DewormingType.INTERNAL,
-        cycle_days=pet.internal_deworming_cycle_days,
-        reminder_enabled=pet.internal_reminder_enabled,
-        db=db,
-    )
-    external_status = await _calc_status(
-        pet_id=pet_id,
-        deworming_type=DewormingType.EXTERNAL,
-        cycle_days=pet.external_deworming_cycle_days,
-        reminder_enabled=pet.external_reminder_enabled,
-        db=db,
-    )
-    combined_status = await _calc_status(
-        pet_id=pet_id,
-        deworming_type=DewormingType.COMBINED,
-        cycle_days=pet.combined_deworming_cycle_days,
-        reminder_enabled=pet.combined_reminder_enabled,
-        db=db,
-    )
+from app.models.deworming import Deworming, DewormingType
+from app.schemas.health import (
+    DewormingStatusItem,
+    DewormingStatusResponse,
+)
+from app.services.pet import get_pet_membership
 
+
+async def get_deworming_status(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+) -> DewormingStatusResponse:
+    pet, _ = await get_pet_membership(pet_id, user_id, db)
+
+    internal = await _calc_status(
+        db, pet_id, DewormingType.INTERNAL,
+        pet.internal_deworming_cycle_days, pet.internal_reminder_enabled,
+    )
+    external = await _calc_status(
+        db, pet_id, DewormingType.EXTERNAL,
+        pet.external_deworming_cycle_days, pet.external_reminder_enabled,
+    )
+    combined = await _calc_status(
+        db, pet_id, DewormingType.COMBINED,
+        pet.combined_deworming_cycle_days, pet.combined_reminder_enabled,
+    )
     return DewormingStatusResponse(
-        internal=internal_status,
-        external=external_status,
-        combined=combined_status,
+        internal=internal,
+        external=external,
+        combined=combined,
     )
+
 
 async def _calc_status(
+    db: AsyncSession,
     pet_id: int,
     deworming_type: DewormingType,
     cycle_days: int | None,
     reminder_enabled: bool,
-    db: AsyncSession,
 ) -> DewormingStatusItem:
     result = await db.execute(
         select(Deworming)
-        .where(Deworming.pet_id == pet_id, Deworming.deworming_type == deworming_type)
-        .order_by(Deworming.dewormed_at.desc())
+        .where(
+            Deworming.pet_id == pet_id,
+            Deworming.deworming_type == deworming_type,
+        )
+        # id 作为 tiebreaker，避免同一天多条记录顺序不稳定
+        .order_by(Deworming.dewormed_at.desc(), Deworming.id.desc())
         .limit(1)
     )
-    last_record = result.scalar_one_or_none()
+    last = result.scalar_one_or_none()
+    last_date = last.dewormed_at if last else None
 
     if not reminder_enabled:
         return DewormingStatusItem(
             reminder_enabled=False,
-            last_dewormed_at=last_record.dewormed_at if last_record else None,
+            last_dewormed_at=last_date,
             cycle_days=cycle_days,
             next_due_at=None,
             days_remaining=None,
             is_overdue=None,
         )
 
-    if not last_record or not cycle_days:
+    if last_date is None or not cycle_days:
         return DewormingStatusItem(
             reminder_enabled=True,
-            last_dewormed_at=last_record.dewormed_at if last_record else None,
+            last_dewormed_at=last_date,
             cycle_days=cycle_days,
             next_due_at=None,
             days_remaining=None,
             is_overdue=None,
         )
 
-    next_due = last_record.dewormed_at + timedelta(days=cycle_days)
+    next_due = last_date + timedelta(days=cycle_days)
     remaining = (next_due - date.today()).days
-
     return DewormingStatusItem(
         reminder_enabled=True,
-        last_dewormed_at=last_record.dewormed_at,
+        last_dewormed_at=last_date,
         cycle_days=cycle_days,
         next_due_at=next_due,
         days_remaining=remaining,
         is_overdue=remaining < 0,
     )
 ```
+
+### 3.3 路由注册
+
+新增的 `health.router`（`tags=["health"]`，无路径前缀，内部直接使用 `/pets/{pet_id}/...`、`/weights/{id}` 等绝对路径）需要在 `app/api/v1/router.py` 中追加：
+
+```python
+from app.api.v1 import auth, pets, photos, health
+
+api_v1_router.include_router(health.router)
+```
+
+### 3.4 Pet 模型与迁移
+
+`Pet` 模型新增以下字段（与原有 `internal_deworming_cycle_days / external_deworming_cycle_days` 一起组成完整三类配置）：
+
+- `combined_deworming_cycle_days: Integer NULL`
+- `internal_reminder_enabled: Boolean NOT NULL DEFAULT false`
+- `external_reminder_enabled: Boolean NOT NULL DEFAULT false`
+- `combined_reminder_enabled: Boolean NOT NULL DEFAULT false`
+
+对应迁移 `alembic/versions/a1b2c3d4e5f6_step5_health_fields.py`：
+- 通过 `ALTER TYPE dewormingtype ADD VALUE IF NOT EXISTS 'COMBINED'` 扩展 Postgres 枚举（注意 enum 大小写需与 `DewormingType` 成员名一致）
+- 三个布尔列先用 `server_default=sa.false()` 回填历史数据，再 `alter_column(... server_default=None)` 让应用层接管默认值
+
+`PetResponse` 同步暴露上述六个字段，前端可在初始化驱虫周期页面时直接读取。
 
 ---
 
@@ -736,13 +863,10 @@ async def _calc_status(
 ├─────────────────────────────────┤
 │                                 │
 │  驱虫类型                        │
-│  ┌──────────┐ ┌──────────┐     │
-│  │   内驱    │ │   外驱    │     │
-│  └──────────┘ └──────────┘     │
-│  ┌──────────────┐              │
-│  │   内外同驱     │              │
-│  └──────────────┘              │
-│  (SegmentedButton 三选一)        │
+│  ┌──────┐ ┌──────┐ ┌────────┐  │
+│  │ 内驱 │ │ 外驱 │ │ 内外同驱 │  │
+│  └──────┘ └──────┘ └────────┘  │
+│  (ChoiceChip 三选一)             │
 │                                 │
 │  驱虫日期                        │
 │  ┌─────────────────────────┐    │
@@ -762,14 +886,14 @@ async def _calc_status(
 ┌─────────────────────────────────┐
 │  ←  设置驱虫周期与提醒            │
 ├─────────────────────────────────┤
-│  ☑ 内驱提醒                      │
-│  周期: [ 30 ] 天                 │
+│  内驱                       [●━] │
+│  周期： [ 30 ] 天 (1-365)        │
 │                                 │
-│  ☑ 外驱提醒                      │
-│  周期: [ 30 ] 天                 │
+│  外驱                       [●━] │
+│  周期： [ 30 ] 天 (1-365)        │
 │                                 │
-│  ☐ 内外同驱提醒                  │
-│  周期: [ 90 ] 天                 │
+│  内外同驱                   [━○] │
+│  周期： [ 90 ] 天 (1-365)        │
 │                                 │
 │  ┌─────────────────────────┐    │
 │  │         保存设置          │    │
@@ -778,8 +902,10 @@ async def _calc_status(
 ```
 
 - 用于统一编辑三类驱虫的周期值
-- 也可同步查看或修改三类提醒开关
-- 在驱虫主页面勾选/取消勾选后，应同步刷新这里的状态
+- 提醒开关使用 `Switch`（不是 Checkbox），与驱虫 Tab 顶部的勾选框双向同步
+- 周期输入框默认值：内驱 / 外驱 30，内外同驱 90；保存前在前端额外做 1-365 的范围校验，防止误输入
+- 表单仅传入用户实际填写或调整过的字段；后端只更新显式传入的字段（`exclude_unset=True`），未填写的字段保持原值
+- 保存成功后需 `invalidate(dewormingStatusProvider(petId))` 并刷新 `petListProvider`，以便驱虫 Tab 的勾选框、倒计时、本页初始值都能拿到最新数据
 
 ### 4.7 疫苗 Tab (`screens/health/vaccination_tab.dart`)
 
@@ -789,13 +915,13 @@ async def _calc_status(
 │  ── 疫苗记录 ──────────────────  │
 │                                 │
 │  📅 2024-01-15                  │
-│     猫三联                      │
+│     猫三联疫苗                  │
 │  ─────────────────              │
 │  📅 2023-07-20                  │
-│     狂犬疫苗                    │
+│     狂犬病疫苗                  │
 │  ─────────────────              │
 │  📅 2023-01-10                  │
-│     猫三联                      │
+│     猫三联疫苗                  │
 │                                 │
 │                                 │
 │                          ┌────┐ │
@@ -820,9 +946,10 @@ async def _calc_status(
 │  │  请选择或输入疫苗类型      │    │
 │  └─────────────────────────┘    │
 │                                 │
-│  ┌────┐ ┌────┐ ┌────┐         │
-│  │猫三联│ │狂犬 │ │猫五联│ ← 预设快选 │
-│  └────┘ └────┘ └────┘         │
+│  ┌────────┐ ┌────────┐ ┌────────┐ │
+│  │猫三联疫苗│ │狂犬病疫苗│ │猫四联疫苗│  ← 预设快选 │
+│  └────────┘ └────────┘ └────────┘ │
+│  (按宠物类型展示完整预设，可横向换行) │
 │  (点击预设标签自动填入输入框)      │
 │                                 │
 │  接种日期                        │
@@ -846,42 +973,68 @@ async def _calc_status(
 
 ## 5. 疫苗类型预设值
 
-### 猫
-- 猫三联 (猫瘟、猫疱疹病毒、猫杯状病毒)
-- 猫五联
-- 狂犬疫苗
+预设按"国内常见度从高到低"排序，定义在 `backend/app/services/health.py` 的 `VACCINE_PRESETS` 常量中。`GET /api/v1/vaccine-types` 严格按此顺序返回，前端 `vaccination_record_screen.dart` 直接渲染为快选 `ActionChip`。修改预设时请同步本节及 §2.3。
 
-### 狗
-- 犬二联
-- 犬四联
-- 犬六联
-- 犬八联
-- 狂犬疫苗
+### 猫（6 项）
+1. 猫三联疫苗（猫瘟、猫疱疹病毒、猫杯状病毒）
+2. 狂犬病疫苗
+3. 猫四联疫苗
+4. 猫白血病疫苗
+5. 猫五联疫苗
+6. 猫传染性腹膜炎疫苗
+
+### 狗（8 项）
+1. 狂犬病疫苗
+2. 犬八联疫苗
+3. 犬六联疫苗
+4. 犬四联疫苗
+5. 犬二联疫苗
+6. 犬窝咳疫苗
+7. 莱姆病疫苗
+8. 犬流感疫苗
+
+> 后端不做白名单校验，只校验长度 1-100；预设之外用户仍可自由输入任何疫苗名称。
 
 ---
 
 ## 6. 需要创建/修改的文件清单
 
 ### 后端
-- `backend/app/models/pet.py` - 增加三类驱虫周期和提醒开关字段
-- `backend/alembic/versions/*.py` - 为新增驱虫配置字段补充迁移
+- `backend/app/models/pet.py` - 增加三类驱虫周期 (`combined_deworming_cycle_days`) 和三个提醒开关字段
+- `backend/app/models/weight.py` - 体重 ORM (新建)
+- `backend/app/models/deworming.py` - 驱虫 ORM + `DewormingType` 枚举 (新建)
+- `backend/app/models/vaccination.py` - 疫苗 ORM (新建)
+- `backend/alembic/versions/a1b2c3d4e5f6_step5_health_fields.py` - 扩展 `dewormingtype` 枚举、补全 pets 上的新字段 (新建)
 - `backend/app/schemas/health.py` - 健康管理 Schema (新建)
 - `backend/app/schemas/pet.py` - 暴露新增驱虫配置字段
+- `backend/app/services/health.py` - 健康业务逻辑 + `VACCINE_PRESETS` 常量 (新建)
 - `backend/app/api/v1/health.py` - 健康管理路由 (新建)
 - `backend/app/api/v1/router.py` - 注册 health 路由 (修改)
+
+> 复用：`app.services.pet.get_pet_membership` 用于宠物维度的鉴权；`app.dependencies.get_current_user` 用于解析 JWT。
 
 ### 前端
 - `frontend/lib/models/health.dart` - 健康数据模型 (新建)
 - `frontend/lib/services/health_service.dart` - 健康 API 服务 (新建)
-- `frontend/lib/providers/health_provider.dart` - 健康状态管理 (新建)
+- `frontend/lib/providers/health_provider.dart` - 健康相关 Riverpod providers (新建)
 - `frontend/lib/screens/health/health_screen.dart` - 健康主页面 (实现)
 - `frontend/lib/screens/health/weight_tab.dart` - 体重 Tab (新建)
 - `frontend/lib/screens/health/deworming_tab.dart` - 驱虫 Tab (新建)
 - `frontend/lib/screens/health/vaccination_tab.dart` - 疫苗 Tab (新建)
-- `frontend/lib/screens/health/weight_record_screen.dart` - 体重记录页 (新建)
-- `frontend/lib/screens/health/deworming_record_screen.dart` - 驱虫记录页 (新建)
-- `frontend/lib/screens/health/vaccination_record_screen.dart` - 疫苗记录页 (新建)
+- `frontend/lib/screens/health/weight_record_screen.dart` - 体重记录/编辑页 (新建)
+- `frontend/lib/screens/health/deworming_record_screen.dart` - 驱虫记录/编辑页 (新建)
+- `frontend/lib/screens/health/vaccination_record_screen.dart` - 疫苗记录/编辑页 (新建)
 - `frontend/lib/screens/health/deworming_cycle_screen.dart` - 驱虫周期设置页 (新建)
+- `frontend/lib/config/router.dart` - 注册 `/health/weight/(new|edit)`、`/health/deworming/(new|edit|cycle)`、`/health/vaccination/(new|edit)` 路由 (修改)
+
+> 路由约定（GoRouter，全部走根 Navigator，参数走 query string）：
+> - `/health/weight/new?petId=`
+> - `/health/weight/edit?petId=&weightId=&weight=&date=`
+> - `/health/deworming/new?petId=`
+> - `/health/deworming/edit?petId=&dewormingId=&type=&date=`
+> - `/health/deworming/cycle?petId=`
+> - `/health/vaccination/new?petId=`
+> - `/health/vaccination/edit?petId=&vaccinationId=&type=&date=` （`type` 需 `Uri.encodeQueryComponent` 处理中文）
 
 ---
 
