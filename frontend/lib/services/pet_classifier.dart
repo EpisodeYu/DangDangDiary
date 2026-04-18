@@ -1,8 +1,8 @@
-import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:tflite_flutter/tflite_flutter.dart';
 
@@ -68,19 +68,13 @@ class PetClassifier {
       _outputShape = interpreter.getOutputTensor(0).shape;
       _outputType = interpreter.getOutputTensor(0).type;
       _interpreter = interpreter;
-      developer.log(
-        'PetClassifier loaded: in=$_inputShape($_inputType) '
+      debugPrint(
+        '[PetClassifier] loaded in=$_inputShape($_inputType) '
         'out=$_outputShape($_outputType)',
-        name: 'PetClassifier',
       );
     } catch (e, st) {
       _loadFailed = true;
-      developer.log(
-        'PetClassifier model load failed; allowing uploads by default.',
-        name: 'PetClassifier',
-        error: e,
-        stackTrace: st,
-      );
+      debugPrint('[PetClassifier] model load failed: $e\n$st');
     }
   }
 
@@ -100,9 +94,14 @@ class PetClassifier {
     }
 
     try {
+      debugPrint(
+        '[PetClassifier] classify start file=${jpegFile.path} '
+        'size=${await jpegFile.length()}B',
+      );
       final bytes = await jpegFile.readAsBytes();
       final decoded = img.decodeImage(bytes);
       if (decoded == null) {
+        debugPrint('[PetClassifier] decode failed; skipping');
         return const PetClassificationResult(
           isPet: true, score: 0, skipped: true,
         );
@@ -119,11 +118,11 @@ class PetClassifier {
       final scores = _normalizeOutput(output);
       final petScore = _sumPetProbability(scores);
 
-      final topIdx = _argTop(scores, 3);
-      developer.log(
-        'classify: petScore=${petScore.toStringAsFixed(4)} '
-        'top3=$topIdx (raw ${topIdx.map((i) => scores[i].toStringAsFixed(3)).toList()})',
-        name: 'PetClassifier',
+      final topIdx = _argTop(scores, 5);
+      debugPrint(
+        '[PetClassifier] petScore=${petScore.toStringAsFixed(4)} '
+        'thr=${AppConstants.petClassifierThreshold} '
+        'top5=$topIdx raw=${topIdx.map((i) => scores[i].toStringAsFixed(3)).toList()}',
       );
 
       return PetClassificationResult(
@@ -132,12 +131,7 @@ class PetClassifier {
         skipped: false,
       );
     } catch (e, st) {
-      developer.log(
-        'PetClassifier inference failed; allowing upload.',
-        name: 'PetClassifier',
-        error: e,
-        stackTrace: st,
-      );
+      debugPrint('[PetClassifier] inference failed: $e\n$st');
       return const PetClassificationResult(
         isPet: true, score: 0, skipped: true,
       );
