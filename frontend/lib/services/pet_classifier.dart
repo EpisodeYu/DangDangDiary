@@ -106,10 +106,30 @@ class PetClassifier {
           isPet: true, score: 0, skipped: true,
         );
       }
+      debugPrint(
+        '[PetClassifier] decoded ${decoded.width}x${decoded.height} '
+        'fmt=${decoded.format} numCh=${decoded.numChannels}',
+      );
 
       final h = _inputShape[1];
       final w = _inputShape[2];
-      final resized = img.copyResize(decoded, width: w, height: h);
+      final resized = img.copyResize(
+        decoded,
+        width: w,
+        height: h,
+        interpolation: img.Interpolation.average,
+      );
+
+      // Sample a handful of pixel values at fixed spots so we can confirm
+      // channel order and range match RGB/[0..255] expectations.
+      String sample(int px, int py) {
+        final p = resized.getPixel(px, py);
+        return '($px,$py)=R${p.r.toInt()} G${p.g.toInt()} B${p.b.toInt()}';
+      }
+      debugPrint(
+        '[PetClassifier] resized ${resized.width}x${resized.height} '
+        'samples: ${sample(0,0)}, ${sample(w~/2,h~/2)}, ${sample(w-1,h-1)}',
+      );
 
       final input = _buildInput(resized, h, w);
       final output = _buildOutput();
