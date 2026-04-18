@@ -203,8 +203,9 @@ async def delete_pet(
     from app.models.weight import Weight
     from app.models.deworming import Deworming
     from app.models.vaccination import Vaccination
+    from app.models.routine import Routine
 
-    for model in [Photo, Weight, Deworming, Vaccination, PetMember]:
+    for model in [Photo, Weight, Deworming, Vaccination, Routine, PetMember]:
         await db.execute(
             select(model).where(model.pet_id == pet_id)
         )
