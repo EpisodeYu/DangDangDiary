@@ -346,6 +346,43 @@ class OriginalPhotoCache {
     _scheduleSave();
   }
 
+  /// Wipes every cached entry (both `photo_*` and `pending_*`) plus the
+  /// persisted index. Called on logout so a subsequent account logging in on
+  /// the same device cannot read the previous user's originals off disk.
+  ///
+  /// The operation is best-effort: if a file can't be deleted (e.g. an
+  /// in-flight writer still holds the handle), we swallow the error and
+  /// continue — reconciliation on the next cold boot will pick up any
+  /// stragglers.
+  Future<void> clearAllForLogout() async {
+    await _ensureInitialized();
+    final dir = _cacheDir;
+    if (dir != null && await dir.exists()) {
+      await for (final item in dir.list()) {
+        if (item is! File) continue;
+        final name = item.uri.pathSegments.last;
+        if (name.startsWith(_photoPrefix) ||
+            name.startsWith(_pendingPrefix) ||
+            name.startsWith('.tmp_')) {
+          try {
+            await item.delete();
+          } catch (_) {}
+        }
+      }
+    }
+    _index.clear();
+    _inflightDownloads.clear();
+    _prefetching.clear();
+
+    final idx = _indexFile;
+    if (idx != null) {
+      try {
+        if (await idx.exists()) await idx.delete();
+      } catch (_) {}
+    }
+    _bumpRevision();
+  }
+
   /// Drop a cached original after the photo has been deleted from the server.
   Future<void> removePhoto(int photoId) async {
     await _ensureInitialized();

@@ -142,6 +142,62 @@ void main() {
     );
   });
 
+  test('clearAllForLogout wipes every photo_/pending_ file and the index',
+      () async {
+    // Seed: one photo-bound entry and one pending entry.
+    final f1 = await makeFile('a.bin', 512);
+    final t1 = await OriginalPhotoCache.instance.cacheUploadSource(f1);
+    await OriginalPhotoCache.instance.bindPendingToPhoto(t1, 11);
+
+    final f2 = await makeFile('b.bin', 256);
+    // leave as a pending entry
+    await OriginalPhotoCache.instance.cacheUploadSource(f2);
+
+    // Sanity: cache has data and the index file exists on disk.
+    expect(await OriginalPhotoCache.instance.getCachedOriginalFile(11),
+        isNotNull);
+    await OriginalPhotoCache.instance.flushForTest();
+
+    final cacheDir = Directory('${tempRoot.path}/original_photo_cache');
+    final indexFile = File('${cacheDir.path}/index.json');
+    expect(await indexFile.exists(), isTrue);
+
+    final beforeFiles = await cacheDir
+        .list()
+        .where((e) =>
+            e is File &&
+            (e.path.contains('/photo_') || e.path.contains('/pending_')))
+        .length;
+    expect(beforeFiles, greaterThanOrEqualTo(2));
+
+    await OriginalPhotoCache.instance.clearAllForLogout();
+
+    // No photo_*/pending_* files left on disk.
+    final remaining = await cacheDir
+        .list()
+        .where((e) =>
+            e is File &&
+            (e.path.contains('/photo_') || e.path.contains('/pending_')))
+        .toList();
+    expect(remaining, isEmpty);
+
+    // index.json is gone.
+    expect(await indexFile.exists(), isFalse);
+
+    // In-memory lookups miss everywhere.
+    expect(
+      await OriginalPhotoCache.instance.getCachedOriginalFile(11),
+      isNull,
+    );
+
+    // A subsequent cold restart reconstructs an empty cache (no stale keys).
+    await OriginalPhotoCache.instance.resetForTest();
+    expect(
+      await OriginalPhotoCache.instance.getCachedOriginalFile(11),
+      isNull,
+    );
+  });
+
   test('persists across cold restart (re-init) by reading index.json',
       () async {
     final src = await makeFile('restart.bin', 128);

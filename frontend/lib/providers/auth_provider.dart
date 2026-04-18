@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../services/original_photo_cache.dart';
 
 enum AuthStatus { unknown, authenticated, unauthenticated }
 
@@ -41,18 +42,47 @@ class AuthState {
 }
 
 class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier() : super(const AuthState()) {
-    ApiClient().onForceLogout = _onForceLogout;
-    _checkAuthStatus();
+  /// @param authService   Injectable auth service (tests pass a fake).
+  /// @param apiClient     Injectable api client so `onForceLogout` can be
+  ///                      wired to a non-singleton in tests.
+  /// @param clearPhotoCache  Hook invoked before the persisted tokens get
+  ///                      wiped. Defaults to `OriginalPhotoCache.clearAllForLogout`.
+  /// @param autoCheck     If `true` (production default), the notifier kicks
+  ///                      off `_checkAuthStatus()` on construction. Tests
+  ///                      pass `false` so they can drive the flow manually.
+  AuthNotifier({
+    AuthService? authService,
+    ApiClient? apiClient,
+    Future<void> Function()? clearPhotoCache,
+    bool autoCheck = true,
+  })  : _authService = authService ?? AuthService(),
+        _clearPhotoCache = clearPhotoCache ??
+            (() => OriginalPhotoCache.instance.clearAllForLogout()),
+        super(const AuthState()) {
+    (apiClient ?? ApiClient()).onForceLogout = handleForceLogout;
+    if (autoCheck) _checkAuthStatus();
   }
 
-  final _authService = AuthService();
+  final AuthService _authService;
+  final Future<void> Function() _clearPhotoCache;
 
-  void _onForceLogout() {
-    if (state.status != AuthStatus.unauthenticated) {
-      state = const AuthState(status: AuthStatus.unauthenticated);
-    }
+  /// Exposed for the ApiClient hook and for tests to invoke directly.
+  /// Ordering (matches §1.1 第 12 条):
+  ///   1. clear on-disk original photo cache (privacy),
+  ///   2. wipe persisted tokens,
+  ///   3. flip state → unauthenticated (triggers UI → login screen).
+  @visibleForTesting
+  Future<void> handleForceLogout() async {
+    if (state.status == AuthStatus.unauthenticated) return;
+    await _clearPhotoCache();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('access_token');
+    await prefs.remove('refresh_token');
+    state = const AuthState(status: AuthStatus.unauthenticated);
   }
+
+  @visibleForTesting
+  Future<void> checkAuthStatusForTest() => _checkAuthStatus();
 
   Future<void> _checkAuthStatus() async {
     final prefs = await SharedPreferences.getInstance();
@@ -117,6 +147,10 @@ class AuthNotifier extends StateNotifier<AuthState> {
     try {
       await _authService.logout();
     } catch (_) {}
+    // Same ordering contract as handleForceLogout: clear cache first, then
+    // tokens (AuthService.logout already removes them, but we remove defensively
+    // in case a future refactor changes that), then flip state.
+    await _clearPhotoCache();
     state = const AuthState(status: AuthStatus.unauthenticated);
   }
 

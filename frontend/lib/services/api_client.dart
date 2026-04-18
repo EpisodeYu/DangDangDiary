@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
@@ -6,13 +7,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/constants.dart';
 
+/// Signature for the force-logout hook invoked by [ApiClient] when token
+/// refresh is impossible (missing refresh token, refresh endpoint rejection,
+/// etc.). The handler is responsible for clearing the photo cache, wiping
+/// persisted tokens, and flipping the UI to the login screen, in that order.
+typedef ForceLogoutHandler = Future<void> Function();
+
 class ApiClient {
   static final ApiClient _instance = ApiClient._internal();
   factory ApiClient() => _instance;
 
   late final Dio dio;
 
-  VoidCallback? onForceLogout;
+  /// Dedicated Dio for the refresh endpoint so it does not re-enter the main
+  /// Dio's 401 interceptor on failure. Exposed for tests so they can install
+  /// a mock adapter.
+  late Dio _refreshDio;
+
+  /// Shared in-flight refresh. When multiple requests see 401 concurrently,
+  /// they all await the same [Completer] instead of firing N parallel refresh
+  /// calls against `/auth/refresh`.
+  Completer<String>? _refreshInflight;
+
+  ForceLogoutHandler? onForceLogout;
 
   ApiClient._internal() {
     dio = Dio(BaseOptions(
@@ -22,6 +39,7 @@ class ApiClient {
       sendTimeout: const Duration(seconds: 60),
       headers: {'Content-Type': 'application/json'},
     ));
+    _refreshDio = _buildRefreshDio();
 
     dio.interceptors.add(_RetryInterceptor(dio));
 
@@ -64,38 +82,100 @@ class ApiClient {
         final prefs = await SharedPreferences.getInstance();
         final refreshToken = prefs.getString('refresh_token');
         if (refreshToken == null) {
-          onForceLogout?.call();
+          await _triggerForceLogout();
+          handler.next(error);
+          return;
+        }
+
+        final Future<String> refreshFuture;
+        final existing = _refreshInflight;
+        if (existing != null) {
+          refreshFuture = existing.future;
+        } else {
+          final completer = Completer<String>();
+          _refreshInflight = completer;
+          refreshFuture = completer.future;
+          _performRefresh(refreshToken).then((token) {
+            if (!completer.isCompleted) completer.complete(token);
+          }).catchError((Object e, StackTrace st) {
+            if (!completer.isCompleted) completer.completeError(e, st);
+          }).whenComplete(() {
+            if (identical(_refreshInflight, completer)) {
+              _refreshInflight = null;
+            }
+          });
+        }
+
+        String newToken;
+        try {
+          newToken = await refreshFuture;
+        } catch (_) {
+          await _triggerForceLogout();
           handler.next(error);
           return;
         }
 
         try {
-          final refreshDio = Dio(BaseOptions(
-            baseUrl: '${AppConstants.baseUrl}${AppConstants.apiPrefix}',
-            connectTimeout: const Duration(seconds: 15),
-            receiveTimeout: const Duration(seconds: 15),
-          ));
-          final resp = await refreshDio.post(
-            '/auth/refresh',
-            data: {'refresh_token': refreshToken},
-          );
-          final newToken = resp.data['access_token'] as String;
-          await prefs.setString('access_token', newToken);
-
           final opts = error.requestOptions;
           opts.headers['Authorization'] = 'Bearer $newToken';
           opts.extra['_retried'] = true;
-
           final retryResp = await dio.fetch(opts);
           handler.resolve(retryResp);
-        } catch (_) {
-          await prefs.remove('access_token');
-          await prefs.remove('refresh_token');
-          onForceLogout?.call();
-          handler.next(error);
+        } catch (e) {
+          handler.next(e is DioException ? e : error);
         }
       },
     ));
+  }
+
+  Dio _buildRefreshDio() {
+    return Dio(BaseOptions(
+      baseUrl: '${AppConstants.baseUrl}${AppConstants.apiPrefix}',
+      connectTimeout: const Duration(seconds: 15),
+      receiveTimeout: const Duration(seconds: 15),
+    ));
+  }
+
+  Future<String> _performRefresh(String refreshToken) async {
+    final resp = await _refreshDio.post(
+      '/auth/refresh',
+      data: {'refresh_token': refreshToken},
+    );
+    final newToken = resp.data['access_token'] as String;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('access_token', newToken);
+    return newToken;
+  }
+
+  Future<void> _triggerForceLogout() async {
+    final handler = onForceLogout;
+    if (handler == null) return;
+    try {
+      await handler();
+    } catch (e, st) {
+      debugPrint('[API] onForceLogout handler threw: $e\n$st');
+    }
+  }
+
+  /// For tests only. Resets mutable state that leaks across tests when the
+  /// singleton is reused (in-flight refresh future + hook). Does not touch
+  /// installed adapters; callers that swap [dio.httpClientAdapter] or
+  /// [refreshDio.httpClientAdapter] are responsible for restoring them.
+  @visibleForTesting
+  void resetForTest() {
+    _refreshInflight = null;
+    onForceLogout = null;
+  }
+
+  /// For tests only. Exposes the refresh-dedicated Dio so tests can install a
+  /// mock adapter against the `/auth/refresh` endpoint without reaching the
+  /// network.
+  @visibleForTesting
+  Dio get refreshDio => _refreshDio;
+
+  @visibleForTesting
+  set refreshDio(Dio value) {
+    _refreshDio = value;
   }
 }
 
