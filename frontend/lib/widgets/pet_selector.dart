@@ -59,6 +59,10 @@ class PetSelector extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (selectedPet != null) ...[
+            _buildPetAvatar(selectedPet!, 24),
+            const SizedBox(width: 8),
+          ],
           Text(
             selectedPet?.name ?? '选择宠物',
             style: const TextStyle(
@@ -76,20 +80,30 @@ class PetSelector extends StatelessWidget {
 
   Widget _buildMultiSelect(BuildContext context) {
     final allSelected = selectedPetIds.isEmpty;
+    final singlePet = !allSelected && selectedPetIds.length == 1
+        ? pets.firstWhere(
+            (p) => p.id == selectedPetIds.first,
+            orElse: () => pets.first,
+          )
+        : null;
     final displayText = allSelected
         ? '全部宠物'
-        : (selectedPetIds.length == 1
-            ? pets.firstWhere((p) => p.id == selectedPetIds.first, orElse: () => pets.first).name
+        : (singlePet != null
+            ? singlePet.name
             : '已选 ${selectedPetIds.length} 只');
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
-      onTap: () => _openMultiSelectDialog(context),
+      onTap: () => _openMultiSelectMenu(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (singlePet != null) ...[
+              _buildPetAvatar(singlePet, 24),
+              const SizedBox(width: 8),
+            ],
             Text(
               displayText,
               style: const TextStyle(
@@ -106,45 +120,64 @@ class PetSelector extends StatelessWidget {
     );
   }
 
-  Future<void> _openMultiSelectDialog(BuildContext context) async {
+  Future<void> _openMultiSelectMenu(BuildContext context) async {
+    final renderBox = context.findRenderObject();
+    final overlayRender =
+        Overlay.of(context).context.findRenderObject();
+    if (renderBox is! RenderBox || overlayRender is! RenderBox) return;
+
+    final buttonRect = Rect.fromPoints(
+      renderBox.localToGlobal(Offset.zero, ancestor: overlayRender),
+      renderBox.localToGlobal(
+        renderBox.size.bottomRight(Offset.zero),
+        ancestor: overlayRender,
+      ),
+    );
+    final position =
+        RelativeRect.fromRect(buttonRect, Offset.zero & overlayRender.size);
+
     // Empty selectedPetIds means "all"; expand to full set for a clear UI state.
     final draft = selectedPetIds.isEmpty
         ? pets.map((p) => p.id).toSet()
         : selectedPetIds.toSet();
 
-    final result = await showDialog<List<int>?>(
+    final result = await showMenu<List<int>>(
       context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setStateDialog) {
-            final allChecked = draft.length == pets.length;
-            void toggleAll() {
-              setStateDialog(() {
-                if (allChecked) {
-                  draft.clear();
-                } else {
-                  draft
-                    ..clear()
-                    ..addAll(pets.map((p) => p.id));
-                }
-              });
-            }
+      position: position,
+      constraints: const BoxConstraints(minWidth: 240, maxWidth: 300),
+      items: [
+        PopupMenuItem<List<int>>(
+          enabled: false,
+          padding: EdgeInsets.zero,
+          child: StatefulBuilder(
+            builder: (ctx, setStateMenu) {
+              final allChecked = draft.length == pets.length;
+              void toggleAll() {
+                setStateMenu(() {
+                  if (allChecked) {
+                    draft.clear();
+                  } else {
+                    draft
+                      ..clear()
+                      ..addAll(pets.map((p) => p.id));
+                  }
+                });
+              }
 
-            void togglePet(int id) {
-              setStateDialog(() {
-                if (draft.contains(id)) {
-                  draft.remove(id);
-                } else {
-                  draft.add(id);
-                }
-              });
-            }
+              void togglePet(int id) {
+                setStateMenu(() {
+                  if (draft.contains(id)) {
+                    draft.remove(id);
+                  } else {
+                    draft.add(id);
+                  }
+                });
+              }
 
-            return AlertDialog(
-              title: const Text('选择宠物'),
-              contentPadding: const EdgeInsets.symmetric(vertical: 8),
-              content: SizedBox(
-                width: 280,
+              return ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.6,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -170,31 +203,40 @@ class PetSelector extends StatelessWidget {
                         },
                       ),
                     ),
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(),
+                            child: const Text('取消'),
+                          ),
+                          TextButton(
+                            onPressed: draft.isEmpty
+                                ? null
+                                : () {
+                                    // API treats empty list as "all"; collapse when every pet is chosen.
+                                    final committed =
+                                        draft.length == pets.length
+                                            ? <int>[]
+                                            : draft.toList();
+                                    Navigator.of(ctx).pop(committed);
+                                  },
+                            child: const Text('确定'),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(null),
-                  child: const Text('取消'),
-                ),
-                TextButton(
-                  onPressed: draft.isEmpty
-                      ? null
-                      : () {
-                          // API treats empty list as "all"; collapse when every pet is chosen.
-                          final committed = draft.length == pets.length
-                              ? <int>[]
-                              : draft.toList();
-                          Navigator.of(ctx).pop(committed);
-                        },
-                  child: const Text('确定'),
-                ),
-              ],
-            );
-          },
-        );
-      },
+              );
+            },
+          ),
+        ),
+      ],
     );
 
     if (result != null) {
@@ -224,7 +266,15 @@ class PetSelector extends StatelessWidget {
               leading,
               const SizedBox(width: 10),
             ],
-            Expanded(child: Text(label)),
+            Expanded(
+              child: Text(
+                label,
+                style: const TextStyle(
+                  color: AppTheme.textPrimary,
+                  fontSize: 14,
+                ),
+              ),
+            ),
           ],
         ),
       ),
