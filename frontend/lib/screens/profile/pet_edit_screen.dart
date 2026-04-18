@@ -180,11 +180,11 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         Row(
           children: [
             Expanded(
-              child: _buildTypeButton('cat', '🐱 猫'),
+              child: _buildTypeButton('cat', '猫猫'),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: _buildTypeButton('dog', '🐶 狗'),
+              child: _buildTypeButton('dog', '狗狗'),
             ),
           ],
         ),
@@ -192,7 +192,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           const Padding(
             padding: EdgeInsets.only(top: 4),
             child: Text(
-              '编辑模式下不可修改宠物类型',
+              '宠物类型不支持修改',
               style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
           ),

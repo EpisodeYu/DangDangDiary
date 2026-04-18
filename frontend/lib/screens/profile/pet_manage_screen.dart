@@ -157,11 +157,11 @@ class PetManageScreen extends ConsumerWidget {
                           pet.breed!,
                           style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
                         ),
-                      if (pet.birthday != null && pet.birthday!.isNotEmpty)
+                      if (_formatAge(pet.birthday) != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
-                            '${pet.birthday} 出生',
+                            _formatAge(pet.birthday)!,
                             style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
                           ),
                         ),
@@ -176,6 +176,33 @@ class PetManageScreen extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String? _formatAge(String? birthday) {
+    if (birthday == null || birthday.isEmpty) return null;
+    final birth = DateTime.tryParse(birthday);
+    if (birth == null) return null;
+
+    final now = DateTime.now();
+    if (!now.isAfter(birth)) return '0天';
+
+    int years = now.year - birth.year;
+    int months = now.month - birth.month;
+    int days = now.day - birth.day;
+
+    if (days < 0) {
+      months -= 1;
+      // Day 0 of the current month equals the last day of the previous month.
+      days += DateTime(now.year, now.month, 0).day;
+    }
+    if (months < 0) {
+      years -= 1;
+      months += 12;
+    }
+
+    if (years > 0) return '$years年$months个月$days天';
+    if (months > 0) return '$months个月$days天';
+    return '$days天';
   }
 
   Widget _buildAvatar(Pet pet) {
