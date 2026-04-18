@@ -12,8 +12,18 @@ Covers:
   9. logout blacklists refresh token
  10. GET /auth/me without token → 401
  11. PUT /auth/me updates nickname
+
+Chunk A-3 additions:
+ 12. refresh with expired token → 401 INVALID_REFRESH_TOKEN
+ 13. A's access + B's refresh → 400 REFRESH_TOKEN_MISMATCH
+ 14. logout blacklists refresh only; access token keeps working until TTL
 """
+from datetime import datetime, timedelta, timezone
+
 import pytest
+from jose import jwt
+
+from app.config import settings
 from tests.conftest import _mock_sms_send
 
 pytestmark = pytest.mark.asyncio
@@ -193,3 +203,78 @@ async def test_update_nickname_empty(client):
     resp = await c.put("/auth/me", json={"nickname": "   "}, headers=headers)
     assert resp.status_code == 400
     assert resp.json()["code"] == "INVALID_NICKNAME"
+
+
+# ── 12. refresh with expired token ──
+
+def _make_expired_refresh_token(user_id: int) -> str:
+    """Craft a refresh-type JWT whose `exp` is already in the past."""
+    payload = {
+        "sub": str(user_id),
+        "exp": datetime.now(timezone.utc) - timedelta(seconds=10),
+        "type": "refresh",
+    }
+    return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
+
+
+async def test_refresh_expired(client):
+    c, _ = client
+    login_resp = await _login(c, phone="13800138009")
+    user_id = login_resp.json()["user"]["id"]
+
+    expired = _make_expired_refresh_token(user_id)
+    resp = await c.post("/auth/refresh", json={"refresh_token": expired})
+    assert resp.status_code == 401
+    assert resp.json()["code"] == "INVALID_REFRESH_TOKEN"
+
+
+# ── 13. A's access + B's refresh → 400 REFRESH_TOKEN_MISMATCH ──
+
+async def test_logout_refresh_token_mismatch(client):
+    c, store = client
+
+    a = await _login(c, phone="13800138010")
+    a_access = a.json()["access_token"]
+
+    # Clear A's rate limit then log in user B so sms send-code succeeds.
+    store.pop("sms:limit:13800138011", None)
+    b = await _login(c, phone="13800138011")
+    b_refresh = b.json()["refresh_token"]
+
+    resp = await c.post(
+        "/auth/logout",
+        json={"refresh_token": b_refresh},
+        headers={"Authorization": f"Bearer {a_access}"},
+    )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "REFRESH_TOKEN_MISMATCH"
+
+
+# ── 14. logout blacklists refresh only; access keeps working until TTL ──
+
+async def test_access_token_valid_after_logout(client):
+    c, store = client
+    login_resp = await _login(c, phone="13800138012")
+    tokens = login_resp.json()
+    access_token = tokens["access_token"]
+    refresh_token = tokens["refresh_token"]
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    resp = await c.post(
+        "/auth/logout",
+        json={"refresh_token": refresh_token},
+        headers=headers,
+    )
+    assert resp.status_code == 204
+    assert f"auth:refresh:blacklist:{refresh_token}" in store
+
+    # Access token is NOT blacklisted — /auth/me still works until TTL.
+    me = await c.get("/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["phone"] == "13800138012"
+
+    # Refresh token, however, is now rejected.
+    refreshed = await c.post("/auth/refresh", json={"refresh_token": refresh_token})
+    assert refreshed.status_code == 401
+    assert refreshed.json()["code"] == "INVALID_REFRESH_TOKEN"

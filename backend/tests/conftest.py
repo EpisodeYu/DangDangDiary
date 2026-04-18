@@ -3,14 +3,9 @@ import pytest_asyncio
 from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy.dialects.sqlite.base import SQLiteTypeCompiler
 
 from app.database import Base, get_db
-
-# SQLite only auto-increments "INTEGER PRIMARY KEY" columns.
-# BigInteger renders as "BIGINT" which breaks autoincrement — remap it.
-SQLiteTypeCompiler.visit_big_integer = SQLiteTypeCompiler.visit_integer  # type: ignore[assignment]
-SQLiteTypeCompiler.visit_BIGINT = SQLiteTypeCompiler.visit_INTEGER  # type: ignore[assignment]
+from tests._sqlite_compat import apply_sqlite_compat
 
 
 @pytest.fixture(scope="session")
@@ -20,6 +15,8 @@ def anyio_backend():
 
 @pytest_asyncio.fixture()
 async def test_engine():
+    # SQLite-only patch: remap BIGINT → INTEGER so autoincrement works.
+    apply_sqlite_compat()
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
