@@ -119,6 +119,13 @@ class PetClassifier {
       final scores = _normalizeOutput(output);
       final petScore = _sumPetProbability(scores);
 
+      final topIdx = _argTop(scores, 3);
+      developer.log(
+        'classify: petScore=${petScore.toStringAsFixed(4)} '
+        'top3=$topIdx (raw ${topIdx.map((i) => scores[i].toStringAsFixed(3)).toList()})',
+        name: 'PetClassifier',
+      );
+
       return PetClassificationResult(
         isPet: petScore >= AppConstants.petClassifierThreshold,
         score: petScore,
@@ -175,18 +182,20 @@ class PetClassifier {
   Object _buildOutput() {
     final n = _outputShape.reduce((a, b) => a * b);
     if (_outputType == TensorType.uint8) {
-      return Uint8List(n).reshape(_outputShape);
+      return List<int>.filled(n, 0).reshape(_outputShape);
     }
-    return Float32List(n).reshape(_outputShape);
+    return List<double>.filled(n, 0.0).reshape(_outputShape);
   }
 
   List<double> _normalizeOutput(Object output) {
-    final inner = (output as List)[0];
-    if (inner is Float32List || inner is List<double>) {
-      return List<double>.from(inner as List);
+    // Output shape is [1, N]; unwrap batch dim. The inner list's element type
+    // depends on how tflite_flutter filled it, so read via `num` and trust the
+    // model-declared output type for interpretation.
+    final inner = (output as List)[0] as List;
+    if (_outputType == TensorType.uint8) {
+      return inner.map((v) => (v as num) / 255.0).toList();
     }
-    final ints = List<int>.from(inner as List);
-    return ints.map((v) => v / 255.0).toList();
+    return inner.map((v) => (v as num).toDouble()).toList();
   }
 
   double _sumPetProbability(List<double> scores) {
@@ -205,6 +214,12 @@ class PetClassifier {
       sum += probs[i + offset];
     }
     return sum;
+  }
+
+  List<int> _argTop(List<double> scores, int k) {
+    final idx = List<int>.generate(scores.length, (i) => i);
+    idx.sort((a, b) => scores[b].compareTo(scores[a]));
+    return idx.take(k).toList();
   }
 
   List<double> _softmax(List<double> logits) {
