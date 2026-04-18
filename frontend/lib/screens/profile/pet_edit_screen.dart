@@ -1,8 +1,11 @@
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../config/theme.dart';
 import '../../models/pet.dart';
@@ -15,6 +18,30 @@ const _catBreeds = [
   '挪威森林猫', '西伯利亚森林猫', '伯曼猫', '柯尼斯卷毛猫', '东方短毛猫',
   '索马里猫', '埃及猫', '新加坡猫', '其他',
 ];
+
+// Non-ASCII runes (CJK, emoji, etc.) weigh 2; ASCII weighs 1. Caps display
+// width so a name like "A" * 30 and "汉" * 15 hit the same limit.
+int _weightedLength(String s) {
+  var w = 0;
+  for (final r in s.runes) {
+    w += r < 0x80 ? 1 : 2;
+  }
+  return w;
+}
+
+class _WeightedLengthFormatter extends TextInputFormatter {
+  final int max;
+  const _WeightedLengthFormatter(this.max);
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (_weightedLength(newValue.text) <= max) return newValue;
+    return oldValue;
+  }
+}
 
 const _dogBreeds = [
   '贵宾犬（泰迪）', '中华田园犬', '威尔士柯基犬', '金毛寻回犬', '比熊犬',
@@ -240,16 +267,19 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   Widget _buildNameField() {
     return TextFormField(
       controller: _nameController,
+      inputFormatters: const [_WeightedLengthFormatter(30)],
       decoration: InputDecoration(
         labelText: '宠物名字 *',
-        hintText: '请输入宠物名字',
+        hintText: '最多 15 个汉字或 30 个字符',
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         filled: true,
         fillColor: Colors.white,
       ),
       validator: (value) {
         if (value == null || value.trim().isEmpty) return '请输入宠物名字';
-        if (value.trim().length > 50) return '名字不能超过50个字符';
+        if (_weightedLength(value.trim()) > 30) {
+          return '名字过长（最多 15 个汉字或 30 个字符）';
+        }
         return null;
       },
     );
@@ -430,27 +460,52 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     }
   }
 
+  /// Compress the picked image down to an avatar-sized JPEG.
+  /// image_picker's default is quality 100, which produces ~300KB files even
+  /// at maxWidth: 512 — way too large for a 96px CircleAvatar. This runs a
+  /// second pass through flutter_image_compress to land at ~30–60KB.
+  Future<({Uint8List bytes, String filename})?> _compressAvatar(XFile xfile) async {
+    final dir = await getTemporaryDirectory();
+    final outPath = '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final result = await FlutterImageCompress.compressAndGetFile(
+      xfile.path,
+      outPath,
+      minWidth: 400,
+      minHeight: 400,
+      format: CompressFormat.jpeg,
+      quality: 80,
+    );
+    if (result == null) {
+      final raw = await xfile.readAsBytes();
+      return (bytes: raw, filename: xfile.name);
+    }
+    final bytes = await File(result.path).readAsBytes();
+    return (bytes: bytes, filename: 'avatar.jpg');
+  }
+
   Future<void> _pickAvatar() async {
     final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
-    if (file != null) {
-      final bytes = await file.readAsBytes();
-      setState(() {
-        _avatarBytes = bytes;
-        _avatarFilename = file.name;
-      });
-    }
+    final file = await picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+    final compressed = await _compressAvatar(file);
+    if (compressed == null || !mounted) return;
+    setState(() {
+      _avatarBytes = compressed.bytes;
+      _avatarFilename = compressed.filename;
+    });
   }
 
   Future<void> _pickAndUploadAvatar() async {
     final picker = ImagePicker();
-    final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 512);
+    final file = await picker.pickImage(source: ImageSource.gallery);
     if (file == null) return;
 
-    final bytes = await file.readAsBytes();
+    final compressed = await _compressAvatar(file);
+    if (compressed == null || !mounted) return;
+    final bytes = compressed.bytes;
     setState(() {
       _avatarBytes = bytes;
-      _avatarFilename = file.name;
+      _avatarFilename = compressed.filename;
     });
 
     if (widget.petId != null) {
@@ -459,7 +514,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         await ref.read(petServiceProvider).uploadAvatar(
           widget.petId!,
           bytes,
-          file.name,
+          compressed.filename,
           onSendProgress: (sent, total) {
             if (mounted && total > 0) {
               setState(() => _uploadProgress = sent / total);
