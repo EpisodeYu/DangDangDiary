@@ -11,6 +11,9 @@ frontend/.packages
 frontend/build/
 frontend/.flutter-plugins
 frontend/.flutter-plugins-dependencies
+frontend/linux/flutter/generated_plugins.cmake
+frontend/pubspec.lock
+frontend/windows/flutter/generated_plugins.cmake
 
 # IDE
 .idea/
