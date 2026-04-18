@@ -25,8 +25,13 @@ class AppConstants {
       'assets/models/pet_classifier.tflite';
 
   /// Minimum summed probability over ImageNet cat+dog classes required to
-  /// accept an image as a pet.
-  static const double petClassifierThreshold = 0.30;
+  /// accept an image as a pet. We prefer false positives over false
+  /// negatives: a user whose cat photo is rejected has a worse experience
+  /// than one whose non-pet photo is accepted. Reference points on this
+  /// model: random noise ≈0.008, uniform gray ≈0.06, a clear cat ≈0.7.
+  /// 0.08 sits above any non-pet input we've observed while leaving a
+  /// ~10× margin for marginal pet photos (partial occlusion, poor light).
+  static const double petClassifierThreshold = 0.08;
 
   /// Float32 input normalization for the bundled model.
   ///   'zero_to_one'      -> px / 255            (TF Hub classification signature)

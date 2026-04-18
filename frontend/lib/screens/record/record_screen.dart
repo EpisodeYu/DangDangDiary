@@ -377,12 +377,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     var rejected = 0;
     for (final xfile in toProcess) {
       final exifDate = await ExifHelper.extractDate(File(xfile.path));
-      final converted = await _ensureJpeg(xfile);
-      final result = await PetClassifier.instance.classify(converted);
+      // Classify on the original file — FlutterImageCompress's re-encode
+      // roughly halves cat/dog softmax on marginal inputs.
+      final result = await PetClassifier.instance.classify(File(xfile.path));
       if (!result.isPet && !result.skipped) {
         rejected++;
         continue;
       }
+      final converted = await _ensureJpeg(xfile);
       final token = await _cachePending(converted);
       files.add(converted);
       tokens.add(token);
@@ -417,8 +419,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     _showRecognizingDialog();
 
-    final converted = await _ensureJpeg(xfile);
-    final result = await PetClassifier.instance.classify(converted);
+    final result = await PetClassifier.instance.classify(File(xfile.path));
 
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop();
@@ -427,6 +428,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _showSnack('未识别到猫狗，请换一张图片试试吧！');
       return;
     }
+
+    final converted = await _ensureJpeg(xfile);
 
     final token = await _cachePending(converted);
     setState(() {
