@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,7 @@ import '../../config/theme.dart';
 import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
 
 class RoutineTab extends ConsumerWidget {
@@ -197,6 +200,7 @@ class RoutineTab extends ConsumerWidget {
       );
       ref.invalidate(routineStatusProvider(pet.id));
       await ref.read(petListProvider.notifier).refresh();
+      unawaited(ref.read(healthReminderSchedulerProvider).refresh());
     } on DioException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -313,6 +317,7 @@ class RoutineTab extends ConsumerWidget {
       await ref.read(healthServiceProvider).deleteRoutine(r.id);
       ref.invalidate(routineListProvider(pet.id));
       ref.invalidate(routineStatusProvider(pet.id));
+      unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('已删除'), behavior: SnackBarBehavior.floating),

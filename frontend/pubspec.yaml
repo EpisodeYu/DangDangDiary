@@ -41,6 +41,9 @@ dependencies:
   # On-device pet (cat/dog) classification
   tflite_flutter: ^0.11.0
   image: ^4.3.0
+  # Local notifications (step7: health reminders)
+  flutter_local_notifications: ^18.0.1
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:

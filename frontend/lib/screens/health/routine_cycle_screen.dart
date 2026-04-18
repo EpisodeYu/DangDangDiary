@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +8,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
 import '../../providers/health_provider.dart';
+import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
 
 class RoutineCycleScreen extends ConsumerStatefulWidget {
@@ -199,6 +202,7 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
       );
       ref.invalidate(routineStatusProvider(widget.petId));
       await ref.read(petListProvider.notifier).refresh();
+      unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (mounted) {
         _showSnack('已保存');
         context.pop();

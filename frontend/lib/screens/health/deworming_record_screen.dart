@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import 'package:intl/intl.dart';
 import '../../config/theme.dart';
 import '../../models/health.dart';
 import '../../providers/health_provider.dart';
+import '../../providers/notification_provider.dart';
 
 class DewormingRecordScreen extends ConsumerStatefulWidget {
   final int petId;
@@ -169,6 +172,7 @@ class _DewormingRecordScreenState extends ConsumerState<DewormingRecordScreen> {
       }
       ref.invalidate(dewormingListProvider(widget.petId));
       ref.invalidate(dewormingStatusProvider(widget.petId));
+      unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (mounted) {
         _showSnack(_isEditing ? '已更新' : '已记录');
         context.pop();
