@@ -124,7 +124,7 @@ The phone client **only** talks to Nginx. Internal service addresses (`minio:900
 | `docs/step5-health-management.md` | Weight / routine / deworming / vaccination |
 | `docs/step6-timeline.md` | Paginated timeline |
 | `docs/step7-push-notification.md` | Local push notifications |
-| `docs/step8-integration-polish.md` | Final polish and integration |
+| `docs/step8-integration-polish.md` | Source hardening & automated testing (UI polish deferred to end of Phase 2) |
 | `docs/API_docs/` | Third-party API reference (Aliyun SMS, scene recognition) |
 
 If a step doc conflicts with `00-global-rules.md`, the step doc takes precedence only when it is more specific and does not contradict a global rule.
