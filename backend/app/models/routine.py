@@ -5,6 +5,7 @@ from sqlalchemy import BigInteger, Date, DateTime, Enum, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class RoutineType(str, enum.Enum):
@@ -21,4 +22,4 @@ class Routine(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     routine_type: Mapped[RoutineType] = mapped_column(Enum(RoutineType), nullable=False)
     performed_at: Mapped[date] = mapped_column(Date, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

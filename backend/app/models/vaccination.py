@@ -4,6 +4,7 @@ from sqlalchemy import BigInteger, String, Date, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class Vaccination(Base):
@@ -14,4 +15,4 @@ class Vaccination(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     vaccine_type: Mapped[str] = mapped_column(String(100), nullable=False)
     vaccinated_at: Mapped[date] = mapped_column(Date, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

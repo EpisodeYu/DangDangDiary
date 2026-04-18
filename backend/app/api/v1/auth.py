@@ -66,4 +66,5 @@ async def update_me(
 ):
     current_user.nickname = body.nickname
     await db.flush()
+    await db.commit()
     return UserResponse.model_validate(current_user)

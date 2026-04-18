@@ -2,7 +2,7 @@ import asyncio
 import dataclasses
 import logging
 import math
-from datetime import date, datetime
+from datetime import date
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy import func, select
@@ -27,6 +27,7 @@ from app.schemas.photo import (
 from app.config import settings
 from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
+from app.utils.time import utcnow
 from app.services.storage import (
     build_thumbnail_url,
     delete_photo_objects,
@@ -180,7 +181,7 @@ async def upload_photos(
             storage_key=result.storage_key,
             thumbnail_key=result.thumbnail_key,
             taken_at=parsed_dates[result.idx],
-            created_at=datetime.utcnow(),
+            created_at=utcnow(),
         )
         db.add(photo)
         await db.flush()
@@ -190,6 +191,9 @@ async def upload_photos(
             filename=result.filename,
             photo=_photo_to_response(photo),
         ))
+
+    if successes:
+        await db.commit()
 
     return PhotoUploadResponse(
         successes=successes,
@@ -253,6 +257,7 @@ async def delete_photo(
 
     await db.delete(photo)
     await db.flush()
+    await db.commit()
 
     delete_photo_objects(storage_key, thumbnail_key)
 

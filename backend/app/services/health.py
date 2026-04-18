@@ -1,10 +1,11 @@
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppException
+from app.utils.time import utcnow
 from app.models.deworming import Deworming, DewormingType
 from app.models.pet import Pet
 from app.models.routine import Routine, RoutineType
@@ -54,10 +55,11 @@ async def create_weight(
         user_id=user_id,
         weight_kg=data.weight_kg,
         recorded_at=data.recorded_at,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(weight)
     await db.flush()
+    await db.commit()
     await db.refresh(weight)
     return WeightResponse.model_validate(weight)
 
@@ -112,6 +114,7 @@ async def update_weight(
     weight.weight_kg = data.weight_kg
     weight.recorded_at = data.recorded_at
     await db.flush()
+    await db.commit()
     await db.refresh(weight)
     return WeightResponse.model_validate(weight)
 
@@ -130,6 +133,7 @@ async def delete_weight(
 
     await db.delete(weight)
     await db.flush()
+    await db.commit()
 
 
 # ===================== Deworming =====================
@@ -147,10 +151,11 @@ async def create_deworming(
         user_id=user_id,
         deworming_type=data.deworming_type,
         dewormed_at=data.dewormed_at,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(deworming)
     await db.flush()
+    await db.commit()
     await db.refresh(deworming)
     return DewormingResponse.model_validate(deworming)
 
@@ -209,6 +214,7 @@ async def update_deworming(
     deworming.deworming_type = data.deworming_type
     deworming.dewormed_at = data.dewormed_at
     await db.flush()
+    await db.commit()
     await db.refresh(deworming)
     return DewormingResponse.model_validate(deworming)
 
@@ -227,6 +233,7 @@ async def delete_deworming(
 
     await db.delete(deworming)
     await db.flush()
+    await db.commit()
 
 
 async def update_deworming_cycle(
@@ -252,6 +259,7 @@ async def update_deworming_cycle(
             setattr(pet, column, value)
 
     await db.flush()
+    await db.commit()
     await db.refresh(pet)
 
     return DewormingCycleResponse(
@@ -378,10 +386,11 @@ async def create_vaccination(
         user_id=user_id,
         vaccine_type=data.vaccine_type,
         vaccinated_at=data.vaccinated_at,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(vaccination)
     await db.flush()
+    await db.commit()
     await db.refresh(vaccination)
     return VaccinationResponse.model_validate(vaccination)
 
@@ -440,6 +449,7 @@ async def update_vaccination(
     record.vaccine_type = data.vaccine_type
     record.vaccinated_at = data.vaccinated_at
     await db.flush()
+    await db.commit()
     await db.refresh(record)
     return VaccinationResponse.model_validate(record)
 
@@ -458,6 +468,7 @@ async def delete_vaccination(
 
     await db.delete(record)
     await db.flush()
+    await db.commit()
 
 
 # ===================== Routine =====================
@@ -475,10 +486,11 @@ async def create_routine(
         user_id=user_id,
         routine_type=data.routine_type,
         performed_at=data.performed_at,
-        created_at=datetime.utcnow(),
+        created_at=utcnow(),
     )
     db.add(routine)
     await db.flush()
+    await db.commit()
     await db.refresh(routine)
     return RoutineResponse.model_validate(routine)
 
@@ -537,6 +549,7 @@ async def update_routine(
     routine.routine_type = data.routine_type
     routine.performed_at = data.performed_at
     await db.flush()
+    await db.commit()
     await db.refresh(routine)
     return RoutineResponse.model_validate(routine)
 
@@ -555,6 +568,7 @@ async def delete_routine(
 
     await db.delete(routine)
     await db.flush()
+    await db.commit()
 
 
 async def update_routine_cycle(
@@ -570,6 +584,7 @@ async def update_routine_cycle(
         setattr(pet, key, value)
 
     await db.flush()
+    await db.commit()
     await db.refresh(pet)
 
     return RoutineCycleResponse(

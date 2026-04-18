@@ -34,10 +34,11 @@ async def client(test_engine):
     )
 
     async def _override_get_db():
+        # Mirror production get_db: no implicit commit. Services must commit
+        # explicitly for writes; read-only requests never issue a COMMIT.
         async with session_maker() as session:
             try:
                 yield session
-                await session.commit()
             except Exception:
                 await session.rollback()
                 raise

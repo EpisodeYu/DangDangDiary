@@ -39,6 +39,7 @@ async def login(phone: str, code: str, db: AsyncSession) -> tuple[str, str, User
         user = User(phone=phone, nickname=_generate_default_nickname())
         db.add(user)
         await db.flush()
+        await db.commit()
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)

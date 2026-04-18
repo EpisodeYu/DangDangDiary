@@ -4,6 +4,7 @@ from sqlalchemy import BigInteger, String, Date, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class Photo(Base):
@@ -15,4 +16,4 @@ class Photo(Base):
     storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
     thumbnail_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     taken_at: Mapped[date] = mapped_column(Date, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

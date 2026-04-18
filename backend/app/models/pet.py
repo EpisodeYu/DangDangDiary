@@ -5,6 +5,7 @@ from sqlalchemy import BigInteger, Boolean, String, Date, DateTime, Integer, Enu
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+from app.utils.time import utcnow
 
 
 class PetType(str, enum.Enum):
@@ -40,9 +41,9 @@ class Pet(Base):
     bath_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     nail_trim_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     grooming_reminder_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime, default=utcnow, onupdate=utcnow
     )
 
 
@@ -53,4 +54,4 @@ class PetMember(Base):
     pet_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("pets.id"), nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     role: Mapped[MemberRole] = mapped_column(Enum(MemberRole), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
