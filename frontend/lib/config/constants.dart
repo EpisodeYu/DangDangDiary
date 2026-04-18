@@ -29,9 +29,9 @@ class AppConstants {
   /// negatives: a user whose cat photo is rejected has a worse experience
   /// than one whose non-pet photo is accepted. Reference points on this
   /// model: random noise ≈0.008, uniform gray ≈0.06, a clear cat ≈0.7.
-  /// 0.08 sits above any non-pet input we've observed while leaving a
-  /// ~10× margin for marginal pet photos (partial occlusion, poor light).
-  static const double petClassifierThreshold = 0.08;
+  /// 0.10 sits above the 15-sample non-pet max (0.069) with a ~44% buffer
+  /// and still leaves ~7× margin vs. a clean pet photo (~0.7).
+  static const double petClassifierThreshold = 0.10;
 
   /// Float32 input normalization for the bundled model.
   ///   'zero_to_one'      -> px / 255            (TF Hub classification signature)
