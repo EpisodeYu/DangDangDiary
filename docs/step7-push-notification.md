@@ -1,368 +1,341 @@
-# Step 7: 推送提醒 (驱虫到期本地通知)
+# Step 7: 推送提醒（健康本地通知）
 
 ## 项目背景
 
-「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤实现驱虫到期本地推送提醒功能。
+「当当日记」是一个宠物日记 APP，使用 Flutter + FastAPI + PostgreSQL 技术栈。本步骤实现健康相关的本地通知提醒能力，覆盖驱虫与日常护理两类场景。
 
-**前置依赖**: Step 5 已完成 (驱虫管理)，驱虫记录和周期设置功能可用。
+**前置依赖**：
+
+- Step 5 已完成，驱虫管理与日常护理管理功能可用
+- 前端已具备健康页面、宠物切换能力和对应状态接口
 
 ---
 
 ## 本步骤目标
 
-1. Flutter 集成 `flutter_local_notifications` 插件
-2. APP 启动/进入后台时，从后端获取驱虫状态，计算并调度本地通知
-3. 用户记录新驱虫后，重新调度通知
-4. 点击通知跳转到对应宠物的驱虫管理页面
+1. Flutter 集成本地通知能力，并完成 Android 侧权限接入
+2. APP 启动或回到前台时，基于当前宠物健康状态重新计算并调度本地通知
+3. 在驱虫记录、日常记录、周期设置或提醒开关发生变化后，及时刷新通知
+4. 支持按单只宠物聚合同日提醒，而不是为每个项目单独弹多条通知
+5. 点击通知后进入对应宠物的健康页，不强制跳到某个具体 Tab
 
 ---
 
 ## 1. 方案说明
 
-**为什么用本地推送而不是外部推送服务 (如极光推送)?**
+### 1.1 为什么使用本地通知
 
-- 驱虫提醒是周期性、可预测的通知，不需要服务端实时触发
-- 本地推送无需注册第三方推送服务，零成本
-- 减少后端复杂度，不需要维护设备注册表和推送定时任务
-- APP 只在开启/后台时才能触发本地通知，对于宠物日记场景足够（用户定期打开 APP 记录时即可收到提醒）
+- 健康提醒是周期性、可预测的提醒，适合在客户端本地计算和调度
+- 无需引入第三方推送服务，也不需要服务端维护设备注册表与定时推送任务
+- 当前 Step 5 已提供健康状态接口，前端可以直接基于状态进行提醒计算
+- 对于宠物日记场景，用户打开 APP 记录和查看状态的频率足以支撑本地提醒方案
 
-**限制:**
+### 1.2 方案边界
 
-- APP 被完全杀死 (Force Stop) 后无法触发通知，需要下次打开 APP 时补发
-- 如果用户长时间不打开 APP，则无法收到提醒
+- 本步骤只实现本地通知，不引入服务端推送
+- 通知范围包括：
+  - 驱虫：`internal` / `external` / `combined`
+  - 日常：`bath` / `nail_trim` / `grooming`
+- 通知点击后只负责：
+  - 打开 APP
+  - 切换到健康页
+  - 选中对应宠物
+- 不要求通知点击后自动切到某个具体健康子模块
 
----
+### 1.3 已知限制
 
-## 2. 推送规则
-
-### 驱虫提醒规则
-
-- **提醒条件**: 用户设置了驱虫周期 且 有驱虫记录
-- **提前提醒**: 下次驱虫日期前 **3 天**开始推送
-- **过期提醒**: 驱虫日期过期后显示过期提醒
-- **停止条件**: 用户记录了新的驱虫
-- **内驱和外驱分别计算和推送**
-- **调度原则**: 每次只安排“下一次需要触发的通知”，APP 启动、恢复前台或记录新驱虫后重新计算，避免重复使用过期文案
-
-### 通知内容
-
-提前提醒:
-```
-标题: 驱虫提醒
-内容: [宠物名字] 距离下次[内驱/外驱]还有X天，请及时驱虫哦～
-```
-
-过期提醒:
-```
-标题: 驱虫提醒
-内容: [宠物名字] 的[内驱/外驱]已过期X天，请尽快驱虫！
-```
+- 如果 APP 被系统强制停止，已调度的通知可能无法按预期触发
+- 如果用户长期不打开 APP，就无法依赖“重新计算”机制持续修正提醒状态
+- 本方案以“每次刷新后只调度下一次提醒”为原则，不追求一次性预排很多天的通知
 
 ---
 
-## 3. Flutter 实现
+## 2. 提醒规则
 
-### 3.1 依赖
+### 2.1 通用约束
+
+所有健康提醒统一遵循以下规则：
+
+- 仅对 `reminder_enabled = true` 的项目生效
+- 仅对 `days_remaining != null` 的项目参与调度
+- 每个项目每天最多提醒 1 次
+- 每次刷新时只调度“下一次需要触发的提醒”
+- 同一只宠物在同一天若有多个项目需要提醒，合并为 1 条通知
+- 不同宠物之间不合并，分别生成各自通知
+
+### 2.2 驱虫提醒规则
+
+驱虫提醒适用于 `internal`、`external`、`combined` 三类项目。
+
+- 生效前提：
+  - 已开启该类型提醒
+  - 已设置该类型周期
+  - 已存在该类型历史记录
+- 提前提醒：
+  - 从到期前 3 天进入提醒窗口
+- 过期提醒：
+  - 到期后继续每天提醒 1 次
+- 停止条件：
+  - 用户记录了该类型新的驱虫记录
+  - 或关闭了该类型提醒
+
+### 2.3 日常提醒规则
+
+日常提醒适用于 `bath`、`nail_trim`、`grooming` 三类项目。
+
+- 生效前提：
+  - 已开启该项目提醒
+  - 已设置该项目周期
+  - 已存在该项目历史记录
+- 提前/到期逻辑：
+  - 与驱虫保持一致，基于 `days_remaining` 判断是否进入提醒窗口或过期状态
+- 不采用以下方案：
+  - 用户刚开启提醒但从未记录过该项目时，从当天立即开始提醒
+- 停止条件：
+  - 用户记录了该项目新的日常护理记录
+  - 或关闭了该项目提醒
+
+### 2.4 与现有后端行为的对齐
+
+- 当前健康状态接口已负责返回 `days_remaining`
+- 对于“无历史记录”的项目，后端会返回 `days_remaining = null`
+- 因此无历史记录的驱虫或日常项目，不会进入提醒调度
+
+---
+
+## 3. 通知聚合与文案策略
+
+### 3.1 聚合原则
+
+本步骤不再按“单个项目单条通知”设计，而是引入“提醒项聚合器”。
+
+- 聚合维度：`pet_id + trigger_date`
+- 聚合结果：同一只宠物在同一触发日期的多个待提醒项目，合并成一条本地通知
+- 设计目标：减少同一天同一宠物连续弹出多条通知的干扰
+
+### 3.2 通知标题与正文
+
+- 通知标题：固定为 `健康提醒`
+- 正文建议支持两种风格：
+  - 枚举型：`当当 今天需要关注：内驱、内外同驱、洗澡`
+  - 汇总型：`当当 有 3 项健康提醒待处理，请打开当当日记查看`
+
+正文生成建议：
+
+- 待提醒项目较少时，优先展示具体项目名称
+- 待提醒项目较多时，可退化为汇总文案，避免正文过长
+- 文案不要求直接展示“还剩 X 天 / 已过期 X 天”的逐项细节，重点是提示用户进入健康页查看
+
+### 3.3 payload 设计
+
+payload 至少需要包含 `pet_id`，以便点击通知后切换到对应宠物。
+
+建议结构：
+
+```json
+{
+  "type": "health_reminder",
+  "pet_id": 123
+}
+```
+
+要求：
+
+- 不要只编码单个驱虫类型
+- 允许后续扩展更多字段，但本步骤最小可用集只要求能定位到宠物
+
+### 3.4 通知 ID 策略
+
+- 使用健康提醒专用 ID 段，避免与其他本地通知冲突
+- 一个聚合后的提醒对应一个通知 ID
+- 每次刷新前，先清理旧的健康提醒通知，再重新安排新的“下一次提醒”
+
+---
+
+## 4. Flutter 接入设计
+
+### 4.1 依赖
+
+需要在 `frontend/pubspec.yaml` 中添加本地通知相关依赖，例如：
 
 ```yaml
-# pubspec.yaml
 dependencies:
   flutter_local_notifications: ^18.0.0
   timezone: ^0.9.0
   permission_handler: ^11.3.0
 ```
 
-### 3.2 通知服务 (`services/notification_service.dart`)
+### 4.2 通知服务
 
-```dart
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/timezone.dart' as tz;
-import 'package:timezone/data/latest.dart' as tz_data;
+建议新增：
 
-class NotificationService {
-  static final FlutterLocalNotificationsPlugin _plugin =
-      FlutterLocalNotificationsPlugin();
+- `frontend/lib/services/notification_service.dart`
 
-  static Future<void> initialize() async {
-    tz_data.initializeTimeZones();
+职责包括：
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
+- 初始化 `flutter_local_notifications`
+- 初始化时区
+- 请求通知权限
+- 提供调度、取消、点击处理等统一封装
 
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: _onNotificationTapped,
-    );
-  }
+### 4.3 健康提醒调度器
 
-  static void _onNotificationTapped(NotificationResponse response) {
-    final payload = response.payload;
-    if (payload != null) {
-      // 解析 payload，跳转到对应宠物的驱虫管理页面
-      // payload 格式: "deworming:{pet_id}"
-      // 通过全局导航 key 实现页面跳转
-    }
-  }
+建议新增：
 
-  /// 调度驱虫提醒通知
-  static Future<void> scheduleDewormingReminder({
-    required int notificationId,
-    required String petName,
-    required String dewormingType, // "内驱" / "外驱"
-    required int daysRemaining,    // 正=剩余天数, 负=过期天数
-    required int petId,
-  }) async {
-    String title = "驱虫提醒";
-    String body;
-    final scheduledBody = "$petName 的$dewormingType提醒已到，请打开当当日记查看最新状态。";
+- `frontend/lib/services/health_reminder_scheduler.dart`
 
-    if (daysRemaining > 0) {
-      body = "$petName 距离下次$dewormingType还有${daysRemaining}天，请及时驱虫哦～";
-    } else if (daysRemaining == 0) {
-      body = "$petName 今天该做$dewormingType了，请及时驱虫哦～";
-    } else {
-      body = "$petName 的$dewormingType已过期${daysRemaining.abs()}天，请尽快驱虫！";
-    }
+职责包括：
 
-    const androidDetails = AndroidNotificationDetails(
-      'deworming_reminder',
-      '驱虫提醒',
-      channelDescription: '宠物驱虫到期提醒通知',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    const details = NotificationDetails(android: androidDetails);
+- 读取全部宠物列表
+- 对每只宠物分别读取：
+  - 驱虫状态
+  - 日常状态
+- 生成候选提醒项
+- 按宠物和触发日期聚合提醒项
+- 清理旧的健康提醒通知
+- 重新调度下一次本地通知
 
-    final now = tz.TZDateTime.now(tz.local);
+### 4.4 与当前 Flutter 结构对齐
 
-    // 已进入提醒窗口时，先立即提示一次
-    if (daysRemaining <= 3) {
-      await _plugin.show(
-        notificationId,
-        title,
-        body,
-        details,
-        payload: "deworming:$petId",
-      );
-    }
+文档不再假设直接在 `MyApp` 自身上挂生命周期逻辑，而是按当前工程结构接入：
 
-    // 只调度下一次提醒，避免每天重复使用过时文案
-    final shouldScheduleFutureReminder = daysRemaining > 3;
-    final shouldScheduleTomorrowReminder = daysRemaining >= 0 && daysRemaining <= 3;
+- 在 `frontend/lib/main.dart` 中完成通知服务初始化
+- 在 `frontend/lib/app.dart` 外包一层可监听生命周期的宿主组件，负责在 `AppLifecycleState.resumed` 时刷新提醒
+- 使用现有 `frontend/lib/config/router.dart` 处理通知点击后的页面跳转
+- 使用现有 `frontend/lib/providers/pet_provider.dart` 在跳转后选中对应宠物
 
-    if (shouldScheduleFutureReminder || shouldScheduleTomorrowReminder) {
-      final offsetDays = shouldScheduleFutureReminder ? daysRemaining - 3 : 1;
-      final targetDate = now.add(Duration(days: offsetDays));
-      final nextReminder = tz.TZDateTime(
-        tz.local,
-        targetDate.year,
-        targetDate.month,
-        targetDate.day,
-        10,
-        0,
-      );
+### 4.5 通知点击后的行为
 
-      await _plugin.zonedSchedule(
-        notificationId + 1000,
-        title,
-        scheduledBody,
-        nextReminder,
-        details,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: "deworming:$petId",
-      );
-    }
-  }
+点击通知后应完成以下动作：
 
-  /// 取消指定宠物的驱虫提醒
-  static Future<void> cancelDewormingReminder(int notificationId) async {
-    await _plugin.cancel(notificationId);
-    await _plugin.cancel(notificationId + 1000);
-  }
+1. 解析 payload 中的 `pet_id`
+2. 导航到健康页
+3. 将当前选中宠物切换为对应 `pet_id`
 
-  /// 取消所有通知
-  static Future<void> cancelAll() async {
-    await _plugin.cancelAll();
-  }
-}
-```
+本步骤不要求：
 
-### 3.3 驱虫提醒调度逻辑 (`services/deworming_reminder_scheduler.dart`)
-
-```dart
-class DewormingReminderScheduler {
-  final ApiClient _apiClient;
-
-  DewormingReminderScheduler(this._apiClient);
-
-  /// APP 启动/恢复时调用，刷新所有宠物的驱虫提醒
-  Future<void> refreshAllReminders() async {
-    // 先取消所有旧通知
-    await NotificationService.cancelAll();
-
-    // 获取所有宠物档案
-    final pets = await PetService(_apiClient).getPets();
-
-    for (final pet in pets) {
-      // 获取每个宠物的驱虫状态
-      final status = await HealthService(_apiClient).getDewormingStatus(pet.id);
-
-      // 调度内驱提醒
-      if (status.internal.daysRemaining != null) {
-        await NotificationService.scheduleDewormingReminder(
-          notificationId: pet.id * 10 + 1, // 内驱 ID
-          petName: pet.name,
-          dewormingType: "内驱",
-          daysRemaining: status.internal.daysRemaining!,
-          petId: pet.id,
-        );
-      }
-
-      // 调度外驱提醒
-      if (status.external.daysRemaining != null) {
-        await NotificationService.scheduleDewormingReminder(
-          notificationId: pet.id * 10 + 2, // 外驱 ID
-          petName: pet.name,
-          dewormingType: "外驱",
-          daysRemaining: status.external.daysRemaining!,
-          petId: pet.id,
-        );
-      }
-    }
-  }
-}
-```
-
-### 3.4 集成到 APP 生命周期
-
-```dart
-// main.dart
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService.initialize();
-  runApp(const MyApp());
-}
-
-// app.dart - 监听 APP 生命周期
-class _AppState extends State<MyApp> with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _refreshReminders();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // APP 从后台恢复时刷新提醒
-      _refreshReminders();
-    }
-  }
-
-  Future<void> _refreshReminders() async {
-    // 仅在已登录状态下刷新
-    if (isLoggedIn) {
-      final scheduler = DewormingReminderScheduler(apiClient);
-      await scheduler.refreshAllReminders();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-}
-```
-
-### 3.5 记录驱虫后刷新通知
-
-在驱虫记录成功后，重新调度该宠物的通知:
-
-```dart
-// 在 deworming_tab.dart 中，记录驱虫成功后
-Future<void> _onDewormingRecorded() async {
-  // ... 记录成功后 ...
-  // 重新刷新该宠物的驱虫提醒
-  final scheduler = DewormingReminderScheduler(apiClient);
-  await scheduler.refreshAllReminders();
-}
-```
+- 自动定位到驱虫子页
+- 自动定位到日常子页
+- 自动打开具体记录弹窗
 
 ---
 
-## 4. Android 配置
+## 5. 调度与刷新时机
 
-### 4.1 权限
+以下时机需要刷新健康提醒：
 
-`android/app/src/main/AndroidManifest.xml` 中添加:
+- APP 冷启动后
+- APP 从后台回到前台时
+- 驱虫记录新增、编辑、删除后
+- 日常记录新增、编辑、删除后
+- 驱虫周期或提醒开关保存后
+- 日常周期或提醒开关保存后
+
+说明：
+
+- 这些入口本质上都是“健康状态可能发生变化”的时刻
+- Step 5 已有对应的状态刷新链路，后续实现时应将“通知重算”接到这些成功回调之后
+- 不应仅在“新增驱虫记录成功”这一处刷新通知
+
+---
+
+## 6. Android 配置
+
+### 6.1 权限
+
+`frontend/android/app/src/main/AndroidManifest.xml` 需要补充通知相关权限：
+
 ```xml
 <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
 <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 ```
 
-### 4.2 通知权限请求
+### 6.2 运行时权限请求
 
-Android 13+ 需要运行时请求通知权限:
+Android 13+ 需要运行时请求通知权限。
 
-```dart
-import 'package:permission_handler/permission_handler.dart';
-
-Future<void> requestNotificationPermission() async {
-  final status = await Permission.notification.status;
-  if (status.isDenied) {
-    await Permission.notification.request();
-  }
-}
-```
-
-在用户首次登录后请求权限。
+- 建议在用户已登录、且初始化通知服务后请求
+- 若用户拒绝授权，本地通知能力不可用，但不影响其他健康功能
 
 ---
 
-## 5. 后端变更
+## 7. 后端要求
 
-### 5.1 移除 JPush 相关代码
+### 7.1 不新增推送 API
 
-本方案不再需要:
-- ~~`backend/app/models/user_device.py`~~ - 不需要设备注册表
-- ~~`backend/app/services/push.py`~~ - 不需要 JPush 推送服务
-- ~~`backend/app/tasks/reminders.py`~~ 中的推送逻辑 - 不需要后端推送
-- ~~`backend/app/api/v1/devices.py`~~ - 不需要设备注册 API
+本步骤原则上不新增后端接口，继续复用 Step 5 已提供的健康状态能力。
 
-### 5.2 保留后端驱虫状态 API
+### 7.2 复用现有健康状态接口
 
-`GET /api/v1/pets/{pet_id}/deworming-status` API 保持不变 (Step 5 中已定义)，Flutter 端调用此 API 获取驱虫状态数据后，在本地调度通知。
+前端需要复用以下状态接口进行本地计算：
+
+- 驱虫状态接口
+- 日常状态接口
+
+后端职责保持不变：
+
+- 根据周期、历史记录和当前日期计算 `days_remaining`
+- 对无历史记录项目返回 `days_remaining = null`
+
+### 7.3 不再描述“移除 JPush 相关代码”
+
+当前仓库并不存在需要在本步骤中清理的 JPush、设备注册表或服务端提醒任务。本步骤文档应明确表达为：
+
+- 本方案不引入服务端推送
+- 本方案仅基于现有健康状态接口做前端本地通知调度
 
 ---
 
-## 6. 需要创建/修改的文件清单
+## 8. 需要创建或修改的文件
 
 ### 前端
-- `frontend/pubspec.yaml` - 添加 `flutter_local_notifications`, `timezone` 依赖 (修改)
-- `frontend/lib/services/notification_service.dart` - 本地通知服务 (新建)
-- `frontend/lib/services/deworming_reminder_scheduler.dart` - 驱虫提醒调度 (新建)
-- `frontend/lib/main.dart` - 初始化通知服务 (修改)
-- `frontend/lib/app.dart` - 添加生命周期监听 (修改)
-- `frontend/lib/screens/health/deworming_tab.dart` - 记录后刷新通知 (修改)
-- `frontend/android/app/src/main/AndroidManifest.xml` - 通知权限 (修改)
+
+- `frontend/pubspec.yaml`：添加本地通知相关依赖
+- `frontend/lib/services/notification_service.dart`：本地通知服务
+- `frontend/lib/services/health_reminder_scheduler.dart`：健康提醒调度器
+- `frontend/lib/main.dart`：初始化通知服务
+- `frontend/lib/app.dart`：增加生命周期监听宿主
+- `frontend/lib/config/router.dart`：处理通知点击后的路由跳转
+- `frontend/lib/screens/health/deworming_record_screen.dart`：驱虫记录成功后刷新提醒
+- `frontend/lib/screens/health/deworming_cycle_screen.dart`：驱虫周期或提醒开关保存后刷新提醒
+- `frontend/lib/screens/health/routine_record_screen.dart`：日常记录成功后刷新提醒
+- `frontend/lib/screens/health/routine_cycle_screen.dart`：日常周期或提醒开关保存后刷新提醒
+- `frontend/android/app/src/main/AndroidManifest.xml`：补充通知权限
 
 ### 后端
-- 无新增文件，保持 Step 5 的驱虫状态 API 不变
+
+- 原则上无新增文件
+- 继续复用 Step 5 已有健康状态服务与接口
 
 ---
 
-## 7. 验收标准
+## 9. 验收标准
 
-- [ ] Flutter 正确初始化 `flutter_local_notifications`
-- [ ] APP 启动后，自动从后端获取驱虫状态并调度本地通知
-- [ ] 驱虫到期前 3 天收到本地推送通知
-- [ ] 驱虫过期后显示过期通知
-- [ ] 通知内容包含宠物名字和驱虫类型（内驱/外驱）
-- [ ] 点击通知可以跳转到对应宠物的驱虫管理页面
-- [ ] 用户记录新驱虫后，通知重新调度
-- [ ] APP 从后台恢复时刷新提醒状态
-- [ ] Android 13+ 正确请求通知权限
-- [ ] 无驱虫周期设置或无驱虫记录时不触发通知
+- [ ] 覆盖三类驱虫提醒：`internal`、`external`、`combined`
+- [ ] 覆盖三类日常提醒：`bath`、`nail_trim`、`grooming`
+- [ ] APP 启动后可基于健康状态自动调度本地通知
+- [ ] APP 从后台回到前台时可重新计算提醒
+- [ ] 同一宠物同一时刻多个待提醒项目只生成 1 条合并通知
+- [ ] 不同宠物的提醒分别生成，不互相合并
+- [ ] 点击通知后进入健康页并切换到对应宠物
+- [ ] 新增、编辑、删除驱虫记录后会重新计算提醒
+- [ ] 新增、编辑、删除日常记录后会重新计算提醒
+- [ ] 修改驱虫周期或提醒开关后会重新计算提醒
+- [ ] 修改日常周期或提醒开关后会重新计算提醒
+- [ ] 未开启提醒的项目不会被调度
+- [ ] 未设置周期的项目不会被调度
+- [ ] 无历史记录且 `days_remaining = null` 的项目不会被调度
+- [ ] Android 13+ 可以正确请求通知权限
+
+---
+
+## 10. 实施说明
+
+本步骤的核心不是新增后端推送能力，而是基于当前项目已经存在的健康状态 API 与前端路由/宠物选择能力，补齐一套可维护的健康本地提醒框架。
+
+后续实现时，应优先确保以下三点：
+
+1. 规则与 Step 5 实际状态数据保持一致
+2. 调度器以“单宠物聚合 + 每次只安排下一次提醒”为核心原则
+3. 通知点击路径严格对齐当前 Flutter 工程结构，而不是假设一套不存在的旧入口
