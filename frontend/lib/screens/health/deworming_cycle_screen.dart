@@ -201,7 +201,7 @@ class _DewormingCycleScreenState extends ConsumerState<DewormingCycleScreen> {
         combinedReminderEnabled: _combinedReminder,
       );
       ref.invalidate(dewormingStatusProvider(widget.petId));
-      await ref.read(petListProvider.notifier).refresh();
+      unawaited(ref.read(petListProvider.notifier).refresh());
       unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (mounted) {
         _showSnack('已保存');

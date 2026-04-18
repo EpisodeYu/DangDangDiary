@@ -132,7 +132,7 @@ class RoutineTab extends ConsumerWidget {
     RoutineStatusItem item,
     bool reminderEnabled,
   ) {
-    final subtitle = _buildSubtitle(item);
+    final subtitle = _buildSubtitle(type, item);
     return Row(
       children: [
         SizedBox(
@@ -158,7 +158,7 @@ class RoutineTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildSubtitle(RoutineStatusItem item) {
+  Widget _buildSubtitle(RoutineTypeE type, RoutineStatusItem item) {
     if (!item.reminderEnabled) {
       return const Text('已关闭提醒',
           style: TextStyle(fontSize: 13, color: AppTheme.textSecondary));
@@ -173,14 +173,14 @@ class RoutineTab extends ConsumerWidget {
     }
     final days = item.daysRemaining ?? 0;
     if (item.isOverdue == true) {
-      return Text('距离日常日期已过 ${days.abs()} 天',
+      return Text('距离${type.label}提醒日期已过 ${days.abs()} 天',
           style: const TextStyle(
             fontSize: 13,
             color: AppTheme.errorColor,
             fontWeight: FontWeight.w600,
           ));
     }
-    return Text('距离下次日常 $days 天',
+    return Text('距离下次${type.label} $days 天',
         style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary));
   }
 
