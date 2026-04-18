@@ -8,7 +8,7 @@ final healthServiceProvider = Provider<HealthService>((ref) => HealthService());
 // ---------------- Weight ----------------
 
 final weightListProvider =
-    FutureProvider.family.autoDispose<WeightListResult, int>((ref, petId) async {
+    FutureProvider.family<WeightListResult, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getWeights(petId);
 });
@@ -16,13 +16,13 @@ final weightListProvider =
 // ---------------- Deworming ----------------
 
 final dewormingListProvider =
-    FutureProvider.family.autoDispose<DewormingListResult, int>((ref, petId) async {
+    FutureProvider.family<DewormingListResult, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getDewormings(petId);
 });
 
 final dewormingStatusProvider =
-    FutureProvider.family.autoDispose<DewormingStatus, int>((ref, petId) async {
+    FutureProvider.family<DewormingStatus, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getDewormingStatus(petId);
 });
@@ -30,13 +30,13 @@ final dewormingStatusProvider =
 // ---------------- Vaccination ----------------
 
 final vaccinationListProvider =
-    FutureProvider.family.autoDispose<VaccinationListResult, int>((ref, petId) async {
+    FutureProvider.family<VaccinationListResult, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getVaccinations(petId);
 });
 
 final vaccineTypesProvider =
-    FutureProvider.family.autoDispose<List<String>, String>((ref, petType) async {
+    FutureProvider.family<List<String>, String>((ref, petType) async {
   final service = ref.watch(healthServiceProvider);
   return service.getVaccineTypes(petType);
 });
@@ -44,13 +44,13 @@ final vaccineTypesProvider =
 // ---------------- Routine ----------------
 
 final routineListProvider =
-    FutureProvider.family.autoDispose<RoutineListResult, int>((ref, petId) async {
+    FutureProvider.family<RoutineListResult, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getRoutines(petId);
 });
 
 final routineStatusProvider =
-    FutureProvider.family.autoDispose<RoutineStatus, int>((ref, petId) async {
+    FutureProvider.family<RoutineStatus, int>((ref, petId) async {
   final service = ref.watch(healthServiceProvider);
   return service.getRoutineStatus(petId);
 });
