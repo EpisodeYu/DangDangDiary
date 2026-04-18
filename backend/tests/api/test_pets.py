@@ -194,8 +194,11 @@ async def test_avatar_upload_success(client):
 
     files = {"file": ("avatar.jpg", b"\xff\xd8\xff" + b"\x00" * 256, "image/jpeg")}
 
+    # The pet service now calls `aupload_pet_avatar`, which delegates
+    # to `storage.upload_pet_avatar` via `asyncio.to_thread`. Patching
+    # the sync helper keeps the assertion style unchanged.
     with patch(
-        "app.services.pet.upload_pet_avatar", return_value=fake_url
+        "app.services.storage.upload_pet_avatar", return_value=fake_url
     ) as upload_mock:
         resp = await c.post(f"/pets/{pet_id}/avatar", files=files, headers=headers)
 
@@ -281,9 +284,11 @@ async def test_delete_pet_cascades_all_tables_and_minio(client, test_engine):
         ))
         await s.commit()
 
-    # Patch MinIO side-effects on the service callsite.
-    with patch("app.services.pet.delete_object_by_url") as del_url, \
-            patch("app.services.pet.delete_objects_by_prefix") as del_prefix:
+    # Patch MinIO side-effects on the underlying sync helpers — the
+    # service now calls the async wrappers, which dispatch through
+    # `asyncio.to_thread(delete_object_by_url, ...)` etc.
+    with patch("app.services.storage.delete_object_by_url") as del_url, \
+            patch("app.services.storage.delete_objects_by_prefix") as del_prefix:
         resp = await c.delete(f"/pets/{pet_id}", headers=headers)
 
     assert resp.status_code == 204

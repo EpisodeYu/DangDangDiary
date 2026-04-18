@@ -10,10 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user_id
 from app.exceptions import AppException
 from app.models.photo import Photo
-from app.models.user import User
 from app.schemas.photo import (
     PhotoListResponse,
     PhotoOriginalUrlResponse,
@@ -29,10 +28,10 @@ from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
 from app.utils.time import utcnow
 from app.services.storage import (
+    adelete_photo_objects,
+    aupload_photo,
     build_thumbnail_url,
-    delete_photo_objects,
     get_photo_presigned_url,
-    upload_photo,
 )
 from app.services.timeline import (
     DEFAULT_LIMIT as TIMELINE_DEFAULT_LIMIT,
@@ -69,9 +68,9 @@ async def upload_photos(
     taken_at: list[str] = Form(...),
     files: list[UploadFile] = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
-    await get_pet_membership(pet_id, current_user.id, db)
+    await get_pet_membership(pet_id, user_id, db)
 
     if not files:
         raise AppException(400, "EMPTY_UPLOAD", "没有上传任何文件")
@@ -139,8 +138,8 @@ async def upload_photos(
                     )
 
             try:
-                storage_key, thumbnail_key = await asyncio.to_thread(
-                    upload_photo, pet_id, file_data, content_type
+                storage_key, thumbnail_key = await aupload_photo(
+                    pet_id, file_data, content_type
                 )
             except Exception as e:
                 logger.error("Failed to upload photo to storage: %s", e)
@@ -177,7 +176,7 @@ async def upload_photos(
 
         photo = Photo(
             pet_id=pet_id,
-            user_id=current_user.id,
+            user_id=user_id,
             storage_key=result.storage_key,
             thumbnail_key=result.thumbnail_key,
             taken_at=parsed_dates[result.idx],
@@ -210,9 +209,9 @@ async def list_pet_photos(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
-    await get_pet_membership(pet_id, current_user.id, db)
+    await get_pet_membership(pet_id, user_id, db)
 
     total_result = await db.execute(
         select(func.count()).select_from(Photo).where(Photo.pet_id == pet_id)
@@ -243,14 +242,14 @@ async def list_pet_photos(
 async def delete_photo(
     photo_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
     result = await db.execute(select(Photo).where(Photo.id == photo_id))
     photo = result.scalar_one_or_none()
     if photo is None:
         raise AppException(404, "PHOTO_NOT_FOUND", "照片不存在")
 
-    await get_pet_membership(photo.pet_id, current_user.id, db)
+    await get_pet_membership(photo.pet_id, user_id, db)
 
     storage_key = photo.storage_key
     thumbnail_key = photo.thumbnail_key
@@ -259,7 +258,9 @@ async def delete_photo(
     await db.flush()
     await db.commit()
 
-    delete_photo_objects(storage_key, thumbnail_key)
+    # Offload MinIO cleanup to a worker thread so the event loop stays
+    # free for other requests. (Step 8 §1.1 rule 4 / Chunk B-5)
+    await adelete_photo_objects(storage_key, thumbnail_key)
 
     return Response(status_code=204)
 
@@ -268,14 +269,14 @@ async def delete_photo(
 async def get_photo_url(
     photo_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
     result = await db.execute(select(Photo).where(Photo.id == photo_id))
     photo = result.scalar_one_or_none()
     if photo is None:
         raise AppException(404, "PHOTO_NOT_FOUND", "照片不存在")
 
-    await get_pet_membership(photo.pet_id, current_user.id, db)
+    await get_pet_membership(photo.pet_id, user_id, db)
 
     expires_in = 3600
     url = get_photo_presigned_url(photo.storage_key, expires_in)
@@ -308,12 +309,12 @@ async def get_timeline(
     direction: str = Query(default="older"),
     anchor_month: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
     requested_pet_ids = _parse_pet_ids_param(pet_ids)
     return await get_timeline_window(
         db,
-        current_user.id,
+        user_id,
         requested_pet_ids=requested_pet_ids,
         limit=limit,
         cursor_raw=cursor,
@@ -326,11 +327,11 @@ async def get_timeline(
 async def get_timeline_date_distribution(
     pet_ids: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    user_id: int = Depends(get_current_user_id),
 ):
     requested_pet_ids = _parse_pet_ids_param(pet_ids)
     return await get_timeline_dates(
         db,
-        current_user.id,
+        user_id,
         requested_pet_ids=requested_pet_ids,
     )

@@ -80,7 +80,10 @@ async def test_upload_photos_success(client, count):
     data = {"taken_at": ["2024-01-15"] * count}
 
     counter = [0]
-    with patch("app.api.v1.photos.upload_photo", side_effect=_upload_photo_stub(counter)):
+    # The route now calls `aupload_photo`, which offloads to a worker
+    # thread via `asyncio.to_thread(upload_photo, ...)`. Patching the
+    # underlying sync helper keeps these tests MinIO-free.
+    with patch("app.services.storage.upload_photo", side_effect=_upload_photo_stub(counter)):
         resp = await c.post(
             f"/pets/{pet_id}/photos", files=files, data=data, headers=headers,
         )
@@ -128,7 +131,7 @@ async def test_upload_oversize_file_is_per_file_failure(client):
     data = {"taken_at": ["2024-01-15"]}
 
     counter = [0]
-    with patch("app.api.v1.photos.upload_photo", side_effect=_upload_photo_stub(counter)):
+    with patch("app.services.storage.upload_photo", side_effect=_upload_photo_stub(counter)):
         resp = await c.post(
             f"/pets/{pet_id}/photos", files=files, data=data, headers=headers,
         )
@@ -155,7 +158,7 @@ async def test_upload_mixed_partial_success(client):
     data = {"taken_at": ["2024-01-15"] * 3}
 
     counter = [0]
-    with patch("app.api.v1.photos.upload_photo", side_effect=_upload_photo_stub(counter)):
+    with patch("app.services.storage.upload_photo", side_effect=_upload_photo_stub(counter)):
         resp = await c.post(
             f"/pets/{pet_id}/photos", files=files, data=data, headers=headers,
         )
@@ -226,7 +229,7 @@ async def test_upload_pet_not_detected_when_recognition_enabled(client, monkeypa
 
     counter = [0]
     with patch("app.api.v1.photos.recognize_pet", side_effect=_not_a_pet), \
-            patch("app.api.v1.photos.upload_photo",
+            patch("app.services.storage.upload_photo",
                   side_effect=_upload_photo_stub(counter)) as upload_mock:
         resp = await c.post(
             f"/pets/{pet_id}/photos", files=files, data=data, headers=headers,
@@ -264,7 +267,10 @@ async def test_delete_photo_triggers_minio_cleanup(client, test_engine):
         await s.refresh(p)
         photo_id = p.id
 
-    with patch("app.api.v1.photos.delete_photo_objects") as del_mock:
+    # `adelete_photo_objects` delegates to `storage.delete_photo_objects`
+    # via `asyncio.to_thread`, so patching the sync helper captures the
+    # call and keeps the test MinIO-free.
+    with patch("app.services.storage.delete_photo_objects") as del_mock:
         resp = await c.delete(f"/photos/{photo_id}", headers=headers)
 
     assert resp.status_code == 204

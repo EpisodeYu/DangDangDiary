@@ -6,9 +6,9 @@ from app.exceptions import AppException
 from app.models.pet import Pet, PetMember, MemberRole
 from app.schemas.pet import PetCreate, PetResponse, PetUpdate
 from app.services.storage import (
-    delete_object_by_url,
-    delete_objects_by_prefix,
-    upload_pet_avatar,
+    adelete_object_by_url,
+    adelete_objects_by_prefix,
+    aupload_pet_avatar,
 )
 from app.utils.invite_code import generate_invite_code
 
@@ -181,14 +181,14 @@ async def upload_avatar(
 
     old_avatar_url = pet.avatar_url
 
-    new_url = upload_pet_avatar(pet_id, file_data, content_type)
+    new_url = await aupload_pet_avatar(pet_id, file_data, content_type)
     pet.avatar_url = new_url
     await db.flush()
     await db.commit()
     await db.refresh(pet)
 
     if old_avatar_url:
-        delete_object_by_url(old_avatar_url)
+        await adelete_object_by_url(old_avatar_url)
 
     return _build_pet_response(pet, member.role)
 
@@ -220,8 +220,8 @@ async def delete_pet(
     await db.commit()
 
     if avatar_url:
-        delete_object_by_url(avatar_url)
+        await adelete_object_by_url(avatar_url)
 
-    delete_objects_by_prefix(settings.MINIO_BUCKET_PHOTOS, f"{pet_id}/")
-    delete_objects_by_prefix(settings.MINIO_BUCKET_THUMBNAILS, f"{pet_id}/")
-    delete_objects_by_prefix(settings.MINIO_BUCKET_AVATARS, f"pets/{pet_id}/")
+    await adelete_objects_by_prefix(settings.MINIO_BUCKET_PHOTOS, f"{pet_id}/")
+    await adelete_objects_by_prefix(settings.MINIO_BUCKET_THUMBNAILS, f"{pet_id}/")
+    await adelete_objects_by_prefix(settings.MINIO_BUCKET_AVATARS, f"pets/{pet_id}/")

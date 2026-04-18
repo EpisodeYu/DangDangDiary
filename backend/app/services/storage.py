@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import logging
@@ -12,6 +13,12 @@ from PIL import Image
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Decompression-bomb guard (Step 8 §1.2 storage P0). Pillow raises
+# `Image.DecompressionBombError` when a single decoded image would exceed
+# this pixel budget. 50 MP leaves plenty of headroom for modern phone
+# cameras while blocking pathological inputs.
+Image.MAX_IMAGE_PIXELS = 50_000_000
 
 _client: Minio | None = None
 _initialized_buckets: set[str] = set()
@@ -61,6 +68,24 @@ def _ensure_bucket(bucket: str, *, public: bool = True) -> None:
     if public:
         client.set_bucket_policy(bucket, _public_read_policy(bucket))
     _initialized_buckets.add(bucket)
+
+
+def ensure_all_buckets() -> None:
+    """Pre-create and configure every bucket used by the app.
+
+    Called once from the FastAPI `lifespan` (Step 8 §1.2 storage P1) so
+    request-time paths can skip bucket checks entirely. Safe to invoke
+    multiple times — `_ensure_bucket` short-circuits via
+    `_initialized_buckets`.
+    """
+    _ensure_bucket(settings.MINIO_BUCKET_PHOTOS, public=False)
+    _ensure_bucket(settings.MINIO_BUCKET_THUMBNAILS, public=True)
+    _ensure_bucket(settings.MINIO_BUCKET_AVATARS, public=True)
+
+
+async def aensure_all_buckets() -> None:
+    """Async wrapper around `ensure_all_buckets` for FastAPI lifespan."""
+    await asyncio.to_thread(ensure_all_buckets)
 
 
 def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
@@ -123,13 +148,16 @@ def upload_photo(
 
 
 def _generate_thumbnail(file_data: bytes) -> bytes:
-    img = Image.open(io.BytesIO(file_data))
-    img.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=THUMBNAIL_QUALITY)
-    return buf.getvalue()
+    # `with` ensures the underlying file handle is released even if a
+    # later step raises; combined with `Image.MAX_IMAGE_PIXELS` this
+    # blocks decompression-bomb inputs. (Step 8 §1.2 storage P0)
+    with Image.open(io.BytesIO(file_data)) as img:
+        img.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=THUMBNAIL_QUALITY)
+        return buf.getvalue()
 
 
 def build_thumbnail_url(thumbnail_key: str) -> str:
@@ -195,3 +223,40 @@ def delete_objects_by_prefix(bucket: str, prefix: str) -> None:
             client.remove_object(bucket, obj.object_name)
         except Exception:
             pass
+
+
+# =======================================================================
+# Async wrappers (Step 8 §1.1 rule 4 / Chunk B-5)
+#
+# MinIO SDK is synchronous. Any sync MinIO or Pillow call invoked from a
+# FastAPI route must be dispatched to a worker thread so it does not
+# block the asyncio event loop. `asyncio.to_thread` is preferred over
+# building a dedicated executor because the call volume is low and the
+# default thread pool is already sized for this workload.
+# =======================================================================
+
+
+async def aupload_photo(
+    pet_id: int, file_data: bytes, content_type: str,
+) -> tuple[str, str]:
+    return await asyncio.to_thread(upload_photo, pet_id, file_data, content_type)
+
+
+async def aupload_pet_avatar(
+    pet_id: int, data: bytes, content_type: str,
+) -> str:
+    return await asyncio.to_thread(upload_pet_avatar, pet_id, data, content_type)
+
+
+async def adelete_photo_objects(
+    storage_key: str, thumbnail_key: str | None,
+) -> None:
+    await asyncio.to_thread(delete_photo_objects, storage_key, thumbnail_key)
+
+
+async def adelete_object_by_url(url: str) -> None:
+    await asyncio.to_thread(delete_object_by_url, url)
+
+
+async def adelete_objects_by_prefix(bucket: str, prefix: str) -> None:
+    await asyncio.to_thread(delete_objects_by_prefix, bucket, prefix)

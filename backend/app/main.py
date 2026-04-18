@@ -12,8 +12,14 @@ from app.api.v1.router import api_v1_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.services.redis import init_redis, close_redis
+    from app.services.storage import aensure_all_buckets
+    from app.utils.production_check import assert_production_safe
 
+    assert_production_safe(settings)
     await init_redis()
+    # Pre-create MinIO buckets once at startup so request-time paths can
+    # skip `_ensure_bucket` entirely. (Step 8 §1.2 storage P1 / Chunk B-5)
+    await aensure_all_buckets()
     yield
     await close_redis()
 
