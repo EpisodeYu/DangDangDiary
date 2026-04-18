@@ -20,18 +20,26 @@ class HealthScreen extends ConsumerStatefulWidget {
 class _HealthScreenState extends ConsumerState<HealthScreen>
     with SingleTickerProviderStateMixin {
   late final TabController _tabController;
+  int _highlightedIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    _tabController.addListener(() {
-      if (mounted) setState(() {});
-    });
+    _tabController.animation?.addListener(_onTabAnimation);
+  }
+
+  void _onTabAnimation() {
+    final value = _tabController.animation?.value ?? _tabController.index.toDouble();
+    final next = value.round().clamp(0, _tabController.length - 1);
+    if (next != _highlightedIndex && mounted) {
+      setState(() => _highlightedIndex = next);
+    }
   }
 
   @override
   void dispose() {
+    _tabController.animation?.removeListener(_onTabAnimation);
     _tabController.dispose();
     super.dispose();
   }
@@ -87,7 +95,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(labels.length, (i) {
-        final selected = _tabController.index == i;
+        final selected = _highlightedIndex == i;
         return Padding(
           padding: const EdgeInsets.only(left: 4),
           child: InkWell(
