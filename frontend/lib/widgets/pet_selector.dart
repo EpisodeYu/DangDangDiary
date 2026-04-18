@@ -141,10 +141,13 @@ class PetSelector extends StatelessWidget {
         ? pets.map((p) => p.id).toSet()
         : selectedPetIds.toSet();
 
+    const rowHeight = 52.0;
+    final listHeight =
+        (pets.length * rowHeight).clamp(rowHeight, rowHeight * 5);
+
     final result = await showMenu<List<int>>(
       context: context,
       position: position,
-      constraints: const BoxConstraints(minWidth: 240, maxWidth: 300),
       items: [
         PopupMenuItem<List<int>>(
           enabled: false,
@@ -174,10 +177,8 @@ class PetSelector extends StatelessWidget {
                 });
               }
 
-              return ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(ctx).size.height * 0.6,
-                ),
+              return SizedBox(
+                width: 260,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -188,10 +189,11 @@ class PetSelector extends StatelessWidget {
                       onTap: toggleAll,
                     ),
                     const Divider(height: 1),
-                    Flexible(
+                    SizedBox(
+                      height: listHeight,
                       child: ListView.builder(
-                        shrinkWrap: true,
                         itemCount: pets.length,
+                        itemExtent: rowHeight,
                         itemBuilder: (_, i) {
                           final pet = pets[i];
                           return _buildCheckRow(
