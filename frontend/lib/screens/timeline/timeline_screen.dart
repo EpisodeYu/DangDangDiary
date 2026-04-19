@@ -473,10 +473,25 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       );
     }
 
-    if (viewMode == TimelineViewMode.immersive) {
-      return _buildImmersive(state);
-    }
-    return _buildCalendar(state);
+    // Keep both views mounted so switching modes does not dispose tiles and
+    // force thumbnails / originals to reload from disk on every toggle.
+    return IndexedStack(
+      sizing: StackFit.expand,
+      index: viewMode == TimelineViewMode.calendar ? 0 : 1,
+      children: [
+        TickerMode(
+          enabled: viewMode == TimelineViewMode.calendar,
+          child: _buildCalendar(state),
+        ),
+        TickerMode(
+          enabled: viewMode == TimelineViewMode.immersive,
+          child: _buildImmersive(
+            state,
+            active: viewMode == TimelineViewMode.immersive,
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildCalendar(TimelineState state) {
@@ -512,7 +527,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
   }
 
-  Widget _buildImmersive(TimelineState state) {
+  Widget _buildImmersive(TimelineState state, {required bool active}) {
     final photos = state.orderedPhotoIds
         .map((id) => state.photoMap[id])
         .whereType<TimelinePhoto>()
@@ -530,7 +545,13 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             return _buildImmersiveTail(state);
           }
           final photo = photos[index];
-          _prefetchAround(photos, index);
+          // Only prefetch originals when immersive is the active view. When
+          // it's offstage inside IndexedStack the ListView still builds its
+          // viewport items, and we don't want background downloads of full
+          // originals while the user is browsing calendar thumbnails.
+          if (active) {
+            _prefetchAround(photos, index);
+          }
           return ImmersivePhotoTile(
             photo: photo,
             showPetLabel: false,
