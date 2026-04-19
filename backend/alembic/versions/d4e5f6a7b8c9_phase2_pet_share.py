@@ -48,16 +48,20 @@ def upgrade() -> None:
 
     # 2) Rebuild the memberrole enum to drop MEMBER and add EDITOR/VIEWER.
     # Postgres enums cannot drop values in-place, so rename → recreate → cast.
+    # The old enum has no 'VIEWER' value, so we cannot UPDATE to 'VIEWER' before
+    # the new enum exists; instead map 'MEMBER' → 'VIEWER' inside the USING clause.
     bind = op.get_bind()
     if bind.dialect.name == 'postgresql':
-        # Migrate data first while the old type still accepts 'MEMBER'.
-        op.execute("UPDATE pet_members SET role = 'VIEWER' WHERE role = 'MEMBER'")
-
         op.execute("ALTER TYPE memberrole RENAME TO memberrole_old")
         op.execute("CREATE TYPE memberrole AS ENUM ('OWNER', 'EDITOR', 'VIEWER')")
         op.execute(
             "ALTER TABLE pet_members "
-            "ALTER COLUMN role TYPE memberrole USING role::text::memberrole"
+            "ALTER COLUMN role TYPE memberrole USING ("
+            "  CASE role::text "
+            "    WHEN 'MEMBER' THEN 'VIEWER'::memberrole "
+            "    ELSE role::text::memberrole "
+            "  END"
+            ")"
         )
         op.execute("DROP TYPE memberrole_old")
     else:
@@ -71,12 +75,14 @@ def downgrade() -> None:
         op.execute("ALTER TYPE memberrole RENAME TO memberrole_new")
         op.execute("CREATE TYPE memberrole AS ENUM ('OWNER', 'MEMBER')")
         op.execute(
-            "UPDATE pet_members SET role = 'MEMBER' "
-            "WHERE role IN ('EDITOR', 'VIEWER')"
-        )
-        op.execute(
             "ALTER TABLE pet_members "
-            "ALTER COLUMN role TYPE memberrole USING role::text::memberrole"
+            "ALTER COLUMN role TYPE memberrole USING ("
+            "  CASE role::text "
+            "    WHEN 'EDITOR' THEN 'MEMBER'::memberrole "
+            "    WHEN 'VIEWER' THEN 'MEMBER'::memberrole "
+            "    ELSE role::text::memberrole "
+            "  END"
+            ")"
         )
         op.execute("DROP TYPE memberrole_new")
     else:

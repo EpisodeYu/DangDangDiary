@@ -134,11 +134,6 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             ),
           ),
         ),
-        const SizedBox(height: 8),
-        const Text(
-          '分享码默认只读，1 天内有效',
-          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
-        ),
       ],
     );
   }
@@ -162,7 +157,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          expired ? '已过期' : '剩余：$remainingText',
+          expired ? '已过期' : '分享码剩余有效期：$remainingText',
           style: TextStyle(
             fontSize: 13,
             color: expired ? AppTheme.errorColor : AppTheme.textSecondary,
@@ -201,11 +196,6 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
               ),
             ),
           ],
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          '分享码默认只读，1 天内有效',
-          style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
         ),
       ],
     );

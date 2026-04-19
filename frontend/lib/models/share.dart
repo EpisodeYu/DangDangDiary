@@ -1,5 +1,14 @@
 import 'pet.dart';
 
+// Backend serializes naive UTC datetimes without a timezone suffix.
+// DateTime.parse would otherwise interpret them as local time, which makes
+// the share-code countdown start at `24h - local offset`.
+DateTime _parseUtcDateTime(String raw) {
+  final hasTz =
+      raw.endsWith('Z') || RegExp(r'[+\-]\d{2}:?\d{2}$').hasMatch(raw);
+  return DateTime.parse(hasTz ? raw : '${raw}Z').toLocal();
+}
+
 class ShareCode {
   final String code;
   final DateTime expiresAt;
@@ -13,8 +22,8 @@ class ShareCode {
 
   factory ShareCode.fromJson(Map<String, dynamic> json) => ShareCode(
         code: json['code'] as String,
-        expiresAt: DateTime.parse(json['expires_at'] as String).toLocal(),
-        createdAt: DateTime.parse(json['created_at'] as String).toLocal(),
+        expiresAt: _parseUtcDateTime(json['expires_at'] as String),
+        createdAt: _parseUtcDateTime(json['created_at'] as String),
       );
 }
 
@@ -38,6 +47,6 @@ class SharedMember {
         nickname: json['nickname'] as String?,
         avatarUrl: json['avatar_url'] as String?,
         role: petRoleFromString(json['role'] as String),
-        joinedAt: DateTime.parse(json['joined_at'] as String).toLocal(),
+        joinedAt: _parseUtcDateTime(json['joined_at'] as String),
       );
 }
