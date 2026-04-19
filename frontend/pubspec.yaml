@@ -20,6 +20,9 @@ dependencies:
   shared_preferences: ^2.3.0
   # Image picker
   image_picker: ^1.1.0
+  # Needed to opt into Android 13+ Photo Picker (strictly enforces `limit`).
+  image_picker_android: ^0.8.13
+  image_picker_platform_interface: ^2.11.0
   # Image compression
   flutter_image_compress: ^2.3.0
   # EXIF reading

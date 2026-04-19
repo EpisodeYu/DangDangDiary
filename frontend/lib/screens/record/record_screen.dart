@@ -364,8 +364,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
     if (picked.isEmpty) return;
 
-    final toProcess = picked.take(5 - _selectedFiles.length).toList();
-    if (toProcess.isEmpty) return;
+    // Android 13+ Photo Picker enforces the `limit` natively (see main.dart),
+    // but Android <13 and some third-party pickers ignore it. Cap here as a
+    // fallback and surface a gentle prompt instead of silently dropping.
+    final overflowed = picked.length > remaining;
+    final toProcess = overflowed ? picked.take(remaining).toList() : picked;
+    if (overflowed) {
+      _showSnack('每次最多上传5张哦！');
+    }
 
     _showRecognizingDialog();
 
