@@ -49,13 +49,14 @@ def _jpeg_stub(size: int = 256) -> bytes:
 
 
 def _upload_photo_stub(index_counter: list[int]):
-    """Return a deterministic (storage_key, thumbnail_key) per call."""
+    """Return a deterministic (storage_key, thumbnail_key, thumbnail_sm_key) per call."""
     def _inner(pet_id: int, file_data: bytes, content_type: str):
         i = index_counter[0]
         index_counter[0] += 1
         return (
             f"{pet_id}/stub_{i}.jpg",
             f"{pet_id}/stub_{i}_thumb.jpg",
+            f"{pet_id}/stub_{i}_thumb_sm.jpg",
         )
     return _inner
 
@@ -98,6 +99,11 @@ async def test_upload_photos_success(client, count):
     assert body["successes"][0]["photo"]["thumbnail_url"].startswith(
         settings.PUBLIC_BASE_URL
     )
+    # New tier: small thumbnail URL is populated for every fresh upload and
+    # is distinct from the large one (so the client can prefer it in grids).
+    sm = body["successes"][0]["photo"]["thumbnail_sm_url"]
+    assert sm.startswith(settings.PUBLIC_BASE_URL)
+    assert sm.endswith("_thumb_sm.jpg")
 
 
 # ---------------- Too many files ----------------
@@ -275,9 +281,13 @@ async def test_delete_photo_triggers_minio_cleanup(client, test_engine):
 
     assert resp.status_code == 204
     assert del_mock.call_count == 1
-    storage_key, thumbnail_key = del_mock.call_args.args
-    assert storage_key == f"{pet_id}/to_delete.jpg"
-    assert thumbnail_key == f"{pet_id}/to_delete_thumb.jpg"
+    # The route now passes (storage_key, thumbnail_key, thumbnail_sm_key).
+    args = del_mock.call_args.args
+    assert args[0] == f"{pet_id}/to_delete.jpg"
+    assert args[1] == f"{pet_id}/to_delete_thumb.jpg"
+    # Legacy seeded row above has no `thumbnail_sm_key`, so the third arg
+    # should arrive as None and storage skips deletion of the missing tier.
+    assert len(args) == 3 and args[2] is None
 
     async with sm() as s:
         remaining = (

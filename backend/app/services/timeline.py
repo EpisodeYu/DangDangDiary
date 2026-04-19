@@ -121,6 +121,12 @@ def _photo_to_item(
     pet_type: str,
     uploader_nickname: str | None,
 ) -> TimelinePhotoItem:
+    thumb_url = (
+        build_thumbnail_url(photo.thumbnail_key) if photo.thumbnail_key else ""
+    )
+    sm_url = (
+        build_thumbnail_url(photo.thumbnail_sm_key) if photo.thumbnail_sm_key else ""
+    )
     return TimelinePhotoItem(
         id=photo.id,
         pet_id=photo.pet_id,
@@ -128,9 +134,8 @@ def _photo_to_item(
         pet_type=pet_type,
         uploader_id=photo.user_id,
         uploader_nickname=uploader_nickname,
-        thumbnail_url=(
-            build_thumbnail_url(photo.thumbnail_key) if photo.thumbnail_key else ""
-        ),
+        thumbnail_url=thumb_url,
+        thumbnail_sm_url=sm_url,
         taken_at=photo.taken_at,
         created_at=photo.created_at,
     )

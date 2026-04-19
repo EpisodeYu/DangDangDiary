@@ -22,6 +22,14 @@ class OriginalPhotoImage extends StatefulWidget {
   final BoxFit fit;
   final double? width;
   final double? height;
+
+  /// Optional decode width hint (in physical pixels) for `Image.file`. Setting
+  /// this is critical for the immersive timeline: full-resolution originals
+  /// are easily 4000×3000 and decoding them at source size eats ~50 MiB each
+  /// in the image cache, evicting every neighbour and forcing re-decodes on
+  /// every scroll. Pass roughly `viewportWidth * devicePixelRatio` so the
+  /// decoded bitmap matches the painted size.
+  final int? decodeCacheWidth;
   final Widget Function(BuildContext context)? errorBuilder;
 
   const OriginalPhotoImage({
@@ -31,6 +39,7 @@ class OriginalPhotoImage extends StatefulWidget {
     this.fit = BoxFit.cover,
     this.width,
     this.height,
+    this.decodeCacheWidth,
     this.errorBuilder,
   });
 
@@ -92,7 +101,9 @@ class _OriginalPhotoImageState extends State<OriginalPhotoImage> {
                 fit: widget.fit,
                 width: widget.width,
                 height: widget.height,
+                cacheWidth: widget.decodeCacheWidth,
                 gaplessPlayback: true,
+                filterQuality: FilterQuality.medium,
                 errorBuilder: (context, _, stack) =>
                     _fallback(loadingFailed: true),
               );

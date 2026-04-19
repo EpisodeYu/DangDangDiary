@@ -8,7 +8,17 @@ class TimelinePhoto {
   final String petType;
   final int uploaderId;
   final String? uploaderNickname;
+
+  /// ~400 px thumbnail. Used by the immersive list placeholder and as a
+  /// fallback when the small-tier URL is missing (legacy photos).
   final String thumbnailUrl;
+
+  /// ~200 px thumbnail. Preferred by the calendar grid because it decodes
+  /// to roughly a quarter of the bytes of the large tier and therefore
+  /// keeps many more cells warm in the image cache. Empty string for
+  /// legacy rows; callers should fall back to [thumbnailUrl].
+  final String thumbnailSmUrl;
+
   final DateTime takenAt;
   final DateTime createdAt;
 
@@ -20,9 +30,15 @@ class TimelinePhoto {
     required this.uploaderId,
     this.uploaderNickname,
     required this.thumbnailUrl,
+    this.thumbnailSmUrl = '',
     required this.takenAt,
     required this.createdAt,
   });
+
+  /// Preferred URL for the timeline grid: small tier if present, otherwise
+  /// fall back to the standard thumbnail URL.
+  String get gridThumbnailUrl =>
+      thumbnailSmUrl.isNotEmpty ? thumbnailSmUrl : thumbnailUrl;
 
   String get monthKey {
     final y = takenAt.year.toString().padLeft(4, '0');
@@ -39,6 +55,7 @@ class TimelinePhoto {
       uploaderId: json['uploader_id'] as int,
       uploaderNickname: json['uploader_nickname'] as String?,
       thumbnailUrl: json['thumbnail_url'] as String,
+      thumbnailSmUrl: (json['thumbnail_sm_url'] as String?) ?? '',
       takenAt: DateTime.parse(json['taken_at'] as String),
       createdAt: DateTime.parse(json['created_at'] as String),
     );

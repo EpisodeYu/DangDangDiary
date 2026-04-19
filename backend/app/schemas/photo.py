@@ -9,6 +9,10 @@ class PhotoResponse(BaseModel):
     storage_key: str
     thumbnail_key: str
     thumbnail_url: str
+    # Smaller (~200 px) thumbnail used by the timeline grid. Empty string for
+    # legacy rows uploaded before the small tier existed; the client should
+    # fall back to `thumbnail_url` in that case.
+    thumbnail_sm_url: str = ""
     taken_at: date
     created_at: datetime
 
@@ -61,6 +65,8 @@ class TimelinePhotoItem(BaseModel):
     uploader_id: int
     uploader_nickname: str | None = None
     thumbnail_url: str
+    # Smaller (~200 px) thumbnail. Empty for legacy rows; client falls back.
+    thumbnail_sm_url: str = ""
     taken_at: date
     created_at: datetime
 

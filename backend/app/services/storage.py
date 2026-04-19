@@ -29,7 +29,14 @@ EXT_MAP = {
     "image/webp": "webp",
 }
 
+# Two-tier thumbnails:
+#   * "lg" (~400 px) — used by detail / immersive placeholder fallback.
+#   * "sm" (~200 px) — used by the timeline calendar grid (4 cols on phone).
+# The small tier roughly quarters decoded-bitmap memory per cell vs the
+# large tier and is what makes scrolling feel comparable to the system
+# photo album.
 THUMBNAIL_MAX_SIZE = (400, 400)
+THUMBNAIL_SM_MAX_SIZE = (200, 200)
 THUMBNAIL_QUALITY = 80
 
 
@@ -110,10 +117,11 @@ def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
 
 def upload_photo(
     pet_id: int, file_data: bytes, content_type: str
-) -> tuple[str, str]:
-    """Upload original photo and generated thumbnail to MinIO.
+) -> tuple[str, str, str]:
+    """Upload original photo + two thumbnail tiers to MinIO.
 
-    Returns (storage_key, thumbnail_key).
+    Returns ``(storage_key, thumbnail_key, thumbnail_sm_key)``. The two
+    thumbnail keys share the same UUID so they can be cleaned up together.
     """
     photo_bucket = settings.MINIO_BUCKET_PHOTOS
     thumb_bucket = settings.MINIO_BUCKET_THUMBNAILS
@@ -124,6 +132,7 @@ def upload_photo(
     file_uuid = uuid.uuid4().hex
     storage_key = f"{pet_id}/{file_uuid}.{ext}"
     thumbnail_key = f"{pet_id}/{file_uuid}_thumb.jpg"
+    thumbnail_sm_key = f"{pet_id}/{file_uuid}_thumb_sm.jpg"
 
     client = _get_client()
 
@@ -135,7 +144,9 @@ def upload_photo(
         content_type=content_type,
     )
 
-    thumb_data = _generate_thumbnail(file_data)
+    # Decode the source once and downsample to both tiers, so the second
+    # tier costs nothing beyond a re-resize and JPEG encode.
+    thumb_data, thumb_sm_data = _generate_thumbnails(file_data)
     client.put_object(
         thumb_bucket,
         thumbnail_key,
@@ -143,21 +154,48 @@ def upload_photo(
         length=len(thumb_data),
         content_type="image/jpeg",
     )
+    client.put_object(
+        thumb_bucket,
+        thumbnail_sm_key,
+        io.BytesIO(thumb_sm_data),
+        length=len(thumb_sm_data),
+        content_type="image/jpeg",
+    )
 
-    return storage_key, thumbnail_key
+    return storage_key, thumbnail_key, thumbnail_sm_key
 
 
-def _generate_thumbnail(file_data: bytes) -> bytes:
-    # `with` ensures the underlying file handle is released even if a
-    # later step raises; combined with `Image.MAX_IMAGE_PIXELS` this
-    # blocks decompression-bomb inputs. (Step 8 §1.2 storage P0)
+def _generate_thumbnails(file_data: bytes) -> tuple[bytes, bytes]:
+    """Decode source once, return (large_jpeg, small_jpeg) bytes.
+
+    `Image.MAX_IMAGE_PIXELS` and the `with` block guard against
+    decompression-bomb inputs and leaked file handles (Step 8 §1.2
+    storage P0).
+    """
     with Image.open(io.BytesIO(file_data)) as img:
-        img.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=THUMBNAIL_QUALITY)
-        return buf.getvalue()
+        # Build the large tier first (in-place), then derive the small
+        # tier from it via a copy + further downscale. We can't reuse
+        # the same Image object for two thumbnails because `thumbnail`
+        # mutates in place.
+        large = img.copy()
+        large.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
+        small = large.copy()
+        small.thumbnail(THUMBNAIL_SM_MAX_SIZE, Image.LANCZOS)
+
+        large_buf = io.BytesIO()
+        small_buf = io.BytesIO()
+        large.save(large_buf, format="JPEG", quality=THUMBNAIL_QUALITY)
+        small.save(small_buf, format="JPEG", quality=THUMBNAIL_QUALITY)
+        return large_buf.getvalue(), small_buf.getvalue()
+
+
+# Kept for backwards compat with any external caller; new code should
+# use `_generate_thumbnails`.
+def _generate_thumbnail(file_data: bytes) -> bytes:
+    large, _small = _generate_thumbnails(file_data)
+    return large
 
 
 def build_thumbnail_url(thumbnail_key: str) -> str:
@@ -178,17 +216,23 @@ def get_photo_presigned_url(storage_key: str, expires_seconds: int = 3600) -> st
     return f"{settings.PUBLIC_BASE_URL}/media/{photo_bucket}/{storage_key}?{parsed.query}"
 
 
-def delete_photo_objects(storage_key: str, thumbnail_key: str | None) -> None:
+def delete_photo_objects(
+    storage_key: str,
+    thumbnail_key: str | None,
+    thumbnail_sm_key: str | None = None,
+) -> None:
     client = _get_client()
     try:
         client.remove_object(settings.MINIO_BUCKET_PHOTOS, storage_key)
     except Exception:
         logger.warning("Failed to delete original photo: %s", storage_key)
-    if thumbnail_key:
+    for key in (thumbnail_key, thumbnail_sm_key):
+        if not key:
+            continue
         try:
-            client.remove_object(settings.MINIO_BUCKET_THUMBNAILS, thumbnail_key)
+            client.remove_object(settings.MINIO_BUCKET_THUMBNAILS, key)
         except Exception:
-            logger.warning("Failed to delete thumbnail: %s", thumbnail_key)
+            logger.warning("Failed to delete thumbnail: %s", key)
 
 
 def delete_object_by_url(url: str) -> None:
@@ -238,7 +282,7 @@ def delete_objects_by_prefix(bucket: str, prefix: str) -> None:
 
 async def aupload_photo(
     pet_id: int, file_data: bytes, content_type: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
     return await asyncio.to_thread(upload_photo, pet_id, file_data, content_type)
 
 
@@ -249,9 +293,13 @@ async def aupload_pet_avatar(
 
 
 async def adelete_photo_objects(
-    storage_key: str, thumbnail_key: str | None,
+    storage_key: str,
+    thumbnail_key: str | None,
+    thumbnail_sm_key: str | None = None,
 ) -> None:
-    await asyncio.to_thread(delete_photo_objects, storage_key, thumbnail_key)
+    await asyncio.to_thread(
+        delete_photo_objects, storage_key, thumbnail_key, thumbnail_sm_key,
+    )
 
 
 async def adelete_object_by_url(url: str) -> None:

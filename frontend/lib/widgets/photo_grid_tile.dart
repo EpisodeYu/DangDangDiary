@@ -24,6 +24,19 @@ class PhotoGridTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Each grid tile is roughly 1/4 of the screen width minus padding —
+    // ~90 logical pixels on a typical phone. Decoding the 400×400 server
+    // thumbnail at that physical size (DPR 3 → ~270 px) keeps each entry
+    // tiny in the image cache so dozens of tiles stay warm and don't get
+    // evicted (and re-decoded) as the user scrolls.
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cachePx = (110 * dpr).round().clamp(180, 420);
+    // Prefer the small (~200 px) tier when available — it decodes to
+    // roughly a quarter of the bytes of the standard thumbnail, which is
+    // what makes 4-col scrolling feel like the system photo album. The
+    // server returns an empty string for legacy rows, in which case the
+    // model's `gridThumbnailUrl` falls back to the larger tier.
+    final url = photo.gridThumbnailUrl;
     return GestureDetector(
       onTap: onTap,
       onLongPress: onLongPress,
@@ -35,10 +48,14 @@ class PhotoGridTile extends StatelessWidget {
             fit: StackFit.expand,
             children: [
               Container(color: const Color(0xFFEFE5DD)),
-              if (photo.thumbnailUrl.isNotEmpty)
+              if (url.isNotEmpty)
                 CachedNetworkImage(
-                  imageUrl: photo.thumbnailUrl,
+                  imageUrl: url,
                   fit: BoxFit.cover,
+                  memCacheWidth: cachePx,
+                  memCacheHeight: cachePx,
+                  fadeInDuration: const Duration(milliseconds: 120),
+                  fadeOutDuration: const Duration(milliseconds: 60),
                   placeholder: (context, _) => Container(
                     color: const Color(0xFFEFE5DD),
                   ),

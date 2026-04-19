@@ -15,5 +15,9 @@ class Photo(Base):
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
     thumbnail_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Smaller server-generated thumbnail (~200 px) used by the timeline grid.
+    # Old rows uploaded before this column existed may be NULL — the API
+    # falls back to `thumbnail_key` in that case.
+    thumbnail_sm_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     taken_at: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

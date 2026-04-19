@@ -51,13 +51,18 @@ MAX_FILES_PER_UPLOAD = 5
 
 
 def _photo_to_response(photo: Photo) -> PhotoResponse:
+    thumb_url = build_thumbnail_url(photo.thumbnail_key) if photo.thumbnail_key else ""
+    sm_url = (
+        build_thumbnail_url(photo.thumbnail_sm_key) if photo.thumbnail_sm_key else ""
+    )
     return PhotoResponse(
         id=photo.id,
         pet_id=photo.pet_id,
         user_id=photo.user_id,
         storage_key=photo.storage_key,
         thumbnail_key=photo.thumbnail_key or "",
-        thumbnail_url=build_thumbnail_url(photo.thumbnail_key) if photo.thumbnail_key else "",
+        thumbnail_url=thumb_url,
+        thumbnail_sm_url=sm_url,
         taken_at=photo.taken_at,
         created_at=photo.created_at,
     )
@@ -123,6 +128,7 @@ async def upload_photos(
         filename: str
         storage_key: str
         thumbnail_key: str
+        thumbnail_sm_key: str
 
     async def _process_one(
         idx: int, filename: str, file_data: bytes, content_type: str,
@@ -139,7 +145,7 @@ async def upload_photos(
                     )
 
             try:
-                storage_key, thumbnail_key = await aupload_photo(
+                storage_key, thumbnail_key, thumbnail_sm_key = await aupload_photo(
                     pet_id, file_data, content_type
                 )
             except Exception as e:
@@ -152,7 +158,9 @@ async def upload_photos(
 
             return _UploadOk(
                 idx=idx, filename=filename,
-                storage_key=storage_key, thumbnail_key=thumbnail_key,
+                storage_key=storage_key,
+                thumbnail_key=thumbnail_key,
+                thumbnail_sm_key=thumbnail_sm_key,
             )
         except Exception as e:
             logger.error("Unexpected error processing file %d (%s): %s", idx, filename, e)
@@ -180,6 +188,7 @@ async def upload_photos(
             user_id=user_id,
             storage_key=result.storage_key,
             thumbnail_key=result.thumbnail_key,
+            thumbnail_sm_key=result.thumbnail_sm_key,
             taken_at=parsed_dates[result.idx],
             created_at=utcnow(),
         )
@@ -254,6 +263,7 @@ async def delete_photo(
 
     storage_key = photo.storage_key
     thumbnail_key = photo.thumbnail_key
+    thumbnail_sm_key = photo.thumbnail_sm_key
 
     await db.delete(photo)
     await db.flush()
@@ -261,7 +271,7 @@ async def delete_photo(
 
     # Offload MinIO cleanup to a worker thread so the event loop stays
     # free for other requests. (Step 8 §1.1 rule 4 / Chunk B-5)
-    await adelete_photo_objects(storage_key, thumbnail_key)
+    await adelete_photo_objects(storage_key, thumbnail_key, thumbnail_sm_key)
 
     return Response(status_code=204)
 

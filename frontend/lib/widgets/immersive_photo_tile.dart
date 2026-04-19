@@ -27,6 +27,15 @@ class ImmersivePhotoTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    // Decode each original at viewport-width physical pixels instead of full
+    // source resolution. A 4000×3000 photo decoded at source costs ~48 MiB in
+    // the image cache and pushes every neighbour out, which is exactly why the
+    // immersive list felt like it was reloading from scratch on every scroll
+    // or tab switch.
+    final decodeWidth = (media.size.width * media.devicePixelRatio)
+        .round()
+        .clamp(720, 1440);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
       child: GestureDetector(
@@ -42,6 +51,7 @@ class ImmersivePhotoTile extends StatelessWidget {
                 thumbnailUrl: photo.thumbnailUrl,
                 fit: BoxFit.fitWidth,
                 width: double.infinity,
+                decodeCacheWidth: decodeWidth,
                 errorBuilder: (context) => const _ErrorTile(),
               ),
               if (showPetLabel)

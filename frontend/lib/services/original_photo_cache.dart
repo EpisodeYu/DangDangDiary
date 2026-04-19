@@ -198,6 +198,18 @@ class OriginalPhotoCache {
 
   File _fileForKey(String key) => File('${_cacheDir!.path}/$key');
 
+  /// Synchronously reports whether we believe [photoId] is cached locally.
+  /// This only consults the in-memory index built at startup (and kept in
+  /// sync as we download / evict), so it is safe to call from `build`.
+  ///
+  /// Note: a `true` return does not strictly guarantee the file still exists
+  /// on disk (e.g. if it was deleted out from under us), but in practice the
+  /// index is reconciled on init and updated on every mutation, so it is the
+  /// best signal we can give synchronously to the UI.
+  bool isCachedSync(int photoId) {
+    return _index.containsKey(_photoKey(photoId));
+  }
+
   /// Returns the cached file for [photoId] if one is present on disk.
   /// Touches its LRU timestamp on hit.
   Future<File?> getCachedOriginalFile(int photoId) async {

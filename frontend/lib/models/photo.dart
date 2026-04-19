@@ -5,6 +5,11 @@ class Photo {
   final String storageKey;
   final String thumbnailKey;
   final String thumbnailUrl;
+
+  /// Optional ~200 px thumbnail URL (Phase 2). Empty for legacy rows; UI
+  /// should fall back to [thumbnailUrl].
+  final String thumbnailSmUrl;
+
   final String takenAt;
   final String createdAt;
 
@@ -15,6 +20,7 @@ class Photo {
     required this.storageKey,
     required this.thumbnailKey,
     required this.thumbnailUrl,
+    this.thumbnailSmUrl = '',
     required this.takenAt,
     required this.createdAt,
   });
@@ -27,6 +33,7 @@ class Photo {
       storageKey: json['storage_key'] as String,
       thumbnailKey: json['thumbnail_key'] as String,
       thumbnailUrl: json['thumbnail_url'] as String,
+      thumbnailSmUrl: (json['thumbnail_sm_url'] as String?) ?? '',
       takenAt: json['taken_at'] as String,
       createdAt: json['created_at'] as String,
     );

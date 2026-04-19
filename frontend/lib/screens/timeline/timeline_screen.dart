@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +27,14 @@ const int _maxBatchSelection = 9;
 const int _immersivePrefetchAhead = 2;
 const int _immersivePrefetchBehind = 1;
 
+/// How many photos ahead of the currently visible band of the calendar
+/// grid we proactively warm in the image cache. The grid renders ~4 photos
+/// per row and each row is the same height, so prefetching 24 photos ≈ 6
+/// rows ≈ 1.5 viewports of headroom — enough that a quick swipe lands on
+/// already-decoded tiles, but not so aggressive that we waste bytes on
+/// content the user will never see.
+const int _calendarPrefetchAhead = 24;
+
 class TimelineScreen extends ConsumerStatefulWidget {
   const TimelineScreen({super.key});
 
@@ -43,6 +52,13 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
   bool _selectionMode = false;
   final Set<int> _selectedIds = <int>{};
+
+  /// Photo ids whose calendar-grid thumbnail we have already asked
+  /// `precacheImage` to warm. The flutter image cache deduplicates by
+  /// provider key on its own, but doing the dedup here too lets us skip
+  /// rebuilding the `CachedNetworkImageProvider` and short-circuit on
+  /// every scroll tick once a tile is known to be warm.
+  final Set<int> _prefetchedThumbIds = <int>{};
 
   @override
   void initState() {
@@ -67,6 +83,38 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       ref.read(timelineProvider.notifier).loadOlder();
     }
     _updateActiveMonth();
+  }
+
+  /// Warm the image cache for [_calendarPrefetchAhead] tiles starting at
+  /// [startIndex] in [photos]. Safe to call repeatedly; per-id dedup makes
+  /// repeated invocations from the grid builder essentially free.
+  void _prefetchCalendarThumbsFrom(
+    BuildContext context,
+    List<TimelinePhoto> photos,
+    int startIndex,
+  ) {
+    if (photos.isEmpty) return;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cachePx = (110 * dpr).round().clamp(180, 420);
+    final end =
+        (startIndex + _calendarPrefetchAhead).clamp(0, photos.length);
+    for (var i = startIndex; i < end; i++) {
+      final photo = photos[i];
+      if (!_prefetchedThumbIds.add(photo.id)) continue;
+      final url = photo.gridThumbnailUrl;
+      if (url.isEmpty) continue;
+      final provider = CachedNetworkImageProvider(
+        url,
+        maxWidth: cachePx,
+        maxHeight: cachePx,
+      );
+      // precacheImage drives the provider to `resolve()` and pins the
+      // decoded bitmap into `imageCache` until eviction. We swallow
+      // failures to keep a single dead URL from polluting the logs as
+      // the grid grows.
+      // ignore: discarded_futures
+      precacheImage(provider, context, onError: (_, stack) {});
+    }
   }
 
   void _onImmersiveScroll() {
@@ -495,11 +543,24 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   }
 
   Widget _buildCalendar(TimelineState state) {
+    // Flatten once per build so `_buildGroupSlivers` can hand each tile
+    // its global index. Cheap (O(n)) and shared across all groups in this
+    // build.
+    final flatPhotos = state.orderedPhotoIds
+        .map((id) => state.photoMap[id])
+        .whereType<TimelinePhoto>()
+        .toList(growable: false);
+    final flatIndex = <int, int>{
+      for (var i = 0; i < flatPhotos.length; i++) flatPhotos[i].id: i,
+    };
     return Stack(
       children: [
         RefreshIndicator(
           onRefresh: () async {
             _exitSelection();
+            // Drop the prefetch dedup so a manual refresh re-warms the
+            // first viewport's worth of (possibly new) tiles.
+            _prefetchedThumbIds.clear();
             await ref.read(timelineProvider.notifier).refresh();
           },
           child: CustomScrollView(
@@ -507,7 +568,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               for (final group in state.groups)
-                ..._buildGroupSlivers(group),
+                ..._buildGroupSlivers(group, flatPhotos, flatIndex),
               _buildTailSliver(state),
             ],
           ),
@@ -542,7 +603,14 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         itemCount: photos.length + 1,
         itemBuilder: (context, index) {
           if (index == photos.length) {
-            return _buildImmersiveTail(state);
+            // Rebuild the tail whenever the original cache state changes so
+            // we can flip "正在加载" → "没有更多" the moment the last
+            // pending download lands, without waiting for the user to
+            // scroll or for an unrelated state change.
+            return ValueListenableBuilder<int>(
+              valueListenable: OriginalPhotoCache.instance.revision,
+              builder: (context, _, child) => _buildImmersiveTail(state),
+            );
           }
           final photo = photos[index];
           // Only prefetch originals when immersive is the active view. When
@@ -577,10 +645,24 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   }
 
   Widget _buildImmersiveTail(TimelineState state) {
-    // Treat "more to load but not yet fetching" the same as actively loading —
-    // the scroll listener will kick off loadOlder() momentarily, and showing
-    // a spinner is friendlier than an empty gap or a premature "end" message.
-    if (state.hasMoreOlder || state.isLoadingOlder) {
+    // Show the spinner whenever:
+    //   * the server still has older pages we haven't fetched,
+    //   * a fetch is in flight, OR
+    //   * every metadata page is loaded but originals are still being
+    //     downloaded into the on-disk cache for already-known photos.
+    //
+    // The third case is what made "没有更多照片了" appear too early: the
+    // user could scroll to the bottom of the immersive list while plenty
+    // of tiles further up were still downloading their originals, and the
+    // "end" marker felt jarring next to half-loaded tiles.
+    final allOriginalsReady = state.orderedPhotoIds
+        .every(OriginalPhotoCache.instance.isCachedSync);
+    final stillLoadingOriginals =
+        !allOriginalsReady && state.orderedPhotoIds.isNotEmpty;
+
+    if (state.hasMoreOlder ||
+        state.isLoadingOlder ||
+        stillLoadingOriginals) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(
@@ -647,7 +729,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     return const SliverToBoxAdapter(child: SizedBox(height: 40));
   }
 
-  List<Widget> _buildGroupSlivers(TimelineGroup group) {
+  List<Widget> _buildGroupSlivers(
+    TimelineGroup group,
+    List<TimelinePhoto> flatPhotos,
+    Map<int, int> flatIndex,
+  ) {
     return [
       SliverToBoxAdapter(
         key: _monthKeys[group.date],
@@ -696,6 +782,17 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           delegate: SliverChildBuilderDelegate(
             (context, i) {
               final photo = group.photos[i];
+              // Treat each laid-out tile as a "user is currently looking
+              // around here" hint and warm the next slab of upcoming
+              // tiles. Doing it from the builder keeps prefetch tied to
+              // actual scroll position without any extra listeners or
+              // viewport math.
+              final globalIdx = flatIndex[photo.id];
+              if (globalIdx != null) {
+                _prefetchCalendarThumbsFrom(
+                  context, flatPhotos, globalIdx + 1,
+                );
+              }
               return PhotoGridTile(
                 photo: photo,
                 showPetLabel: false,
