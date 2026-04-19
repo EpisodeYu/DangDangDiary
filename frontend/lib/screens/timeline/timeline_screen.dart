@@ -12,6 +12,7 @@ import '../../services/photo_service.dart';
 import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/photo_grid_tile.dart';
+import '../../widgets/photo_info_dialog.dart';
 import '../../widgets/timeline_scrollbar.dart';
 import 'photo_viewer_screen.dart';
 
@@ -167,18 +168,38 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
   Future<void> _onLongPressCalendar(TimelinePhoto photo) async {
     if (_selectionMode) return;
-    _enterSelection(photo.id);
+    final action = await _showPhotoActionSheet(allowMultiSelect: true);
+    if (!mounted) return;
+    await _handlePhotoSheetAction(photo, action);
   }
 
   Future<void> _onLongPressImmersive(TimelinePhoto photo) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await _showPhotoActionSheet(allowMultiSelect: false);
+    if (!mounted) return;
+    await _handlePhotoSheetAction(photo, action);
+  }
+
+  Future<String?> _showPhotoActionSheet({required bool allowMultiSelect}) {
+    return showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: AppTheme.errorColor),
+              leading: const Icon(Icons.info_outline),
+              title: const Text('详细信息'),
+              onTap: () => Navigator.pop(ctx, 'info'),
+            ),
+            if (allowMultiSelect)
+              ListTile(
+                leading: const Icon(Icons.check_box_outlined),
+                title: const Text('多选'),
+                onTap: () => Navigator.pop(ctx, 'multi'),
+              ),
+            ListTile(
+              leading:
+                  const Icon(Icons.delete_outline, color: AppTheme.errorColor),
               title: const Text(
                 '删除',
                 style: TextStyle(color: AppTheme.errorColor),
@@ -194,12 +215,25 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         ),
       ),
     );
-    if (!mounted || action != 'delete') return;
+  }
 
-    final confirmed = await _confirmDelete(1);
-    if (!mounted || confirmed != true) return;
-
-    await _deleteSinglePhoto(photo.id);
+  Future<void> _handlePhotoSheetAction(
+    TimelinePhoto photo,
+    String? action,
+  ) async {
+    switch (action) {
+      case 'info':
+        await showPhotoInfoDialog(context, photo);
+        break;
+      case 'multi':
+        _enterSelection(photo.id);
+        break;
+      case 'delete':
+        final confirmed = await _confirmDelete(1);
+        if (!mounted || confirmed != true) return;
+        await _deleteSinglePhoto(photo.id);
+        break;
+    }
   }
 
   Future<bool?> _confirmDelete(int count) {
@@ -331,11 +365,6 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       }
     }
 
-    // Decide whether to show the pet-name overlay label on each tile.
-    final filterMulti = selectedPetIds.isEmpty
-        ? pets.length > 1
-        : selectedPetIds.length > 1;
-
     for (final g in state.groups) {
       _monthKeys.putIfAbsent(g.date, () => GlobalKey());
     }
@@ -349,7 +378,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         appBar: _selectionMode
             ? _buildSelectionAppBar()
             : _buildDefaultAppBar(pets, selectedPetIds, viewMode),
-        body: _buildBody(state, filterMulti, viewMode),
+        body: _buildBody(state, viewMode),
         bottomNavigationBar: _selectionMode ? _buildSelectionBar() : null,
       ),
     );
@@ -432,7 +461,6 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
   Widget _buildBody(
     TimelineState state,
-    bool filterMulti,
     TimelineViewMode viewMode,
   ) {
     if (state.isInitialLoading && state.orderedPhotoIds.isEmpty) {
@@ -446,12 +474,12 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     }
 
     if (viewMode == TimelineViewMode.immersive) {
-      return _buildImmersive(state, filterMulti);
+      return _buildImmersive(state);
     }
-    return _buildCalendar(state, filterMulti);
+    return _buildCalendar(state);
   }
 
-  Widget _buildCalendar(TimelineState state, bool filterMulti) {
+  Widget _buildCalendar(TimelineState state) {
     return Stack(
       children: [
         RefreshIndicator(
@@ -464,7 +492,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
               for (final group in state.groups)
-                ..._buildGroupSlivers(group, filterMulti),
+                ..._buildGroupSlivers(group),
               _buildTailSliver(state),
             ],
           ),
@@ -484,7 +512,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
   }
 
-  Widget _buildImmersive(TimelineState state, bool filterMulti) {
+  Widget _buildImmersive(TimelineState state) {
     final photos = state.orderedPhotoIds
         .map((id) => state.photoMap[id])
         .whereType<TimelinePhoto>()
@@ -505,7 +533,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           _prefetchAround(photos, index);
           return ImmersivePhotoTile(
             photo: photo,
-            showPetLabel: filterMulti,
+            showPetLabel: false,
             onTap: () => _openViewer(photo.id),
             onLongPress: () => _onLongPressImmersive(photo),
           );
@@ -585,7 +613,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     return const SliverToBoxAdapter(child: SizedBox(height: 40));
   }
 
-  List<Widget> _buildGroupSlivers(TimelineGroup group, bool filterMulti) {
+  List<Widget> _buildGroupSlivers(TimelineGroup group) {
     return [
       SliverToBoxAdapter(
         key: _monthKeys[group.date],
@@ -636,7 +664,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
               final photo = group.photos[i];
               return PhotoGridTile(
                 photo: photo,
-                showPetLabel: filterMulti,
+                showPetLabel: false,
                 selectionMode: _selectionMode,
                 selected: _selectedIds.contains(photo.id),
                 onTap: () => _onTapPhoto(photo),

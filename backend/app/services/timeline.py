@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import AppException
 from app.models.pet import Pet, PetMember
 from app.models.photo import Photo
+from app.models.user import User
 from app.schemas.photo import (
     DateDistributionItem,
     TimelineDateRange,
@@ -114,12 +115,19 @@ async def _resolve_accessible_pet_ids(
     return list(requested_set)
 
 
-def _photo_to_item(photo: Photo, pet_name: str, pet_type: str) -> TimelinePhotoItem:
+def _photo_to_item(
+    photo: Photo,
+    pet_name: str,
+    pet_type: str,
+    uploader_nickname: str | None,
+) -> TimelinePhotoItem:
     return TimelinePhotoItem(
         id=photo.id,
         pet_id=photo.pet_id,
         pet_name=pet_name,
         pet_type=pet_type,
+        uploader_id=photo.user_id,
+        uploader_nickname=uploader_nickname,
         thumbnail_url=(
             build_thumbnail_url(photo.thumbnail_key) if photo.thumbnail_key else ""
         ),
@@ -141,6 +149,18 @@ async def _load_pet_meta(
         pid: (name, pet_type.value if hasattr(pet_type, "value") else str(pet_type))
         for pid, name, pet_type in result.all()
     }
+
+
+async def _load_uploader_nicknames(
+    db: AsyncSession, user_ids: Iterable[int],
+) -> dict[int, str | None]:
+    ids = list({int(u) for u in user_ids})
+    if not ids:
+        return {}
+    result = await db.execute(
+        select(User.id, User.nickname).where(User.id.in_(ids))
+    )
+    return {uid: nickname for uid, nickname in result.all()}
 
 
 def _group_by_month(photos: list[TimelinePhotoItem]) -> list[TimelineGroup]:
@@ -498,11 +518,15 @@ async def get_timeline_window(
         )
 
     pet_meta = await _load_pet_meta(db, (p.pet_id for p in photos))
+    uploader_map = await _load_uploader_nicknames(
+        db, (p.user_id for p in photos)
+    )
     items = [
         _photo_to_item(
             photo,
             pet_meta.get(photo.pet_id, (f"宠物#{photo.pet_id}", "cat"))[0],
             pet_meta.get(photo.pet_id, (f"宠物#{photo.pet_id}", "cat"))[1],
+            uploader_map.get(photo.user_id),
         )
         for photo in photos
     ]

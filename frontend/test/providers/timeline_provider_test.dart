@@ -16,6 +16,7 @@ TimelinePhoto _photo({
     petId: petId,
     petName: petName,
     petType: petType,
+    uploaderId: 1,
     thumbnailUrl: 'http://t/$id.jpg',
     takenAt: takenAt,
     createdAt: createdAt ?? takenAt,

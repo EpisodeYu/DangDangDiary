@@ -58,6 +58,8 @@ class TimelinePhotoItem(BaseModel):
     pet_id: int
     pet_name: str
     pet_type: str
+    uploader_id: int
+    uploader_nickname: str | None = None
     thumbnail_url: str
     taken_at: date
     created_at: datetime

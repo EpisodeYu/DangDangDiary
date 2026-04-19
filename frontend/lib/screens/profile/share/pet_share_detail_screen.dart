@@ -30,6 +30,13 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
     _ticker = Timer.periodic(const Duration(seconds: 30), (_) {
       if (mounted) setState(() {});
     });
+    // Force a fresh fetch on entry — share code / members are authoritative
+    // on the server and can be changed from another device.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(shareCodeProvider(widget.petId).notifier).refresh();
+      ref.read(sharedMembersProvider(widget.petId).notifier).refresh();
+    });
   }
 
   @override

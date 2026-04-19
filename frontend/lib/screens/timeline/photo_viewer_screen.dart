@@ -1,11 +1,15 @@
 import 'dart:io';
 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 
+import '../../config/theme.dart';
 import '../../providers/timeline_provider.dart';
 import '../../services/original_photo_cache.dart';
+import '../../services/photo_service.dart';
+import '../../widgets/photo_info_dialog.dart';
 
 /// How many neighbors on either side of the current page to prefetch.
 const int _viewerPrefetchRadius = 2;
@@ -64,6 +68,114 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
       if (i == _currentIndex) continue;
       OriginalPhotoCache.instance.prefetch(ids[i]);
     }
+  }
+
+  Future<void> _onLongPress(int photoId) async {
+    final photo = ref.read(timelineProvider).photoMap[photoId];
+    if (photo == null) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.info_outline),
+              title: const Text('详细信息'),
+              onTap: () => Navigator.pop(ctx, 'info'),
+            ),
+            ListTile(
+              leading:
+                  const Icon(Icons.delete_outline, color: AppTheme.errorColor),
+              title: const Text(
+                '删除',
+                style: TextStyle(color: AppTheme.errorColor),
+              ),
+              onTap: () => Navigator.pop(ctx, 'delete'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    switch (action) {
+      case 'info':
+        await showPhotoInfoDialog(context, photo);
+        break;
+      case 'delete':
+        final confirmed = await _confirmDelete();
+        if (!mounted || confirmed != true) return;
+        await _deletePhoto(photoId);
+        break;
+    }
+  }
+
+  Future<bool?> _confirmDelete() {
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('确定删除这张照片吗？'),
+        content: const Text('删除后不可恢复'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _deletePhoto(int photoId) async {
+    try {
+      await PhotoService().deletePhoto(photoId);
+      if (!mounted) return;
+      ref.read(timelineProvider.notifier).removePhotos([photoId]);
+      _futureCache.remove(photoId);
+      final remaining = ref.read(timelineProvider).orderedPhotoIds;
+      _showSnack('已删除');
+      if (remaining.isEmpty) {
+        Navigator.of(context).pop();
+      }
+    } on DioException catch (e) {
+      if (!mounted) return;
+      _showSnack(_deleteErrorMessage(e));
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack('删除失败，请稍后重试');
+    }
+  }
+
+  bool _isPermissionError(DioException e) {
+    final data = e.response?.data;
+    if (data is Map && data['code'] == 'PET_EDITOR_REQUIRED') return true;
+    return e.response?.statusCode == 403;
+  }
+
+  String _deleteErrorMessage(DioException e) {
+    if (_isPermissionError(e)) return '无删除权限';
+    final data = e.response?.data;
+    if (data is Map<String, dynamic>) {
+      return (data['message'] as String?) ?? '删除失败，请稍后重试';
+    }
+    return '删除失败，请稍后重试';
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), duration: const Duration(seconds: 2)),
+    );
   }
 
   @override
@@ -150,17 +262,21 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
                   ),
                 );
               }
-              return PhotoView(
-                imageProvider: FileImage(snap.data!),
-                heroAttributes: PhotoViewHeroAttributes(tag: 'photo_$id'),
-                minScale: PhotoViewComputedScale.contained,
-                maxScale: PhotoViewComputedScale.covered * 3,
-                backgroundDecoration:
-                    const BoxDecoration(color: Colors.black),
-                loadingBuilder: (ctx, event) => const Center(
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.white70),
+              return GestureDetector(
+                behavior: HitTestBehavior.deferToChild,
+                onLongPress: () => _onLongPress(id),
+                child: PhotoView(
+                  imageProvider: FileImage(snap.data!),
+                  heroAttributes: PhotoViewHeroAttributes(tag: 'photo_$id'),
+                  minScale: PhotoViewComputedScale.contained,
+                  maxScale: PhotoViewComputedScale.covered * 3,
+                  backgroundDecoration:
+                      const BoxDecoration(color: Colors.black),
+                  loadingBuilder: (ctx, event) => const Center(
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(Colors.white70),
+                    ),
                   ),
                 ),
               );

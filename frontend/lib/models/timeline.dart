@@ -6,6 +6,8 @@ class TimelinePhoto {
   final int petId;
   final String petName;
   final String petType;
+  final int uploaderId;
+  final String? uploaderNickname;
   final String thumbnailUrl;
   final DateTime takenAt;
   final DateTime createdAt;
@@ -15,6 +17,8 @@ class TimelinePhoto {
     required this.petId,
     required this.petName,
     required this.petType,
+    required this.uploaderId,
+    this.uploaderNickname,
     required this.thumbnailUrl,
     required this.takenAt,
     required this.createdAt,
@@ -32,6 +36,8 @@ class TimelinePhoto {
       petId: json['pet_id'] as int,
       petName: json['pet_name'] as String,
       petType: json['pet_type'] as String,
+      uploaderId: json['uploader_id'] as int,
+      uploaderNickname: json['uploader_nickname'] as String?,
       thumbnailUrl: json['thumbnail_url'] as String,
       takenAt: DateTime.parse(json['taken_at'] as String),
       createdAt: DateTime.parse(json['created_at'] as String),
