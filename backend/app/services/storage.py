@@ -29,14 +29,28 @@ EXT_MAP = {
     "image/webp": "webp",
 }
 
-# Two-tier thumbnails:
-#   * "lg" (~400 px) — used by detail / immersive placeholder fallback.
-#   * "sm" (~200 px) — used by the timeline calendar grid (4 cols on phone).
-# The small tier roughly quarters decoded-bitmap memory per cell vs the
-# large tier and is what makes scrolling feel comparable to the system
-# photo album.
+# Two thumbnail tiers, both stored in the public thumbnails bucket:
+#
+#   * "lg" (~400 px long side) — used as the placeholder/fallback inside
+#     the immersive view and anywhere we render at roughly screen-width.
+#   * "sm" (~512 px long side) — served to the 4-column timeline grid.
+#
+# Naming note: "sm" stands for "small file" (it is the smaller JPEG of the
+# two), but its pixel budget is intentionally a bit *larger* than the
+# legacy detail tier so the grid stays sharp on modern 1080p phones.
+#
+# Pixel budget rationale: the grid cell ends up roughly 85 logical px on a
+# typical phone, which is 234 physical px at DPR 2.75 (Xiaomi 12T) and 340
+# at DPR 4.0. Source images go through BoxFit.cover, so the *short* side
+# of the source must be ≥ the cell physical px to avoid paint-time
+# upscaling (which is what makes thumbnails look soft). For 4:3 photos
+# (the common phone-camera ratio) that means long side ≥ ~340 / 0.75 ≈
+# 453 px to cover DPR 4.0; we round up to 512 to also keep 16:9 photos
+# crisp on DPR ≤ 3 and only mildly soft on DPR 3.5+. Memory cost is
+# unchanged because the client always passes `memCacheWidth ≈ cell-DPR
+# px`, so the decoded bitmap is the same regardless of source pixel count.
 THUMBNAIL_MAX_SIZE = (400, 400)
-THUMBNAIL_SM_MAX_SIZE = (200, 200)
+THUMBNAIL_SM_MAX_SIZE = (512, 512)
 THUMBNAIL_QUALITY = 80
 
 
@@ -171,17 +185,21 @@ def _generate_thumbnails(file_data: bytes) -> tuple[bytes, bytes]:
     `Image.MAX_IMAGE_PIXELS` and the `with` block guard against
     decompression-bomb inputs and leaked file handles (Step 8 §1.2
     storage P0).
+
+    Both tiers downsample from the *original* decoded image rather than
+    chaining (large → small). This matters now that the small tier
+    (512 px) is allowed to be larger than the large tier (400 px); if we
+    derived `small` from `large` it would be capped at 400 px and the
+    grid would silently lose half the resolution we asked for.
     """
     with Image.open(io.BytesIO(file_data)) as img:
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
-        # Build the large tier first (in-place), then derive the small
-        # tier from it via a copy + further downscale. We can't reuse
-        # the same Image object for two thumbnails because `thumbnail`
-        # mutates in place.
+
         large = img.copy()
         large.thumbnail(THUMBNAIL_MAX_SIZE, Image.LANCZOS)
-        small = large.copy()
+
+        small = img.copy()
         small.thumbnail(THUMBNAIL_SM_MAX_SIZE, Image.LANCZOS)
 
         large_buf = io.BytesIO()

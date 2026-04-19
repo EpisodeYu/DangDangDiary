@@ -25,17 +25,25 @@ class PhotoGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Each grid tile is roughly 1/4 of the screen width minus padding —
-    // ~90 logical pixels on a typical phone. Decoding the 400×400 server
-    // thumbnail at that physical size (DPR 3 → ~270 px) keeps each entry
-    // tiny in the image cache so dozens of tiles stay warm and don't get
-    // evicted (and re-decoded) as the user scrolls.
+    // ~90 logical pixels on a typical phone. We pass ONLY one cache
+    // dimension so `ResizeImage` keeps the source aspect ratio: setting
+    // both `memCacheWidth` and `memCacheHeight` makes
+    // `ResizeImagePolicy.exact` (the cached_network_image default) decode
+    // every photo as a square, which visibly distorts non-1:1 photos in
+    // the grid. The server thumbnails are already capped at 200/400 px on
+    // the long side, so capping width here just ensures the fallback
+    // (large) tier on legacy rows decodes at a reasonable size without
+    // ever stretching the image.
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cachePx = (110 * dpr).round().clamp(180, 420);
-    // Prefer the small (~200 px) tier when available — it decodes to
-    // roughly a quarter of the bytes of the standard thumbnail, which is
-    // what makes 4-col scrolling feel like the system photo album. The
-    // server returns an empty string for legacy rows, in which case the
-    // model's `gridThumbnailUrl` falls back to the larger tier.
+    // Prefer the grid tier (`thumbnail_sm_url`, ~512 px long side) — its
+    // pixel budget is sized so the source short side ≥ a 4-col grid cell
+    // on every common DPR (2.0–3.5), which keeps thumbnails crisp instead
+    // of relying on paint-time upscaling. The legacy 400 px detail tier
+    // is used as fallback when the server hasn't generated the grid tier
+    // yet (old rows). Either way, `memCacheWidth` above caps the decoded
+    // bitmap to roughly the cell physical size, so RAM usage is the same
+    // whichever URL we resolve.
     final url = photo.gridThumbnailUrl;
     return GestureDetector(
       onTap: onTap,
@@ -53,7 +61,6 @@ class PhotoGridTile extends StatelessWidget {
                   imageUrl: url,
                   fit: BoxFit.cover,
                   memCacheWidth: cachePx,
-                  memCacheHeight: cachePx,
                   fadeInDuration: const Duration(milliseconds: 120),
                   fadeOutDuration: const Duration(milliseconds: 60),
                   placeholder: (context, _) => Container(

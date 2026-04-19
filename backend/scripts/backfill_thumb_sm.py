@@ -9,12 +9,20 @@ generates the small thumbnail, uploads it, and records the new key.
 Usage::
 
     cd backend
-    python -m scripts.backfill_thumb_sm           # run for real
-    python -m scripts.backfill_thumb_sm --dry-run # show what would happen
+    python -m scripts.backfill_thumb_sm                 # run for real
+    python -m scripts.backfill_thumb_sm --dry-run       # preview only
+    python -m scripts.backfill_thumb_sm --force         # also re-resize
+                                                        # rows whose small
+                                                        # key already
+                                                        # exists (use this
+                                                        # after bumping
+                                                        # THUMBNAIL_SM_MAX_SIZE)
 
-The script is idempotent: re-running it skips rows that already have a
-small key, and any per-row failure is logged and skipped without aborting
-the rest of the batch.
+The script is idempotent: a normal run skips rows that already have a
+small key, `--force` re-uploads the small tier from the *current* large
+thumbnail so resizing the constant in `storage.THUMBNAIL_SM_MAX_SIZE`
+will actually take effect for legacy data. Per-row failures are logged
+and skipped without aborting the rest of the batch.
 """
 from __future__ import annotations
 
@@ -87,15 +95,14 @@ def _upload_sm(bucket: str, key: str, data: bytes) -> None:
     )
 
 
-async def _candidates(session: AsyncSession) -> Iterable[Photo]:
-    stmt = select(Photo).where(
-        Photo.thumbnail_sm_key.is_(None),
-        Photo.thumbnail_key.is_not(None),
-    )
+async def _candidates(session: AsyncSession, *, include_existing: bool) -> Iterable[Photo]:
+    stmt = select(Photo).where(Photo.thumbnail_key.is_not(None))
+    if not include_existing:
+        stmt = stmt.where(Photo.thumbnail_sm_key.is_(None))
     return (await session.execute(stmt)).scalars().all()
 
 
-async def run(*, dry_run: bool) -> int:
+async def run(*, dry_run: bool, force: bool) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     _ensure_bucket(settings.MINIO_BUCKET_THUMBNAILS, public=True)
@@ -106,8 +113,10 @@ async def run(*, dry_run: bool) -> int:
     processed = 0
     failed = 0
     async with SessionLocal() as session:
-        rows = list(await _candidates(session))
-        logger.info("Found %d photos missing the small thumbnail", len(rows))
+        rows = list(await _candidates(session, include_existing=force))
+        logger.info(
+            "Found %d photo(s) to process (force=%s)", len(rows), force,
+        )
 
         for photo in rows:
             sm_key = _build_sm_key_from_thumbnail(photo.thumbnail_key or "")
@@ -144,7 +153,8 @@ async def run(*, dry_run: bool) -> int:
 
     await engine.dispose()
     logger.info(
-        "Done. processed=%d failed=%d dry_run=%s", processed, failed, dry_run,
+        "Done. processed=%d failed=%d dry_run=%s force=%s",
+        processed, failed, dry_run, force,
     )
     return 1 if failed else 0
 
@@ -156,8 +166,17 @@ def main() -> None:
         action="store_true",
         help="Print what would be done without writing to MinIO or the DB",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-resize photos that already have a small thumbnail. Use this "
+            "after changing THUMBNAIL_SM_MAX_SIZE so legacy small thumbs "
+            "are regenerated at the new pixel budget."
+        ),
+    )
     args = parser.parse_args()
-    sys.exit(asyncio.run(run(dry_run=args.dry_run)))
+    sys.exit(asyncio.run(run(dry_run=args.dry_run, force=args.force)))
 
 
 if __name__ == "__main__":

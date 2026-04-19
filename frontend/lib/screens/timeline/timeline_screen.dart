@@ -103,10 +103,20 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       if (!_prefetchedThumbIds.add(photo.id)) continue;
       final url = photo.gridThumbnailUrl;
       if (url.isEmpty) continue;
-      final provider = CachedNetworkImageProvider(
-        url,
-        maxWidth: cachePx,
-        maxHeight: cachePx,
+      // IMPORTANT: build the *same* provider chain `CachedNetworkImage`
+      // uses inside `PhotoGridTile`. The widget constructs a bare
+      // `CachedNetworkImageProvider` (no maxWidth/maxHeight on disk
+      // cache) and then wraps it in `ResizeImage(width: memCacheWidth)`.
+      // Matching that exactly is what makes the warmed entry's cache key
+      // collide with the one the tile resolves at paint time — otherwise
+      // the prefetch downloads a duplicate the tile never reads.
+      //
+      // We also pass ONLY `width:` (not `height:`) so `ResizeImage` keeps
+      // the source aspect ratio. Setting both would force
+      // `ResizeImagePolicy.exact` and visibly stretch non-square photos.
+      final provider = ResizeImage(
+        CachedNetworkImageProvider(url),
+        width: cachePx,
       );
       // precacheImage drives the provider to `resolve()` and pins the
       // decoded bitmap into `imageCache` until eviction. We swallow
