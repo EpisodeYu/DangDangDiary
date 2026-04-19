@@ -260,3 +260,18 @@ async def remove_member(
     await db.delete(member)
     await db.flush()
     await db.commit()
+
+
+async def leave_pet(
+    db: AsyncSession,
+    pet_id: int,
+    user_id: int,
+) -> None:
+    _, member = await get_pet_membership(pet_id, user_id, db)
+    if member.role == MemberRole.OWNER:
+        raise AppException(
+            400, "SHARE_OWNER_CANNOT_LEAVE", "档案所有者不能退出共享"
+        )
+    await db.delete(member)
+    await db.flush()
+    await db.commit()

@@ -99,3 +99,13 @@ async def delete_member(
 ):
     await share_service.remove_member(db, pet_id, member_user_id, user_id)
     return Response(status_code=204)
+
+
+@router.post("/{pet_id}/leave", status_code=204)
+async def leave_pet(
+    pet_id: int,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    await share_service.leave_pet(db, pet_id, user_id)
+    return Response(status_code=204)

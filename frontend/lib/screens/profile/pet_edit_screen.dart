@@ -80,6 +80,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   double? _uploadProgress;
 
   bool get _isEditing => widget.petId != null;
+  bool get _isOwner => _existingPet?.isOwner ?? true;
+  bool get _isViewer => _existingPet?.role == PetRole.viewer;
+  bool get _canEdit => !_isEditing || !_isViewer;
 
   @override
   void dispose() {
@@ -112,7 +115,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditing ? '编辑宠物档案' : '创建宠物档案'),
+        title: Text(_appBarTitle()),
       ),
       body: Form(
         key: _formKey,
@@ -129,19 +132,30 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             const SizedBox(height: 16),
             _buildBirthdayField(),
             const SizedBox(height: 32),
-            _buildSaveButton(),
+            if (_canEdit) _buildSaveButton(),
             if (!_isEditing) ...[
               const SizedBox(height: 12),
               _buildRedeemButton(),
             ],
             if (_isEditing) ...[
-              const SizedBox(height: 16),
-              _buildDeleteButton(),
+              SizedBox(height: _canEdit ? 16 : 0),
+              _buildBottomActionButton(),
             ],
           ],
         ),
       ),
     );
+  }
+
+  String _appBarTitle() {
+    if (!_isEditing) return '创建宠物档案';
+    if (_isOwner) return '编辑宠物档案';
+    if (_isViewer) return '查看宠物档案';
+    return '编辑宠物档案';
+  }
+
+  Widget _buildBottomActionButton() {
+    return _isOwner ? _buildDeleteButton() : _buildLeaveButton();
   }
 
   Widget _buildRedeemButton() {
@@ -246,9 +260,12 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
 
   Widget _buildAvatarSection() {
     final isUploading = _uploadProgress != null;
+    final editable = _canEdit;
     return Center(
       child: GestureDetector(
-        onTap: isUploading ? null : (_isEditing ? _pickAndUploadAvatar : _pickAvatar),
+        onTap: !editable || isUploading
+            ? null
+            : (_isEditing ? _pickAndUploadAvatar : _pickAvatar),
         child: Stack(
           children: [
             CircleAvatar(
@@ -284,7 +301,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                   ),
                 ),
               ),
-            if (!isUploading)
+            if (!isUploading && editable)
               Positioned(
                 bottom: 0,
                 right: 0,
@@ -373,6 +390,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   Widget _buildNameField() {
     return TextFormField(
       controller: _nameController,
+      readOnly: !_canEdit,
       inputFormatters: const [_WeightedLengthFormatter(30)],
       decoration: InputDecoration(
         labelText: '宠物名字 *',
@@ -408,6 +426,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         return TextFormField(
           controller: controller,
           focusNode: focusNode,
+          readOnly: !_canEdit,
           decoration: InputDecoration(
             labelText: '品种',
             hintText: '选择或输入品种',
@@ -449,7 +468,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
 
   Widget _buildBirthdayField() {
     return GestureDetector(
-      onTap: _pickBirthday,
+      onTap: _canEdit ? _pickBirthday : null,
       child: AbsorbPointer(
         child: TextFormField(
           decoration: InputDecoration(
@@ -505,6 +524,68 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildLeaveButton() {
+    return SizedBox(
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: _isLoading ? null : _confirmAndLeave,
+        icon: const Icon(Icons.exit_to_app),
+        label: const Text('不再查看此宠物档案', style: TextStyle(fontSize: 16)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.errorColor,
+          side: const BorderSide(color: AppTheme.errorColor),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmAndLeave() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('不再查看此宠物档案'),
+        content: const Text('确认后将解除对该宠物档案的共享，之后将无法再查看或编辑此档案。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.errorColor),
+            child: const Text('确认'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isLoading = true);
+    try {
+      await ref.read(shareServiceProvider).leaveSharedPet(widget.petId!);
+
+      final selectedId = ref.read(selectedPetIdProvider);
+      if (selectedId == widget.petId) {
+        ref.read(selectedPetIdProvider.notifier).select(null);
+      }
+      ref.read(petListProvider.notifier).refresh();
+
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(shareErrorToMessage(e))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Future<void> _confirmAndDelete() async {

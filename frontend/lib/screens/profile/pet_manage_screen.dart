@@ -93,11 +93,9 @@ class PetManageScreen extends ConsumerWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () async {
-          if (pet.isOwner) {
-            final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
-            if (updated == true) {
-              ref.read(petListProvider.notifier).refresh();
-            }
+          final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
+          if (updated == true) {
+            ref.read(petListProvider.notifier).refresh();
           }
         },
         child: Padding(
@@ -135,8 +133,7 @@ class PetManageScreen extends ConsumerWidget {
                   ],
                 ),
               ),
-              if (pet.isOwner)
-                const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+              const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
             ],
           ),
         ),
@@ -175,18 +172,22 @@ class PetManageScreen extends ConsumerWidget {
 
   Widget _buildRoleBadge(PetRole role) {
     late final Color bg, fg;
+    late final String label;
     switch (role) {
       case PetRole.owner:
         bg = const Color(0xFFFFE5E5);
         fg = const Color(0xFFD64545);
+        label = '主人';
         break;
       case PetRole.editor:
         bg = const Color(0xFFE5F0FF);
         fg = const Color(0xFF2D6BD6);
+        label = '共享';
         break;
       case PetRole.viewer:
         bg = const Color(0xFFE8F5EA);
         fg = const Color(0xFF3E8E50);
+        label = '查看';
         break;
     }
     return Container(
@@ -196,7 +197,7 @@ class PetManageScreen extends ConsumerWidget {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
-        petRoleLabel(role),
+        label,
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w600,

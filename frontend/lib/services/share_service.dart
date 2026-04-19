@@ -53,6 +53,10 @@ class ShareService {
   Future<void> removeMember(int petId, int userId) async {
     await _dio.delete('/pets/$petId/members/$userId');
   }
+
+  Future<void> leaveSharedPet(int petId) async {
+    await _dio.post('/pets/$petId/leave');
+  }
 }
 
 /// Maps share-related backend errors to user-friendly Chinese messages.
@@ -82,6 +86,8 @@ String shareErrorToMessage(Object error) {
         return '当前权限不足，无法执行';
       case 'SHARE_CODE_GENERATION_FAILED':
         return '分享码生成失败，请重试';
+      case 'SHARE_OWNER_CANNOT_LEAVE':
+        return '档案所有者不能退出共享';
     }
   }
   return '操作失败，请稍后重试';

@@ -233,12 +233,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       _showSnack('已删除');
     } on DioException catch (e) {
       if (!mounted) return;
-      final data = e.response?.data;
-      String message = '删除失败，请稍后重试';
-      if (data is Map<String, dynamic>) {
-        message = (data['message'] as String?) ?? message;
-      }
-      _showSnack(message);
+      _showSnack(_deleteErrorMessage(e));
     } catch (_) {
       if (!mounted) return;
       _showSnack('删除失败，请稍后重试');
@@ -254,10 +249,14 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     final service = ref.read(_photoServiceProvider);
     final deleted = <int>[];
     final failed = <int>[];
+    bool anyPermissionFailure = false;
     for (final id in ids) {
       try {
         await service.deletePhoto(id);
         deleted.add(id);
+      } on DioException catch (e) {
+        failed.add(id);
+        if (_isPermissionError(e)) anyPermissionFailure = true;
       } catch (_) {
         failed.add(id);
       }
@@ -270,10 +269,26 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     if (failed.isEmpty) {
       _showSnack('已删除 ${deleted.length} 张');
     } else if (deleted.isEmpty) {
-      _showSnack('删除失败，请稍后重试');
+      _showSnack(anyPermissionFailure ? '无删除权限' : '删除失败，请稍后重试');
     } else {
-      _showSnack('已删除 ${deleted.length} 张，${failed.length} 张失败');
+      final suffix = anyPermissionFailure ? '${failed.length} 张无删除权限' : '${failed.length} 张失败';
+      _showSnack('已删除 ${deleted.length} 张，$suffix');
     }
+  }
+
+  bool _isPermissionError(DioException e) {
+    final data = e.response?.data;
+    if (data is Map && data['code'] == 'PET_EDITOR_REQUIRED') return true;
+    return e.response?.statusCode == 403;
+  }
+
+  String _deleteErrorMessage(DioException e) {
+    if (_isPermissionError(e)) return '无删除权限';
+    final data = e.response?.data;
+    if (data is Map<String, dynamic>) {
+      return (data['message'] as String?) ?? '删除失败，请稍后重试';
+    }
+    return '删除失败，请稍后重试';
   }
 
   void _showSnack(String msg) {
