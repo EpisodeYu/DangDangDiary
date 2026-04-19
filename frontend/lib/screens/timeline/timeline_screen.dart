@@ -577,19 +577,32 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   }
 
   Widget _buildImmersiveTail(TimelineState state) {
-    if (state.isLoadingOlder) {
+    // Treat "more to load but not yet fetching" the same as actively loading —
+    // the scroll listener will kick off loadOlder() momentarily, and showing
+    // a spinner is friendlier than an empty gap or a premature "end" message.
+    if (state.hasMoreOlder || state.isLoadingOlder) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(
-          child: SizedBox(
-            width: 22,
-            height: 22,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              SizedBox(width: 8),
+              Text(
+                '— 正在加载 —',
+                style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
+              ),
+            ],
           ),
         ),
       );
     }
-    if (!state.hasMoreOlder && state.orderedPhotoIds.isNotEmpty) {
+    if (state.orderedPhotoIds.isNotEmpty) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 24),
         child: Center(
