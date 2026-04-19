@@ -74,7 +74,17 @@ final selectedPetProvider = Provider<Pet?>((ref) {
     }
   }
 
-  return pets.first;
+  // Default to the earliest-added pet so newly created pets don't replace
+  // the user's primary pet on the Record / Health pages. The list comes back
+  // newest-first per API convention, but we still sort defensively in case
+  // the order ever changes.
+  Pet earliest = pets.first;
+  for (final pet in pets) {
+    if (pet.createdAt.compareTo(earliest.createdAt) < 0) {
+      earliest = pet;
+    }
+  }
+  return earliest;
 });
 
 final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);

@@ -769,7 +769,12 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           if (mounted) setState(() => _uploadProgress = null);
         }
 
-        ref.read(selectedPetIdProvider.notifier).select(created.id);
+        // Only auto-select when this is the very first pet for the user.
+        // Otherwise we'd override the "default to earliest-added pet" behavior
+        // on the Record / Health pages.
+        if (ref.read(selectedPetIdProvider) == null) {
+          ref.read(selectedPetIdProvider.notifier).select(created.id);
+        }
       }
 
       ref.read(petListProvider.notifier).refresh();
