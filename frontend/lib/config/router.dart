@@ -18,6 +18,8 @@ import '../screens/ai/ai_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../screens/profile/pet_manage_screen.dart';
 import '../screens/profile/pet_edit_screen.dart';
+import '../screens/profile/share/pet_share_list_screen.dart';
+import '../screens/profile/share/pet_share_detail_screen.dart';
 import '../widgets/main_scaffold.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -62,11 +64,24 @@ final routerProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const PetEditScreen(),
       ),
       GoRoute(
+        path: '/profile/pets/share',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) => const PetShareListScreen(),
+      ),
+      GoRoute(
         path: '/profile/pets/:petId/edit',
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) {
           final petId = int.parse(state.pathParameters['petId']!);
           return PetEditScreen(petId: petId);
+        },
+      ),
+      GoRoute(
+        path: '/profile/pets/:petId/share',
+        parentNavigatorKey: _rootNavigatorKey,
+        builder: (context, state) {
+          final petId = int.parse(state.pathParameters['petId']!);
+          return PetShareDetailScreen(petId: petId);
         },
       ),
 

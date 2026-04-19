@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 import app.models  # noqa: F401  ensure all ORM models are registered
 from app.models.deworming import Deworming, DewormingType
-from app.models.pet import MemberRole, Pet, PetMember
+from app.models.pet import MemberRole, Pet, PetMember, PetShareCode
 from app.models.photo import Photo
 from app.models.routine import Routine, RoutineType
 from app.models.user import User
@@ -120,7 +120,7 @@ async def test_invite_code_unique_per_pet(client):
 
 # ---------------- Owner vs member ----------------
 
-async def test_member_can_read_but_not_write(client, test_engine):
+async def test_viewer_can_read_but_not_write(client, test_engine):
     c, _ = client
 
     token_a, _ = await _login(c, "13800139003")
@@ -131,10 +131,10 @@ async def test_member_can_read_but_not_write(client, test_engine):
     token_b, user_b_id = await _login(c, "13800139004")
     headers_b = {"Authorization": f"Bearer {token_b}"}
 
-    # Manually enroll B as a MEMBER of A's pet.
+    # Manually enroll B as a VIEWER of A's pet.
     sm = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
     async with sm() as s:
-        s.add(PetMember(pet_id=pet_id, user_id=user_b_id, role=MemberRole.MEMBER))
+        s.add(PetMember(pet_id=pet_id, user_id=user_b_id, role=MemberRole.VIEWER))
         await s.commit()
 
     # B can read detail — invite_code suppressed for non-owner.
@@ -142,7 +142,7 @@ async def test_member_can_read_but_not_write(client, test_engine):
     assert resp.status_code == 200
     body = resp.json()
     assert body["is_owner"] is False
-    assert body["my_role"] == "member"
+    assert body["my_role"] == "viewer"
     assert body["invite_code"] is None
 
     # B sees the pet in list.
@@ -153,7 +153,7 @@ async def test_member_can_read_but_not_write(client, test_engine):
     # B cannot update.
     resp = await c.put(f"/pets/{pet_id}", json={"name": "x"}, headers=headers_b)
     assert resp.status_code == 403
-    assert resp.json()["code"] == "PET_OWNER_REQUIRED"
+    assert resp.json()["code"] == "PET_EDITOR_REQUIRED"
 
     # B cannot delete.
     resp = await c.delete(f"/pets/{pet_id}", headers=headers_b)
@@ -163,6 +163,51 @@ async def test_member_can_read_but_not_write(client, test_engine):
     # B cannot upload avatar.
     files = {"file": ("x.jpg", b"\xff\xd8\xff" + b"\x00" * 100, "image/jpeg")}
     resp = await c.post(f"/pets/{pet_id}/avatar", files=files, headers=headers_b)
+    assert resp.status_code == 403
+    assert resp.json()["code"] == "PET_EDITOR_REQUIRED"
+
+
+async def test_editor_can_write_but_not_delete_pet(client, test_engine):
+    c, _ = client
+
+    token_a, _ = await _login(c, "13811139003")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    pet = await _create_pet(c, headers_a, name="花花")
+    pet_id = pet["id"]
+
+    token_b, user_b_id = await _login(c, "13811139004")
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+
+    sm = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    async with sm() as s:
+        s.add(PetMember(pet_id=pet_id, user_id=user_b_id, role=MemberRole.EDITOR))
+        await s.commit()
+
+    # Detail shows "editor".
+    resp = await c.get(f"/pets/{pet_id}", headers=headers_b)
+    assert resp.status_code == 200
+    assert resp.json()["my_role"] == "editor"
+
+    # B can update.
+    resp = await c.put(
+        f"/pets/{pet_id}", json={"name": "新名字"}, headers=headers_b,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["name"] == "新名字"
+
+    # B can upload avatar.
+    fake_url = "http://public.example.com/media/avatars/pets/x/editor.jpg"
+    files = {"file": ("x.jpg", b"\xff\xd8\xff" + b"\x00" * 256, "image/jpeg")}
+    with patch(
+        "app.services.storage.upload_pet_avatar", return_value=fake_url
+    ):
+        resp = await c.post(
+            f"/pets/{pet_id}/avatar", files=files, headers=headers_b,
+        )
+    assert resp.status_code == 200, resp.text
+
+    # B still cannot delete the pet.
+    resp = await c.delete(f"/pets/{pet_id}", headers=headers_b)
     assert resp.status_code == 403
     assert resp.json()["code"] == "PET_OWNER_REQUIRED"
 
@@ -295,7 +340,10 @@ async def test_delete_pet_cascades_all_tables_and_minio(client, test_engine):
 
     # Verify every child table is empty and the pet is gone.
     async with sm() as s:
-        for model in (Photo, Weight, Deworming, Vaccination, Routine, PetMember):
+        for model in (
+            Photo, Weight, Deworming, Vaccination, Routine,
+            PetShareCode, PetMember,
+        ):
             rows = (
                 await s.execute(select(model).where(model.pet_id == pet_id))
             ).scalars().all()

@@ -15,7 +15,8 @@ class PetType(str, enum.Enum):
 
 class MemberRole(str, enum.Enum):
     OWNER = "owner"
-    MEMBER = "member"
+    EDITOR = "editor"
+    VIEWER = "viewer"
 
 
 class Pet(Base):
@@ -54,4 +55,24 @@ class PetMember(Base):
     pet_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("pets.id"), nullable=False)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id"), nullable=False)
     role: Mapped[MemberRole] = mapped_column(Enum(MemberRole), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PetShareCode(Base):
+    __tablename__ = "pet_share_codes"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    pet_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("pets.id"), nullable=False, index=True
+    )
+    code: Mapped[str] = mapped_column(String(16), unique=True, nullable=False)
+    created_by: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    used_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id"), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

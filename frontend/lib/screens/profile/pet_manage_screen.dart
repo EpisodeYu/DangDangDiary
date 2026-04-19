@@ -88,6 +88,72 @@ class PetManageScreen extends ConsumerWidget {
   }
 
   Widget _buildPetCard(BuildContext context, WidgetRef ref, Pet pet) {
+    final card = Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () async {
+          if (pet.isOwner) {
+            final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
+            if (updated == true) {
+              ref.read(petListProvider.notifier).refresh();
+            }
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              _buildAvatar(pet),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      pet.name,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    if (pet.breed != null && pet.breed!.isNotEmpty)
+                      Text(
+                        pet.breed!,
+                        style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+                      ),
+                    if (_formatAge(pet.birthday) != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(
+                          _formatAge(pet.birthday)!,
+                          style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (pet.isOwner)
+                const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final stacked = Stack(
+      children: [
+        card,
+        Positioned(
+          top: 8,
+          right: 12,
+          child: _buildRoleBadge(pet.role),
+        ),
+      ],
+    );
+
     return Dismissible(
       key: ValueKey(pet.id),
       direction: pet.isOwner ? DismissDirection.endToStart : DismissDirection.none,
@@ -103,76 +169,38 @@ class PetManageScreen extends ConsumerWidget {
       ),
       confirmDismiss: (_) => _confirmDelete(context),
       onDismissed: (_) => _deletePet(context, ref, pet.id),
-      child: Card(
-        margin: const EdgeInsets.only(bottom: 12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: () async {
-            if (pet.isOwner) {
-              final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
-              if (updated == true) {
-                ref.read(petListProvider.notifier).refresh();
-              }
-            }
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                _buildAvatar(pet),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              pet.name,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: AppTheme.textPrimary,
-                              ),
-                            ),
-                          ),
-                          if (!pet.isOwner)
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: AppTheme.textSecondary.withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Text(
-                                '共享',
-                                style: TextStyle(fontSize: 11, color: AppTheme.textSecondary),
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      if (pet.breed != null && pet.breed!.isNotEmpty)
-                        Text(
-                          pet.breed!,
-                          style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-                        ),
-                      if (_formatAge(pet.birthday) != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            _formatAge(pet.birthday)!,
-                            style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (pet.isOwner)
-                  const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
-              ],
-            ),
-          ),
+      child: stacked,
+    );
+  }
+
+  Widget _buildRoleBadge(PetRole role) {
+    late final Color bg, fg;
+    switch (role) {
+      case PetRole.owner:
+        bg = const Color(0xFFFFE5E5);
+        fg = const Color(0xFFD64545);
+        break;
+      case PetRole.editor:
+        bg = const Color(0xFFE5F0FF);
+        fg = const Color(0xFF2D6BD6);
+        break;
+      case PetRole.viewer:
+        bg = const Color(0xFFE8F5EA);
+        fg = const Color(0xFF3E8E50);
+        break;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        petRoleLabel(role),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: fg,
         ),
       ),
     );

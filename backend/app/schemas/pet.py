@@ -43,6 +43,8 @@ class PetResponse(BaseModel):
     breed: str | None
     birthday: date | None
     avatar_url: str | None
+    # Deprecated since Phase 2 step1, kept for backward compatibility, will be
+    # removed in a later step. Use the share-code APIs instead.
     invite_code: str | None
     internal_deworming_cycle_days: int | None
     external_deworming_cycle_days: int | None
@@ -58,6 +60,7 @@ class PetResponse(BaseModel):
     grooming_reminder_enabled: bool
     is_owner: bool
     my_role: MemberRole
+    share_code_active: bool = False
     created_at: datetime
     updated_at: datetime
 

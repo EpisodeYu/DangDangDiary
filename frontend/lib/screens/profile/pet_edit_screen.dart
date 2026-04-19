@@ -10,6 +10,8 @@ import 'package:path_provider/path_provider.dart';
 import '../../config/theme.dart';
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
+import '../../providers/share_provider.dart';
+import '../../services/share_service.dart';
 
 const _catBreeds = [
   '中华田园猫', '英国短毛猫', '美国短毛猫', '布偶猫', '暹罗猫',
@@ -128,6 +130,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             _buildBirthdayField(),
             const SizedBox(height: 32),
             _buildSaveButton(),
+            if (!_isEditing) ...[
+              const SizedBox(height: 12),
+              _buildRedeemButton(),
+            ],
             if (_isEditing) ...[
               const SizedBox(height: 16),
               _buildDeleteButton(),
@@ -136,6 +142,106 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         ),
       ),
     );
+  }
+
+  Widget _buildRedeemButton() {
+    return SizedBox(
+      height: 48,
+      child: OutlinedButton.icon(
+        onPressed: _isLoading ? null : _showRedeemDialog,
+        icon: const Icon(Icons.qr_code_2),
+        label: const Text('通过分享码添加档案', style: TextStyle(fontSize: 16)),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.primaryColor,
+          side: const BorderSide(color: AppTheme.primaryColor),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showRedeemDialog() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              title: const Text('输入分享码'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: controller,
+                    autofocus: true,
+                    textCapitalization: TextCapitalization.characters,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9]')),
+                      LengthLimitingTextInputFormatter(8),
+                      TextInputFormatter.withFunction((old, n) {
+                        return n.copyWith(text: n.text.toUpperCase());
+                      }),
+                    ],
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      letterSpacing: 4,
+                      fontSize: 20,
+                    ),
+                    decoration: const InputDecoration(
+                      hintText: 'ABCD1234',
+                      counterText: '',
+                    ),
+                    onChanged: (_) => setLocal(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '请输入对方分享的 8 位分享码',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('取消'),
+                ),
+                TextButton(
+                  onPressed: controller.text.length == 8
+                      ? () => Navigator.of(ctx).pop(controller.text)
+                      : null,
+                  child: const Text('确定'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null || !mounted) return;
+    await _redeem(result);
+  }
+
+  Future<void> _redeem(String code) async {
+    setState(() => _isLoading = true);
+    try {
+      final pet = await ref.read(shareServiceProvider).redeemCode(code);
+      ref.read(petListProvider.notifier).refresh();
+      ref.read(selectedPetIdProvider.notifier).select(pet.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已添加共享档案：${pet.name}')),
+      );
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(shareErrorToMessage(e))),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Widget _buildAvatarSection() {

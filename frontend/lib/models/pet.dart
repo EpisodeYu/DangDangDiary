@@ -1,3 +1,39 @@
+enum PetRole { owner, editor, viewer }
+
+PetRole petRoleFromString(String s) {
+  switch (s) {
+    case 'owner':
+      return PetRole.owner;
+    case 'editor':
+      return PetRole.editor;
+    case 'viewer':
+      return PetRole.viewer;
+  }
+  throw ArgumentError('Unknown pet role: $s');
+}
+
+String petRoleLabel(PetRole r) {
+  switch (r) {
+    case PetRole.owner:
+      return '拥有';
+    case PetRole.editor:
+      return '编辑';
+    case PetRole.viewer:
+      return '查看';
+  }
+}
+
+String petRoleApiValue(PetRole r) {
+  switch (r) {
+    case PetRole.owner:
+      return 'owner';
+    case PetRole.editor:
+      return 'editor';
+    case PetRole.viewer:
+      return 'viewer';
+  }
+}
+
 class Pet {
   final int id;
   final String name;
@@ -20,8 +56,12 @@ class Pet {
   final bool groomingReminderEnabled;
   final bool isOwner;
   final String myRole;
+  final bool shareCodeActive;
   final String createdAt;
   final String updatedAt;
+
+  PetRole get role => petRoleFromString(myRole);
+  String get roleLabel => petRoleLabel(role);
 
   const Pet({
     required this.id,
@@ -45,6 +85,7 @@ class Pet {
     required this.groomingReminderEnabled,
     required this.isOwner,
     required this.myRole,
+    this.shareCodeActive = false,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -72,6 +113,7 @@ class Pet {
       groomingReminderEnabled: (json['grooming_reminder_enabled'] as bool?) ?? false,
       isOwner: json['is_owner'] as bool,
       myRole: json['my_role'] as String,
+      shareCodeActive: (json['share_code_active'] as bool?) ?? false,
       createdAt: json['created_at'] as String,
       updatedAt: json['updated_at'] as String,
     );
@@ -100,6 +142,7 @@ class Pet {
       'grooming_reminder_enabled': groomingReminderEnabled,
       'is_owner': isOwner,
       'my_role': myRole,
+      'share_code_active': shareCodeActive,
       'created_at': createdAt,
       'updated_at': updatedAt,
     };

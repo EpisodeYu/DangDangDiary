@@ -93,6 +93,13 @@ class ProfileScreen extends ConsumerWidget {
                 const Divider(height: 1, indent: 56),
                 _buildMenuItem(
                   context,
+                  icon: Icons.ios_share,
+                  title: '宠物档案分享',
+                  onTap: () => context.push('/profile/pets/share'),
+                ),
+                const Divider(height: 1, indent: 56),
+                _buildMenuItem(
+                  context,
                   icon: Icons.swap_horiz,
                   title: '切换账号',
                   onTap: () => _showLogoutDialog(context, ref),

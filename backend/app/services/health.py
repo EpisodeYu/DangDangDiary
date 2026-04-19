@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import AppException
 from app.utils.time import utcnow
 from app.models.deworming import Deworming, DewormingType
-from app.models.pet import Pet
+from app.models.pet import MemberRole, Pet
 from app.models.routine import Routine, RoutineType
 from app.models.vaccination import Vaccination
 from app.models.weight import Weight
@@ -48,7 +48,7 @@ async def create_weight(
     user_id: int,
     data: WeightCreate,
 ) -> WeightResponse:
-    await get_pet_membership(pet_id, user_id, db)
+    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     weight = Weight(
         pet_id=pet_id,
@@ -109,7 +109,7 @@ async def update_weight(
     if weight is None:
         raise AppException(404, "WEIGHT_NOT_FOUND", "体重记录不存在")
 
-    await get_pet_membership(weight.pet_id, user_id, db)
+    await get_pet_membership(weight.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     weight.weight_kg = data.weight_kg
     weight.recorded_at = data.recorded_at
@@ -129,7 +129,7 @@ async def delete_weight(
     if weight is None:
         raise AppException(404, "WEIGHT_NOT_FOUND", "体重记录不存在")
 
-    await get_pet_membership(weight.pet_id, user_id, db)
+    await get_pet_membership(weight.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     await db.delete(weight)
     await db.flush()
@@ -144,7 +144,7 @@ async def create_deworming(
     user_id: int,
     data: DewormingCreate,
 ) -> DewormingResponse:
-    await get_pet_membership(pet_id, user_id, db)
+    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     deworming = Deworming(
         pet_id=pet_id,
@@ -209,7 +209,7 @@ async def update_deworming(
     if deworming is None:
         raise AppException(404, "DEWORMING_NOT_FOUND", "驱虫记录不存在")
 
-    await get_pet_membership(deworming.pet_id, user_id, db)
+    await get_pet_membership(deworming.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     deworming.deworming_type = data.deworming_type
     deworming.dewormed_at = data.dewormed_at
@@ -229,7 +229,7 @@ async def delete_deworming(
     if deworming is None:
         raise AppException(404, "DEWORMING_NOT_FOUND", "驱虫记录不存在")
 
-    await get_pet_membership(deworming.pet_id, user_id, db)
+    await get_pet_membership(deworming.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     await db.delete(deworming)
     await db.flush()
@@ -242,7 +242,9 @@ async def update_deworming_cycle(
     user_id: int,
     data: DewormingCycleUpdate,
 ) -> DewormingCycleResponse:
-    pet, _ = await get_pet_membership(pet_id, user_id, db)
+    pet, _ = await get_pet_membership(
+        pet_id, user_id, db, require_role=MemberRole.EDITOR,
+    )
 
     update_data = data.model_dump(exclude_unset=True)
     field_map = {
@@ -379,7 +381,7 @@ async def create_vaccination(
     user_id: int,
     data: VaccinationCreate,
 ) -> VaccinationResponse:
-    await get_pet_membership(pet_id, user_id, db)
+    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     vaccination = Vaccination(
         pet_id=pet_id,
@@ -444,7 +446,7 @@ async def update_vaccination(
     if record is None:
         raise AppException(404, "VACCINATION_NOT_FOUND", "疫苗记录不存在")
 
-    await get_pet_membership(record.pet_id, user_id, db)
+    await get_pet_membership(record.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     record.vaccine_type = data.vaccine_type
     record.vaccinated_at = data.vaccinated_at
@@ -464,7 +466,7 @@ async def delete_vaccination(
     if record is None:
         raise AppException(404, "VACCINATION_NOT_FOUND", "疫苗记录不存在")
 
-    await get_pet_membership(record.pet_id, user_id, db)
+    await get_pet_membership(record.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     await db.delete(record)
     await db.flush()
@@ -479,7 +481,7 @@ async def create_routine(
     user_id: int,
     data: RoutineCreate,
 ) -> RoutineResponse:
-    await get_pet_membership(pet_id, user_id, db)
+    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     routine = Routine(
         pet_id=pet_id,
@@ -544,7 +546,7 @@ async def update_routine(
     if routine is None:
         raise AppException(404, "ROUTINE_NOT_FOUND", "日常记录不存在")
 
-    await get_pet_membership(routine.pet_id, user_id, db)
+    await get_pet_membership(routine.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     routine.routine_type = data.routine_type
     routine.performed_at = data.performed_at
@@ -564,7 +566,7 @@ async def delete_routine(
     if routine is None:
         raise AppException(404, "ROUTINE_NOT_FOUND", "日常记录不存在")
 
-    await get_pet_membership(routine.pet_id, user_id, db)
+    await get_pet_membership(routine.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     await db.delete(routine)
     await db.flush()
@@ -577,7 +579,9 @@ async def update_routine_cycle(
     user_id: int,
     data: RoutineCycleUpdate,
 ) -> RoutineCycleResponse:
-    pet, _ = await get_pet_membership(pet_id, user_id, db)
+    pet, _ = await get_pet_membership(
+        pet_id, user_id, db, require_role=MemberRole.EDITOR,
+    )
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():

@@ -12,6 +12,7 @@ from starlette.responses import Response
 from app.database import get_db
 from app.dependencies import get_current_user_id
 from app.exceptions import AppException
+from app.models.pet import MemberRole
 from app.models.photo import Photo
 from app.schemas.photo import (
     PhotoListResponse,
@@ -70,7 +71,7 @@ async def upload_photos(
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
-    await get_pet_membership(pet_id, user_id, db)
+    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     if not files:
         raise AppException(400, "EMPTY_UPLOAD", "没有上传任何文件")
@@ -249,7 +250,7 @@ async def delete_photo(
     if photo is None:
         raise AppException(404, "PHOTO_NOT_FOUND", "照片不存在")
 
-    await get_pet_membership(photo.pet_id, user_id, db)
+    await get_pet_membership(photo.pet_id, user_id, db, require_role=MemberRole.EDITOR)
 
     storage_key = photo.storage_key
     thumbnail_key = photo.thumbnail_key

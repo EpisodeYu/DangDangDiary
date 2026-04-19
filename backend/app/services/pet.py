@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.exceptions import AppException
-from app.models.pet import Pet, PetMember, MemberRole
+from app.models.pet import Pet, PetMember, PetShareCode, MemberRole
 from app.schemas.pet import PetCreate, PetResponse, PetUpdate
 from app.services.storage import (
     adelete_object_by_url,
@@ -11,6 +11,15 @@ from app.services.storage import (
     aupload_pet_avatar,
 )
 from app.utils.invite_code import generate_invite_code
+from app.utils.time import utcnow
+
+
+# Strict ordering for "at-least" role checks. Higher value = more privilege.
+ROLE_LEVEL: dict[MemberRole, int] = {
+    MemberRole.VIEWER: 1,
+    MemberRole.EDITOR: 2,
+    MemberRole.OWNER: 3,
+}
 
 
 async def _unique_invite_code(db: AsyncSession) -> str:
@@ -22,7 +31,12 @@ async def _unique_invite_code(db: AsyncSession) -> str:
     raise AppException(500, "INVITE_CODE_GENERATION_FAILED", "邀请码生成失败，请重试")
 
 
-def _build_pet_response(pet: Pet, role: MemberRole) -> PetResponse:
+def _build_pet_response(
+    pet: Pet,
+    role: MemberRole,
+    *,
+    share_code_active: bool = False,
+) -> PetResponse:
     is_owner = role == MemberRole.OWNER
     return PetResponse(
         id=pet.id,
@@ -46,9 +60,25 @@ def _build_pet_response(pet: Pet, role: MemberRole) -> PetResponse:
         grooming_reminder_enabled=pet.grooming_reminder_enabled,
         is_owner=is_owner,
         my_role=role,
+        share_code_active=share_code_active if is_owner else False,
         created_at=pet.created_at,
         updated_at=pet.updated_at,
     )
+
+
+async def _has_active_share_code(db: AsyncSession, pet_id: int) -> bool:
+    now = utcnow()
+    result = await db.execute(
+        select(PetShareCode.id)
+        .where(
+            PetShareCode.pet_id == pet_id,
+            PetShareCode.revoked_at.is_(None),
+            PetShareCode.used_at.is_(None),
+            PetShareCode.expires_at > now,
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def get_pet_membership(
@@ -56,6 +86,8 @@ async def get_pet_membership(
     user_id: int,
     db: AsyncSession,
     require_owner: bool = False,
+    *,
+    require_role: MemberRole | None = None,
 ) -> tuple[Pet, PetMember]:
     result = await db.execute(select(Pet).where(Pet.id == pet_id))
     pet = result.scalar_one_or_none()
@@ -72,8 +104,15 @@ async def get_pet_membership(
     if member is None:
         raise AppException(403, "PET_FORBIDDEN", "您无权访问此宠物档案")
 
-    if require_owner and member.role != MemberRole.OWNER:
-        raise AppException(403, "PET_OWNER_REQUIRED", "只有档案所有者才能执行此操作")
+    needed = MemberRole.OWNER if require_owner else require_role
+    if needed is not None and ROLE_LEVEL[member.role] < ROLE_LEVEL[needed]:
+        if needed == MemberRole.OWNER:
+            raise AppException(
+                403, "PET_OWNER_REQUIRED", "只有档案所有者才能执行此操作"
+            )
+        raise AppException(
+            403, "PET_EDITOR_REQUIRED", "需要编辑权限才能执行此操作"
+        )
 
     return pet, member
 
@@ -139,7 +178,29 @@ async def list_user_pets(
     result = await db.execute(data_query)
     rows = result.all()
 
-    pets = [_build_pet_response(pet, role) for pet, role in rows]
+    # share_code_active is only meaningful for owners; compute lazily.
+    now = utcnow()
+    owner_pet_ids = [pet.id for pet, role in rows if role == MemberRole.OWNER]
+    active_owner_ids: set[int] = set()
+    if owner_pet_ids:
+        active_result = await db.execute(
+            select(PetShareCode.pet_id)
+            .where(
+                PetShareCode.pet_id.in_(owner_pet_ids),
+                PetShareCode.revoked_at.is_(None),
+                PetShareCode.used_at.is_(None),
+                PetShareCode.expires_at > now,
+            )
+            .distinct()
+        )
+        active_owner_ids = {pid for (pid,) in active_result.all()}
+
+    pets = [
+        _build_pet_response(
+            pet, role, share_code_active=(pet.id in active_owner_ids),
+        )
+        for pet, role in rows
+    ]
     return pets, total
 
 
@@ -149,7 +210,12 @@ async def get_pet_detail(
     user_id: int,
 ) -> PetResponse:
     pet, member = await get_pet_membership(pet_id, user_id, db)
-    return _build_pet_response(pet, member.role)
+    active = (
+        await _has_active_share_code(db, pet_id)
+        if member.role == MemberRole.OWNER
+        else False
+    )
+    return _build_pet_response(pet, member.role, share_code_active=active)
 
 
 async def update_pet(
@@ -158,7 +224,9 @@ async def update_pet(
     user_id: int,
     data: PetUpdate,
 ) -> PetResponse:
-    pet, member = await get_pet_membership(pet_id, user_id, db, require_owner=True)
+    pet, member = await get_pet_membership(
+        pet_id, user_id, db, require_role=MemberRole.EDITOR,
+    )
 
     update_data = data.model_dump(exclude_unset=True)
     for field, value in update_data.items():
@@ -167,7 +235,12 @@ async def update_pet(
     await db.flush()
     await db.commit()
     await db.refresh(pet)
-    return _build_pet_response(pet, member.role)
+    active = (
+        await _has_active_share_code(db, pet_id)
+        if member.role == MemberRole.OWNER
+        else False
+    )
+    return _build_pet_response(pet, member.role, share_code_active=active)
 
 
 async def upload_avatar(
@@ -177,7 +250,9 @@ async def upload_avatar(
     file_data: bytes,
     content_type: str,
 ) -> PetResponse:
-    pet, member = await get_pet_membership(pet_id, user_id, db, require_owner=True)
+    pet, member = await get_pet_membership(
+        pet_id, user_id, db, require_role=MemberRole.EDITOR,
+    )
 
     old_avatar_url = pet.avatar_url
 
@@ -190,7 +265,12 @@ async def upload_avatar(
     if old_avatar_url:
         await adelete_object_by_url(old_avatar_url)
 
-    return _build_pet_response(pet, member.role)
+    active = (
+        await _has_active_share_code(db, pet_id)
+        if member.role == MemberRole.OWNER
+        else False
+    )
+    return _build_pet_response(pet, member.role, share_code_active=active)
 
 
 async def delete_pet(
@@ -208,7 +288,10 @@ async def delete_pet(
     from app.models.vaccination import Vaccination
     from app.models.routine import Routine
 
-    for model in [Photo, Weight, Deworming, Vaccination, Routine, PetMember]:
+    for model in [
+        Photo, Weight, Deworming, Vaccination, Routine,
+        PetShareCode, PetMember,
+    ]:
         await db.execute(
             select(model).where(model.pet_id == pet_id)
         )
