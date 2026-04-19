@@ -126,7 +126,10 @@ Authorization: Bearer {access_token}
           "pet_id": 1,
           "pet_name": "橘子",
           "pet_type": "cat",
+          "uploader_id": 12,
+          "uploader_nickname": "小雨",
           "thumbnail_url": "/media/pet-photos/1/thumb-101.jpg",
+          "thumbnail_sm_url": "/media/pet-photos/1/thumb-101_sm.jpg",
           "taken_at": "2024-01-15",
           "created_at": "2024-01-20T10:30:00Z"
         },
@@ -135,7 +138,10 @@ Authorization: Bearer {access_token}
           "pet_id": 2,
           "pet_name": "年糕",
           "pet_type": "dog",
+          "uploader_id": 9,
+          "uploader_nickname": "妈妈",
           "thumbnail_url": "/media/pet-photos/2/thumb-99.jpg",
+          "thumbnail_sm_url": "/media/pet-photos/2/thumb-99_sm.jpg",
           "taken_at": "2024-01-08",
           "created_at": "2024-01-09T08:15:00Z"
         }
@@ -189,7 +195,9 @@ Authorization: Bearer {access_token}
 
 - 查询源为 `photos` 表，按当前用户可访问的 `pet_id` 集合过滤
 - 必须联表或补查宠物信息，返回 `pet_name` 和 `pet_type`
+- 当前实现还会补查上传者信息，返回 `uploader_id` 与 `uploader_nickname`，供信息弹窗展示
 - 缩略图 URL 返回固定 `/media/...` 路径，不返回内网地址，不使用一次性签名 URL
+- 当前实现同时返回 `thumbnail_sm_url`（四列网格优先使用）与 `thumbnail_url`（较大占位/回退图）
 - 首屏加载默认返回最新一段照片
 - `direction=older` 时，返回排序上位于游标之后的更旧照片
 - `direction=newer` 时，返回排序上位于游标之前的更新照片
@@ -321,7 +329,7 @@ Authorization: Bearer {access_token}
 2. 照片网格
    - 按月分组，每月一个标题
    - 每行 4 张缩略图，正方形裁切
-   - 多宠物混合展示时，缩略图左下角显示宠物名字标签
+   - 当前实现默认**不**在缩略图左下角常驻显示宠物名字标签，避免四列网格过于拥挤；宠物名与上传者信息改为通过长按后的「详细信息」弹窗查看
    - 使用 `cached_network_image` 缓存缩略图
    - 滚动到底部时，按 `next_cursor` 继续加载更旧照片
 
@@ -337,6 +345,11 @@ Authorization: Bearer {access_token}
    - 拖动时显示年月气泡
    - 如果目标月份已在本地加载，直接滚动到对应月份标题
    - 如果目标月份尚未加载，则发起 `anchor_month` 请求，把新窗口插入本地数据后再滚动到命中的月份
+
+5. 长按信息弹窗（当前实现新增）
+   - 日历模式长按先弹操作菜单：「详细信息 / 多选 / 删除」
+   - 沉浸模式长按弹操作菜单：「详细信息 / 删除」
+   - 「详细信息」会展示：宠物名、上传者昵称（或 `用户{id}`）、上传时间
 
 ### 3.3 空状态
 
@@ -389,7 +402,7 @@ Authorization: Bearer {access_token}
 - 列表数据源仍为 `orderedPhotoIds` + `photoMap`，不重新请求接口
 - 单列 `ListView.builder`，每项展示一张缩略图（保持原始宽高比，避免裁切）
 - 滚动到底部时继续按 `tailCursor` + `direction=older` 补片，逻辑与日历模式一致
-- 不显示日期文案，仅显示图片本身；若多宠物混合浏览，仍在左下角叠加宠物名字标签，方便区分
+- 不显示日期文案，仅显示图片本身；当前实现默认也不常驻叠加宠物名字标签
 - 点击图片: 进入现有的全屏 `PhotoViewerScreen`，与日历模式一致
 
 模式切换约束:
@@ -399,7 +412,11 @@ Authorization: Bearer {access_token}
 
 ### 3.5 长按删除照片
 
-删除入口只出现在时间轴主页面，两种浏览模式的交互路径不同，但最终都走 `DELETE /api/v1/photos/{photo_id}`（Step 4 已有接口）。大图查看器内不再承担删除交互。
+删除入口当前同时存在于时间轴主页面和全屏查看器内，三处最终都走 `DELETE /api/v1/photos/{photo_id}`（Step 4 已有接口）：
+
+- 日历模式：长按后可进入多选删除
+- 沉浸模式：长按单张后可删除
+- 全屏查看器：长按当前图片后同样可执行「详细信息 / 删除」
 
 #### 3.5.1 日历模式 —— 长按进入多选批量删除
 
@@ -426,11 +443,19 @@ Authorization: Bearer {access_token}
 
 沉浸模式下由于每行只有一张图，不做多选：
 
-1. 长按任一图片 → 底部弹出 `showModalBottomSheet`，含"删除"与"取消"两项
+1. 长按任一图片 → 底部弹出 `showModalBottomSheet`，含"详细信息"、"删除"与"取消"三项
 2. 选择"删除" → 弹出 `AlertDialog` 二次确认"确定删除这张照片吗？删除后不可恢复"
 3. 确认后调用 `PhotoService.deletePhoto(photoId)`，成功后同样通过 `removePhotos([photoId])` 乐观移除；失败时通过解析 `DioException` 的 `code/message` 字段给出提示
 
-#### 3.5.3 乐观删除的状态更新
+#### 3.5.3 全屏查看器 —— 长按当前图片
+
+当前 `photo_viewer_screen.dart` 仍保留长按菜单：
+
+1. 长按当前页图片 → 底部弹出 `showModalBottomSheet`
+2. 菜单项为"详细信息"、"删除"、"取消"
+3. 删除成功后同样调用 `timelineProvider.notifier.removePhotos([photoId])`；若删掉的是最后一张，则自动关闭查看器
+
+#### 3.5.4 乐观删除的状态更新
 
 删除成功后**不**重拉列表，而是在本地直接更新，避免滚动位置跳动和月份索引抖动：
 
@@ -441,12 +466,13 @@ Authorization: Bearer {access_token}
   - `total` 同步减去删除成功的数量，并做 `clamp(0, state.total)` 防御
   - 同时调用 `OriginalPhotoCache.instance.removePhoto(id)` 释放本地原图缓存（见 3.6）
 
-#### 3.5.4 实现要点汇总
+#### 3.5.5 实现要点汇总
 
 - `PhotoGridTile` 暴露 `onLongPress`、`selectionMode`、`selected`；选中态以半透明黑色蒙层 + 右上角勾选圆点呈现
 - `TimelineScreen` 保存 `_selectionMode`/`_selectedIds`；`_onTapPhoto` 根据 `_selectionMode` 决定是切换选中还是打开查看器
 - 请求并发度：日历模式的批量删除当前是**串行**的 `for`，不做并发，以便准确分辨每张的成功/失败
 - 选择模式仅作用于日历模式；进入沉浸模式时会在下一帧自动退出选择模式
+- `showPhotoInfoDialog(...)` 当前由 `timeline_screen.dart` 与 `photo_viewer_screen.dart` 共同复用，展示宠物名、上传者、上传时间
 
 ### 3.6 原图本地持久化缓存 (`OriginalPhotoCache`)
 
@@ -508,7 +534,10 @@ class TimelinePhoto {
   final int petId;
   final String petName;
   final String petType;
+  final int uploaderId;
+  final String? uploaderNickname;
   final String thumbnailUrl;
+  final String thumbnailSmUrl;
   final DateTime takenAt;
   final DateTime createdAt;
 }
@@ -540,6 +569,10 @@ class TimelineWindowResponse {
       groups.expand((group) => group.photos).toList();
 }
 ```
+
+补充说明：
+- 当前前端模型里 `TimelinePhoto.gridThumbnailUrl` 会优先使用 `thumbnailSmUrl`，缺失时自动回退到 `thumbnailUrl`
+- `uploaderId / uploaderNickname` 主要服务于长按后的信息弹窗，不参与排序与去重
 
 ### 4.2 Provider 内部状态
 
@@ -738,6 +771,10 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 
 - `backend/app/schemas/photo.py`
   - 新增时间轴照片 DTO、月份分组 DTO、游标响应 DTO、日期分布 DTO
+  - 当前 DTO 额外包含 `uploader_id` / `uploader_nickname` / `thumbnail_sm_url`
+
+- `backend/scripts/backfill_thumb_sm.py`
+  - 为历史照片补生成 `thumbnail_sm_key` 对应的小图层级，供时间轴网格使用
 
 - `backend/tests/test_timeline.py`
   - 新增时间轴接口测试
@@ -767,12 +804,16 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 - `frontend/lib/widgets/photo_grid_tile.dart`
   - 新建缩略图格子组件
   - 沉浸模式下不用；日历模式额外支持 `selectionMode / selected / onLongPress`
+  - 当前默认优先加载 `thumbnail_sm_url`
 
 - `frontend/lib/widgets/immersive_photo_tile.dart`
   - 沉浸模式单行大图，内部走 `OriginalPhotoImage`，在多宠物混合时叠加宠物标签
 
 - `frontend/lib/widgets/original_photo_image.dart`
   - 统一的"优先显示原图，退回缩略图"组件，监听 `OriginalPhotoCache.revision`
+
+- `frontend/lib/widgets/photo_info_dialog.dart`
+  - 长按后展示宠物名、上传者、上传时间的统一信息弹窗
 
 - `frontend/lib/services/original_photo_cache.dart`
   - 原图持久化缓存单例，含 LRU 配额、pending token、下载去重、revision 通知
@@ -853,9 +894,10 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 - [ ] 后端时间轴接口按 `taken_at desc, created_at desc, id desc` 稳定排序
 - [ ] 后端 `GET /api/v1/photos/timeline/dates` 正确返回月份分布
 - [ ] 后端时间轴接口在多宠物筛选和权限校验下行为正确
+- [ ] 后端时间轴照片对象包含 `uploader_id`、`uploader_nickname`、`thumbnail_sm_url`
 - [ ] Flutter 时间轴页面展示照片网格，每行 4 张
 - [ ] Flutter 时间轴页面按月分组，显示月份标题
-- [ ] Flutter 多宠物混合展示时显示宠物名字标签
+- [ ] Flutter 网格默认优先使用 `thumbnail_sm_url`，缺失时回退到 `thumbnail_url`
 - [ ] Flutter 滚动到底部时按游标加载更旧照片
 - [ ] Flutter 顶部多选宠物筛选器工作正常，空选择等于全部宠物
 - [ ] Flutter 右侧时间轴滚动条可拖动，并显示年月气泡
@@ -870,10 +912,12 @@ class PhotoViewerScreen extends ConsumerStatefulWidget {
 - [ ] Flutter 时间轴支持日历模式与沉浸模式切换，切换不改变筛选条件、不触发整页刷新
 - [ ] Flutter 沉浸模式下每张图片独占一行，无月份标题与右侧滚动条，可连续上下滑动
 - [ ] Flutter 沉浸模式下点击图片仍能进入全屏查看器
+- [ ] 日历模式、沉浸模式、全屏查看器长按后都可查看照片详细信息
 - [ ] 日历模式长按缩略图进入"选择模式"，支持累计多选（最多 9 张），底部出现"删除 (N)"按钮
 - [ ] 日历模式选择模式下：右侧月份滚动条隐藏、AppBar 切换为"已选 N/9" + 关闭按钮、硬件返回键会先退出选择模式
 - [ ] 日历模式批量删除二次确认后串行调用 `DELETE /api/v1/photos/{id}`，并聚合展示全部成功 / 部分成功 / 全部失败的提示
 - [ ] 沉浸模式长按单张弹 `showModalBottomSheet` → 二次确认 → 单张删除
+- [ ] 全屏查看器长按当前图片也可执行「详细信息 / 删除」
 - [ ] 删除成功后通过 `TimelineNotifier.removePhotos` 乐观更新本地状态，不再调用 `refresh()`，滚动位置和月份索引不抖动
 - [ ] 删除成功同时清除 `OriginalPhotoCache` 中对应 `photo_<id>` 本地副本
 - [ ] `OriginalPhotoCache` 存在 1 GiB LRU 配额，超出时按 `last_access` 升序淘汰到 90% 低水位

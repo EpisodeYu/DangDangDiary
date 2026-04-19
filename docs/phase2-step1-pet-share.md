@@ -12,11 +12,11 @@
 
 1. 后端：在 `MemberRole` 枚举中删除历史 `MEMBER`、新增 `EDITOR` 与 `VIEWER`，并通过 alembic 把数据库里的旧 `MEMBER` 行迁为 `VIEWER`。
 2. 后端：新增 `pet_share_codes` 表，落地 8 位、24 小时有效、可审计的分享码。
-3. 后端：新增「生成 / 查询 / 撤销分享码」「兑换分享码」「列出/升降/移除已分享成员」7 个 API。
+3. 后端：新增「生成 / 查询 / 撤销分享码」「兑换分享码」「列出/升降/移除已分享成员」「主动退出共享」共 8 个 API。
 4. 后端：把 `update_pet` / `upload_avatar` / 所有照片写接口 / 所有健康写接口的权限从「OWNER-only」放宽到「至少 EDITOR」；`delete_pet` / 分享相关接口仍 OWNER-only。
 5. 前端：在「我的 → 宠物档案管理」下方新增「宠物档案分享」入口，进入后是宠物列表 → 宠物分享详情页（上半生成码、下半成员管理）。
 6. 前端：在「创建宠物档案」页"保存"按钮下方新增「通过分享码添加档案」按钮 + 输入弹窗。
-7. 前端：在「宠物档案管理」列表卡片右上角展示文字角标「拥有 / 编辑 / 查看」。
+7. 前端：在「宠物档案管理」列表卡片右上角展示当前实现使用的文字角标「主人 / 共享 / 查看」；分享成员列表内的权限 chip 继续显示「编辑 / 查看」。
 
 ---
 
@@ -251,6 +251,7 @@ async def redeem_share_code(db: AsyncSession, code: str, user_id: int) -> PetRes
 async def list_pet_members(db: AsyncSession, pet_id: int, user_id: int) -> list[PetMemberResponse]: ...
 async def update_member_role(db: AsyncSession, pet_id: int, member_user_id: int, new_role: MemberRole, user_id: int) -> PetMemberResponse: ...
 async def remove_member(db: AsyncSession, pet_id: int, member_user_id: int, user_id: int) -> None: ...
+async def leave_pet(db: AsyncSession, pet_id: int, user_id: int) -> None: ...
 ```
 
 行为细节（实现时严格遵循）：
@@ -314,6 +315,11 @@ async def remove_member(db: AsyncSession, pet_id: int, member_user_id: int, user
   - 当前是 OWNER → `SHARE_ROLE_INVALID`。
   - `db.delete(member)` + commit。
 
+- **leave_pet**
+  - 允许 `EDITOR` / `VIEWER` 主动退出共享档案。
+  - OWNER 调用时返回 `SHARE_OWNER_CANNOT_LEAVE`，引导其继续使用删除档案路径。
+  - 找到当前用户自己的 `PetMember` 行后直接删除并提交。
+
 ### 3.3 修改 `get_pet_membership` 为多级权限
 
 修改 [backend/app/services/pet.py](../backend/app/services/pet.py)：
@@ -360,7 +366,7 @@ async def get_pet_membership(
 | `GET /pets/{id}/weights*` | 同上 `list_weights` | 任意成员 | 任意成员 |
 | 同上 deworming / vaccination / routine 的 create/update/delete + cycle 写 | 同上 | 任意成员 | EDITOR |
 | 同上 deworming / vaccination / routine 的 list / status / 单条 GET | 同上 | 任意成员 | 任意成员 |
-| `POST /pets/{id}/share-code` 等 7 个分享接口 | 新文件 | — | 见 3.5 |
+| `POST /pets/{id}/share-code` 等 8 个分享接口 | 新文件 | — | 见 3.5 |
 
 实现方法：把 `await get_pet_membership(pet_id, user_id, db)` 换成 `await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)`（涉及位置参考第 1 节里 `Grep` 结果，每处都要改）。
 
@@ -388,6 +394,7 @@ api_v1_router.include_router(share.router)
 | `GET` | `/pets/{pet_id}/members` | OWNER | – | `200` `PetMembersResponse` |
 | `PATCH` | `/pets/{pet_id}/members/{member_user_id}` | OWNER | `{ "role": "editor" \| "viewer" }` | `200` `PetMemberResponse` |
 | `DELETE` | `/pets/{pet_id}/members/{member_user_id}` | OWNER | – | `204` |
+| `POST` | `/pets/{pet_id}/leave` | EDITOR / VIEWER | – | `204` |
 
 注意：
 - `POST /pets/redeem` 路径不含 `pet_id`（用户兑换前不知道 pet_id）。挂在 `/pets` 前缀下方便归类。FastAPI 会按声明顺序匹配，确保该路由在 `/pets/{pet_id}` 之前注册（或显式用 `redeem` 这种非数字字面量也不会冲突，因为 `pet_id: int` 类型校验会失败回退）。为安全起见，**实现时先注册 `redeem` 路由，再注册 `{pet_id}` 路由**。
@@ -429,6 +436,10 @@ api_v1_router.include_router(share.router)
   PetRole get role => petRoleFromString(myRole);
   String get roleLabel => petRoleLabel(role);
   ```
+
+补充说明：
+- 通用文案 `petRoleLabel()` 仍返回 `拥有 / 编辑 / 查看`，用于分享成员列表等通用场景。
+- `pet_manage_screen.dart` 的右上角角标当前使用了更贴近产品语气的 `主人 / 共享 / 查看`，这是页面级 copy，不等于接口枚举值。
 
 ### 4.2 新模型 [frontend/lib/models/share.dart](../frontend/lib/models/share.dart)
 
@@ -565,6 +576,7 @@ GoRoute(
 - 卡片上**不**展示"拥有/编辑/查看"角标（角标是档案管理页特性）。
 - 卡片不可滑动删除；不需要底部"添加宠物"按钮。
 - `onTap`：`context.push('/profile/pets/${pet.id}/share')`。
+- 当前实现会在卡片副标题中额外提示 `shareCodeActive == true` 的宠物「当前有有效分享码」，方便 owner 快速识别哪些档案仍有活码。
 - 空态文案：「还没有自己创建的宠物档案，分享功能仅对您拥有的宠物可用」。
 
 ### 5.4 新页面 2：`PetShareDetailScreen`
@@ -599,6 +611,7 @@ GoRoute(
   - 有值 → 大号 code + 倒计时（用 `Timer.periodic(const Duration(seconds: 30), ...)` 重新计算 `remaining = expiresAt.difference(DateTime.now())`；离开页面时 `cancel`）。
   - 「复制」用 `Clipboard.setData(ClipboardData(text: code.code))` + snackbar。
   - 「重新生成」前弹确认 dialog：「重新生成会立即作废当前分享码，是否继续？」；确认后 `await ref.read(shareCodeProvider(petId).notifier).regenerate()`。
+- 页面进入后会主动 `refresh()` 分享码和成员列表，避免另一台设备刚做过成员变更时继续使用本地旧状态。
 - 下方：`ref.watch(sharedMembersProvider(petId))`。
   - 空态文案：「还没有用户接受这份档案分享」。
   - 列表项 `GestureDetector(onLongPress: ...)` 弹 `showModalBottomSheet`：
@@ -650,6 +663,16 @@ Widget _buildRedeemButton() {
 - 提交：`await ref.read(shareServiceProvider).redeemCode(code)` → 成功 `ref.read(petListProvider.notifier).refresh()` → snackbar"已添加共享档案：{petName}" → `Navigator.of(context).pop(true)` 关闭整个创建页（pop 整个 PetEditScreen，让用户回到管理页）。
 - 失败按 `DioException` 取 `error.response?.data['code']` 用统一 mapper（第 6 节）。
 
+### 5.5.1 当前共享宠物页的真实行为
+
+当前 `pet_edit_screen.dart` 已经把共享角色接进统一页面流转，行为如下：
+
+- `OWNER`：标题为「编辑宠物档案」，可编辑资料、上传头像，底部按钮为「删除此宠物档案」
+- `EDITOR`：同样可以进入编辑页并提交修改，后端权限与前端入口都已放开
+- `VIEWER`：标题为「查看宠物档案」，表单只读，底部按钮为「不再查看此宠物档案」，点击后走 `POST /pets/{pet_id}/leave`
+
+也就是说，本文早期版本里“前端暂不开放 EDITOR 编辑入口”的限制已经被后续实现移除，应以这里为准。
+
 ### 5.6 档案管理页角标：[pet_manage_screen.dart](../frontend/lib/screens/profile/pet_manage_screen.dart)
 
 - 删除当前 `if (!pet.isOwner)` 的"共享"灰标签代码块。
@@ -666,16 +689,24 @@ Widget _buildRoleBadge(PetRole role) {
     case PetRole.viewer:
       bg = const Color(0xFFE8F5EA); fg = const Color(0xFF3E8E50); break;
   }
+  final label = switch (role) {
+    PetRole.owner => '主人',
+    PetRole.editor => '共享',
+    PetRole.viewer => '查看',
+  };
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
     decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-    child: Text(petRoleLabel(role),
+    child: Text(label,
         style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg)),
   );
 }
 ```
 
-- 卡片 `onTap` 行为保持不变（仅 owner 进入编辑页）；`Dismissible` 仍仅 owner 可删。说明文字（如有）按需更新成"仅档案所有者可删除"。
+- 卡片 `onTap` 现已对三种角色全部开放：
+  - `owner` / `editor` 进入可编辑页
+  - `viewer` 进入只读详情页
+- `Dismissible` 仍仅 `owner` 可删；非 owner 不显示左滑删除能力。
 
 ---
 
@@ -696,6 +727,7 @@ Widget _buildRoleBadge(PetRole role) {
 | `SHARE_ROLE_INVALID` | 400 | 不允许此角色变更 | OWNER 自己 / 升 OWNER |
 | `PET_OWNER_REQUIRED` | 403 | 只有档案所有者才能执行此操作 | 非 OWNER 调 OWNER 接口（沿用现有错误码）|
 | `PET_EDITOR_REQUIRED` | 403 | 需要编辑权限才能执行此操作 | VIEWER 调写接口（新错误码）|
+| `SHARE_OWNER_CANNOT_LEAVE` | 400 | 档案所有者不能退出共享 | OWNER 调 `/pets/{pet_id}/leave` |
 
 前端 mapper：
 
@@ -716,6 +748,7 @@ String shareErrorToMessage(Object error) {
       case 'SHARE_ROLE_INVALID':     return '不允许此角色变更';
       case 'PET_OWNER_REQUIRED':     return '仅档案所有者可执行此操作';
       case 'PET_EDITOR_REQUIRED':    return '当前权限不足，无法执行';
+      case 'SHARE_OWNER_CANNOT_LEAVE': return '档案所有者不能退出共享';
     }
   }
   return '操作失败，请稍后重试';
@@ -731,7 +764,6 @@ String shareErrorToMessage(Object error) {
 - 所有权转让（OWNER → 其它用户）。
 - 通过微信小程序 / 系统分享 / 二维码扫码兑换。
 - 群组、家庭空间、批量管理。
-- 让 EDITOR 也能在前端进入「宠物编辑页」修改名字 / 头像（后端权限已开，但前端入口仍仅 OWNER 可见，留给后续步骤统一打磨）。
 - 把分享给的好友的设备也加入推送通知调度。
 - `Pet.invite_code` 字段的真正下线（保留兼容）。
 - `pet_share_codes` 行的后台清理任务（暂用永久保留 + 索引覆盖足够）。
@@ -768,6 +800,8 @@ String shareErrorToMessage(Object error) {
 - `test_update_role_to_owner_rejected`（PATCH role=owner → 400 由 schema 校验抛 `VALIDATION_ERROR`）
 - `test_remove_member`
 - `test_remove_self_rejected`（OWNER 试图 DELETE 自己 → 400 SHARE_ROLE_INVALID）
+- `test_viewer_can_leave_shared_pet`
+- `test_owner_cannot_leave_shared_pet`
 - `test_editor_can_write_pet_and_records`（EDITOR PUT pet / POST photo / POST weight 全部 200；DELETE pet 仍 403）
 - `test_viewer_cannot_write`（VIEWER 上述写接口全部 403 PET_EDITOR_REQUIRED）
 
@@ -775,14 +809,15 @@ String shareErrorToMessage(Object error) {
 
 1. 用户 A 登录 → 创建宠物"橘子" → 进入「我的 → 宠物档案分享 → 橘子」→ 点"生成 8 位分享码"，看到 8 位码 + 24h 倒计时；复制成功。
 2. A 退出登录；用户 B 登录 → 进入「我的 → 宠物档案管理 → 添加宠物 → 通过分享码添加档案」→ 输入 A 的码 → 弹出"已添加共享档案：橘子" → 回到管理页，看见"橘子"卡片右上角"查看"角标。
-3. B 尝试编辑橘子（点击卡片 → 应不可进入编辑；如临时 hack 调 PUT，会 403 PET_EDITOR_REQUIRED）。
+3. B 此时点击橘子卡片会进入只读详情页，底部可见「不再查看此宠物档案」；如临时 hack 调 `PUT`，会 `403 PET_EDITOR_REQUIRED`。
 4. A 进入「橘子分享详情」→ 看到 B 头像 + "查看" chip → 长按 B → "授予编辑权限" → chip 变"编辑"。
-5. B 这边下拉刷新档案管理页 → 角标变"编辑"。（B 的写权限随后端立即生效）
+5. B 这边下拉刷新档案管理页 → 角标仍显示产品文案「共享」，再次进入详情页后已可以编辑保存。（B 的写权限随后端立即生效）
 6. A 长按 B → "取消编辑权限" → chip 回到"查看"；B 角标回到"查看"。
 7. A 长按 B → "删除分享权限" → 确认 → 列表中 B 消失；B 下拉刷新 → 橘子从档案列表消失。
 8. A 在分享码卡片点"重新生成" → 老码失效（用老码再次兑换提示"分享码已被撤回"）。
 9. A 自己尝试用自己的码 → 提示"不能添加自己的宠物档案"。
 10. 等到第二天再试老码 → "分享码已过期"（或人工把 `expires_at` 改到过去验证）。
+11. B 在只读或编辑页点击「不再查看此宠物档案」→ 调 `POST /pets/{pet_id}/leave` 成功后回到列表，橘子档案消失。
 
 ---
 

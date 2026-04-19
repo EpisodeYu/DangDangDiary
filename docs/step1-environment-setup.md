@@ -563,7 +563,8 @@ class PetType(str, enum.Enum):
 
 class MemberRole(str, enum.Enum):
     OWNER = "owner"
-    MEMBER = "member"
+    EDITOR = "editor"
+    VIEWER = "viewer"
 
 class Pet(Base):
     __tablename__ = "pets"
@@ -590,6 +591,8 @@ class PetMember(Base):
     role: Mapped[MemberRole] = mapped_column(Enum(MemberRole), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 ```
+
+> 当前 main 分支在 Phase 2 Step 1 中已经按这套 `owner/editor/viewer` 角色落地；后续还新增了 `pet_share_codes` 表与分享接口，详见 `docs/phase2-step1-pet-share.md`。
 
 ### `app/models/photo.py`
 

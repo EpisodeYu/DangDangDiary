@@ -66,25 +66,47 @@
 
 与 Step 4 无直接关系的后续提交（例如 Android SDK 配置）不在本文档范围内。
 
+但当前 main 分支上还有几处会直接影响 Step 4 真实行为的后续演进，需要一并视为现行实现：
+
+- **Phase 2 Step 1 权限升级**
+  - 共享档案角色已从 `owner/member` 升级为 `owner/editor/viewer`
+  - `POST /api/v1/pets/{pet_id}/photos` 与 `DELETE /api/v1/photos/{photo_id}` 当前都要求 **`EDITOR` 及以上**
+  - `viewer` 仅保留查看列表、查看原图 URL、查看时间轴的只读权限
+- **前端客户端侧宠物识别（当前默认开启）**
+  - `record_screen.dart` 现在会先调用 `PetClassifier`（TFLite ImageNet 模型）做端侧猫狗识别
+  - 客户端未识别到猫狗时，会在上传前直接跳过/拦截该图片
+  - 若模型缺失、加载失败或解析失败，则 `skipped=true`，前端按“放行上传”处理，不阻塞主流程
+  - 后端阿里云识别链路仍保留，作为服务端兜底/二次防线（是否启用由 `ENABLE_SERVER_PET_RECOGNITION` 控制）
+- **缩略图字段补充**
+  - 当前 `PhotoResponse` / 时间轴响应新增 `thumbnail_sm_url`
+  - 服务端会生成两档缩略图：`thumbnail_url`（约 400px）与 `thumbnail_sm_url`（约 512px，用于四列时间轴网格）
+  - 老数据若没有 `thumbnail_sm_url`，前端会自动回退到 `thumbnail_url`
+- **Android 真机选图与发布构建**
+  - `main.dart` 已显式启用 Android 13+ Photo Picker，确保 `pickMultiImage(limit: ...)` 真正生效
+  - Release APK 需保留 TensorFlow Lite 类；当前通过 `android/app/proguard-rules.pro` 中的 keep 规则处理
+
 ---
 
 ## 0. 本步骤关键约定
 
 这些约定已经在 Step 4 细化中确认，后续实现默认按此执行:
 
-- 共享档案中，`owner` 和 `member` 都可以上传照片
-- 删除照片时，只要当前用户可以访问该宠物档案，就可以删除该档案下任意照片
+- 共享档案中，当前实现只有 `owner` 和 `editor` 可以上传照片；`viewer` 只读
+- 删除照片时，当前实现同样要求 `owner` 或 `editor`；`viewer` 无删除权限
 - 批量上传采用**部分成功**策略，不做整批回滚
 - 上传接口统一返回 `200`，用 `successes` / `failures` 表达结果
 - 服务端处理文件时要**继续处理完整批次**，不能遇到第一张失败就中断
 - 阿里云识别服务异常、超时、未配置时，**放行上传**，优先保证主流程可用
+- 当前前端默认先走端侧 `PetClassifier` 识别猫狗；模型不可用时再按“放行上传”继续
 - 当前实现中，`taken_at` 是**与文件一一对应的数组字段**，每张照片有自己的拍摄日期
 - 上传响应中保留 `storage_key`、`thumbnail_key`
+- 当前 `photo` 对象还会额外返回 `thumbnail_sm_url`
 - 当前实现把图片识别和 MinIO 上传都放到工作线程中执行（`asyncio.to_thread`），并用 `asyncio.gather` 让同一批次内的所有合法文件**并发**完成识别 + 上传，DB 写入串行执行
 - 阿里云识别 SDK Client 按线程缓存（`threading.local()`），并禁用 SDK 自动重试，配合较短的 read_timeout 让识别快速失败时立即走"放行上传"
 - 前端上传前会**对所有图片**统一压缩为 1920×1080 JPEG（质量 90），不再只针对 HEIC/HEIF；该步骤同时承担了"格式归一化"和"减小上传体积"两个目的
 - **EXIF 提取必须在 `_ensureJpeg` 之前进行**：`flutter_image_compress` 会剥掉 `DateTimeOriginal`，对压缩后的文件再读 EXIF 往往拿不到拍摄日期
 - 相册多选使用 `pickMultiImage(limit: remaining)`；当 `remaining == 1` 时必须退回 `pickImage(source: gallery)` 单选，因为 `pickMultiImage` 要求 `limit >= 2`
+- `main.dart` 当前已启用 Android 13+ Photo Picker；旧系统或第三方相册若仍忽略 limit，记录页会在客户端再次截断到剩余上限并提示
 - 每张入选照片在 `_ensureJpeg` 之后会被写入 `OriginalPhotoCache`（`pending_<token>`），上传成功后通过 `bindPendingToPhoto` 晋升为 `photo_<id>`；这份数据被 Step 6 的沉浸模式 / 大图查看器复用
 - 上传请求使用 `FormData`，因此 Dio 的重试拦截器对 `FormData` 请求一律跳过重试（非幂等 + 流只能消费一次）
 - 当前上传链路的超时基线是: 前端 `sendTimeout=120s`、`receiveTimeout=300s`，Nginx `proxy_read_timeout=300s`
@@ -100,13 +122,17 @@ MinIO Buckets:
 │   ├── {pet_id}/{uuid}.png
 │   └── {pet_id}/{uuid}.webp
 └── pet-thumbnails/      # 缩略图，公开读，经 /media/... 访问
-    └── {pet_id}/{uuid}_thumb.jpg
+    ├── {pet_id}/{uuid}_thumb.jpg
+    └── {pet_id}/{uuid}_thumb_sm.jpg
 ```
 
 约定说明:
 - 原图保持上传后的实际格式，支持 `jpg` / `png` / `webp`
 - Flutter 端在所有图片入选后会统一通过 `flutter_image_compress` 压缩到 ≤ 1920×1080 / JPEG / 质量 90 再上传，HEIC/HEIF 自然在这一步被转为 JPEG。如果未来需要保留原图，可在 `_ensureJpeg` 里直接 `return File(xfile.path)` 跳过压缩
 - 缩略图由后端生成，统一为 `JPEG`
+- 当前实现生成两档缩略图：
+  - `thumbnail_url` → 约 `400px` 长边，主要用于较大占位/沉浸模式回退
+  - `thumbnail_sm_url` → 约 `512px` 长边，主要用于时间轴四列网格
 - 文件名使用 UUID，按 `pet_id` 分目录，方便删除宠物时按前缀清理
 - `storage_key` 与 `thumbnail_key` 仅保存对象 key，不重复包含 bucket 名
 - `thumbnail_url` 由后端拼接为:
@@ -137,7 +163,7 @@ Authorization: Bearer {access_token}
 补充说明:
 - 如果用户选择 `HEIC/HEIF`，Flutter 端先转换为 `JPEG`
 - 上传接口只负责写入照片记录，不负责时间轴聚合
-- `owner` 与 `member` 只要能访问该宠物档案，都可以上传
+- `owner` 与 `editor` 只要能访问该宠物档案，都可以上传；`viewer` 不可上传
 - 当前实现按表单顺序把 `taken_at[i]` 对应到 `files[i]`
 
 #### 2.1.1 返回语义
@@ -157,6 +183,7 @@ Authorization: Bearer {access_token}
         "storage_key": "1/a1b2c3d4.jpg",
         "thumbnail_key": "1/a1b2c3d4_thumb.jpg",
         "thumbnail_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb.jpg",
+        "thumbnail_sm_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb_sm.jpg",
         "taken_at": "2024-01-15",
         "created_at": "2024-01-20T10:30:00Z"
       }
@@ -186,6 +213,7 @@ Authorization: Bearer {access_token}
 - `index`: 对应前端上传数组中的 0-based 序号
 - `filename`: 客户端上传时的文件名，方便前端定位失败项
 - `photo`: 成功项的完整照片对象
+- `photo.thumbnail_sm_url`: 供时间轴四列网格优先使用的小图；老照片可能为空字符串
 - `failures[*]`: 只描述该文件失败原因，不影响同批次其它文件继续处理
 
 #### 2.1.2 请求级错误与文件级失败的区分
@@ -247,6 +275,22 @@ Authorization: Bearer {access_token}
 > 设计要点：识别和 MinIO 上传都是 IO 密集，串行会让总耗时 ≈ Σ单张耗时；改成 gather 后总耗时 ≈ max(单张耗时)，对 5 张图的批次提升明显。
 
 #### 2.1.4 宠物图片校验策略
+
+当前实现采用**客户端优先 + 服务端兜底**的双层策略：
+
+1. **客户端（默认开启）**
+   - `record_screen.dart` 在压缩上传前先对原图调用 `PetClassifier`
+   - 模型来自 `assets/models/pet_classifier.tflite`，通过 `tflite_flutter` + `image` 在端侧推理
+   - 识别结果取 ImageNet 猫狗类别概率和；当前阈值由 `AppConstants.petClassifierThreshold = 0.08` 控制
+   - 未识别到猫狗时，前端直接提示并跳过该图片，不会继续发起上传
+   - 模型缺失、加载失败、解码失败时返回 `skipped=true`，按“放行上传”处理
+
+2. **服务端（可配置兜底）**
+   - `ENABLE_SERVER_PET_RECOGNITION=true` 时，后端仍会调用阿里云 `RecognizeScene`
+   - 主要作用是为绕过前端的请求、旧客户端、或端侧识别漏检场景提供二次防线
+   - 第三方服务异常 / 超时 / 未配置时，依旧按“放行上传”策略处理
+
+因此，下面的阿里云说明描述的是**当前服务端链路**，而不是用户主路径上的唯一识别手段。
 
 使用阿里云视觉智能开放平台的**场景识别 (`RecognizeScene`)** API。
 
@@ -310,7 +354,7 @@ Authorization: Bearer {access_token}
 - `page_size`: 每页数量，默认 `20`，最大 `50`
 
 权限:
-- `owner` 与 `member` 只要可以访问该宠物档案，都可以查看列表
+- `owner` / `editor` / `viewer` 只要可以访问该宠物档案，都可以查看列表
 
 成功响应:
 
@@ -324,6 +368,7 @@ Authorization: Bearer {access_token}
       "storage_key": "1/a1b2c3d4.jpg",
       "thumbnail_key": "1/a1b2c3d4_thumb.jpg",
       "thumbnail_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb.jpg",
+      "thumbnail_sm_url": "http://YOUR_SERVER_IP/media/pet-thumbnails/1/a1b2c3d4_thumb_sm.jpg",
       "taken_at": "2024-01-15",
       "created_at": "2024-01-20T10:30:00Z"
     }
@@ -351,8 +396,8 @@ Authorization: Bearer {access_token}
 - `204 No Content`
 
 权限:
-- 只要当前用户可以访问该照片所属宠物档案，就可以删除该照片
-- 不区分该照片是否由当前用户上传
+- 当前实现要求当前用户对所属宠物档案至少有 `EDITOR` 权限
+- 不区分该照片是否由当前用户上传；`owner` / `editor` 都可删，`viewer` 不可删
 
 业务逻辑:
 1. 查询 `photo_id`
@@ -389,7 +434,7 @@ Authorization: Bearer {access_token}
 - 原图通过 MinIO 预签名 URL 暴露，默认有效期 1 小时
 - 返回给客户端的签名 URL 必须使用外部统一入口域名，不能泄露 MinIO 内部地址
 - 缩略图则继续使用固定 `/media/...` 路径
-- `owner` 与 `member` 只要可以访问该宠物档案，都可以获取原图 URL
+- `owner` / `editor` / `viewer` 只要可以访问该宠物档案，都可以获取原图 URL
 
 ---
 
@@ -552,11 +597,13 @@ def recognize_pet(image_data: bytes) -> ImageRecognitionResult:
    - 当前实现为纵向卡片列表，每张卡片右上角有删除按钮
 3. 入选预处理顺序（从相册选择时，每张照片）:
    1. **先** `ExifHelper.extractDate(File(xfile.path))` 读原始文件的 `DateTimeOriginal`（压缩会丢 EXIF）
-   2. 再 `_ensureJpeg(xfile)` 用 `flutter_image_compress` 把原始文件压缩为 1920×1080 / JPEG / 质量 90 的临时文件；HEIC/HEIF 在这里顺带转成 JPEG
-   3. 然后调用 `OriginalPhotoCache.cacheUploadSource(compressed)` 把压缩后的字节拷贝进持久化缓存，得到 `pending` token 写入 `_pendingTokens`
-   4. `setState` 把压缩文件、token、EXIF 日期（读失败时回退 `DateTime.now()`）追加到对应并行列表
+   2. 再对**原始文件**调用 `PetClassifier.instance.classify(...)` 做端侧猫狗识别；明确不是宠物时直接跳过
+   3. 然后 `_ensureJpeg(xfile)` 用 `flutter_image_compress` 把原始文件压缩为 1920×1080 / JPEG / 质量 90 的临时文件；HEIC/HEIF 在这里顺带转成 JPEG
+   4. 再调用 `OriginalPhotoCache.cacheUploadSource(compressed)` 把压缩后的字节拷贝进持久化缓存，得到 `pending` token 写入 `_pendingTokens`
+   5. `setState` 把压缩文件、token、EXIF 日期（读失败时回退 `DateTime.now()`）追加到对应并行列表
    - 上传的 `MultipartFile` 发的是压缩后的临时文件；卡片预览同样读压缩后的文件
    - `image_picker.pickMultiImage` 至少要求 `limit >= 2`，所以 `remaining == 1` 时必须走 `pickImage(source: gallery)` 单选分支
+   - Android 13+ 设备会优先使用系统 Photo Picker 来原生执行 `limit`；其余场景下，页面还会在客户端二次截断到剩余上限并提示
 4. 日期处理:
    - 当前实现是**每张照片单独维护一个日期**
    - 从相册选择时，按上面第 3 条顺序在压缩前就读出 EXIF 日期
@@ -721,6 +768,21 @@ class PhotoUploadResponse {
   - 上传接口非幂等，即使服务端已经写成功但返回层网络异常，盲重试可能造成重复入库
 - 上传失败的兜底策略是**由用户在记录页手动点击"重新提交"**，记录页会保留失败项及其日期/缓存 token
 
+### 4.10 客户端识别依赖与 Release 构建注意事项
+
+- `frontend/pubspec.yaml` 当前包含：
+  - `tflite_flutter`
+  - `image`
+  - `image_picker_android`
+- `main.dart` 在 Android 下显式打开了 `ImagePickerAndroid.useAndroidPhotoPicker = true`，否则部分系统相册会忽略 `pickMultiImage(limit: ...)`
+- Release APK 需要额外保留 TensorFlow Lite 类，否则 R8/ProGuard 可能把运行时依赖裁掉，导致端侧识别只在 debug 正常、release 崩溃或直接失效
+- 当前仓库已在 `frontend/android/app/proguard-rules.pro` 中加入：
+  ```pro
+  -keep class org.tensorflow.lite.** { *; }
+  -dontwarn org.tensorflow.lite.**
+  -dontwarn org.tensorflow.lite.gpu.**
+  ```
+
 ---
 
 ## 5. 需要创建或修改的文件清单
@@ -763,11 +825,12 @@ class PhotoUploadResponse {
 - [ ] 后端 `GET /api/v1/pets/{id}/photos` 分页返回照片列表
 - [ ] 后端 `DELETE /api/v1/photos/{id}` 删除照片及 MinIO 文件
 - [ ] 后端 `GET /api/v1/photos/{id}/url` 返回原图签名 URL
-- [ ] `owner` 与 `member` 都可以上传照片
-- [ ] 只要能访问档案，`member` 也可以删除该档案下任意照片
+- [ ] `owner` 与 `editor` 都可以上传照片，`viewer` 不可上传
+- [ ] `owner` 与 `editor` 可以删除该档案下任意照片，`viewer` 不可删除
 - [ ] Flutter 记录页面展示宠物选择器和无档案空状态
 - [ ] Flutter 可以从相册多选照片，并支持拍照追加
 - [ ] Flutter 照片预览正确显示，可以删除单张
+- [ ] Flutter 默认先走端侧 `PetClassifier` 识别猫狗；模型不可用时按“放行上传”处理
 - [ ] Flutter 从相册选择时，会在 `_ensureJpeg` **之前**为每张照片尝试提取 EXIF 日期（压缩后会丢 `DateTimeOriginal`）
 - [ ] 单张照片 EXIF 缺失或解析失败时，会回退到当前时间
 - [ ] Flutter 相册多选在"剩余可选 = 1"时自动退回 `pickImage` 单选分支，避免 `pickMultiImage(limit: 1)` 抛错
@@ -775,6 +838,7 @@ class PhotoUploadResponse {
 - [ ] Flutter 每张入选照片会被写入 `OriginalPhotoCache`（`pending_<token>`），上传成功后晋升为 `photo_<photo_id>`
 - [ ] Flutter 删除未上传的照片 / 全部成功重置时，对应 `pending` 缓存会被释放
 - [ ] Flutter 的 Dio `_RetryInterceptor` 对 `FormData` 请求不做自动重试，由记录页的"保留失败项重试"承担
+- [ ] `photo` 对象与列表接口会返回 `thumbnail_sm_url`；老照片缺失时前端可自动回退到 `thumbnail_url`
 - [ ] Flutter 上传时显示总进度百分比
 - [ ] 全部成功后页面重置
 - [ ] 部分成功时保留失败项及其日期，便于重试

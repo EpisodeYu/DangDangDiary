@@ -229,7 +229,7 @@
 - [`tests/test_timeline.py`](backend/tests/test_timeline.py)：空、首页分页、pet_ids 权限、锚月直达/回退旧/回退新、非法参数、dates 分布、稳定序。
 
 覆盖缺口：
-- **Pets**：无任何端到端测试（只作为 helper 使用过 `POST /pets`）。缺 `GET /pets`、`GET /pets/{id}`、`PUT /pets/{id}`、`POST /pets/{id}/avatar`、`DELETE /pets/{id}` 的级联清理、`invite_code` 唯一性、owner vs member 权限。
+- **Pets**：无任何端到端测试（只作为 helper 使用过 `POST /pets`）。缺 `GET /pets`、`GET /pets/{id}`、`PUT /pets/{id}`、`POST /pets/{id}/avatar`、`DELETE /pets/{id}` 的级联清理、`invite_code` 唯一性、owner/editor/viewer 权限。
 - **Photos**：完全没有（上传、场景识别关闭 / 开启、多文件部分失败、超大 / 超数量、删除 MinIO 清理、`GET /photos/{id}/url`）。
 - **Routines**：完全没有（CRUD + cycle + status）。
 - **Auth 深水区**：refresh 过期、登出后 access 仍可用直到 TTL、用户 A 的 refresh 用 B 的 access 调 logout。
@@ -488,7 +488,7 @@ frontend/test/
   - 新增 `tests/unit/test_timeline_cursor.py`：`_encode_cursor` / `_decode_cursor` 往返与非法输入。
 
 - **Chunk A-4｜api/test_pets.py**（§2.2，新文件）
-  - CRUD / invite_code 唯一性 / owner-vs-member / avatar 上传成功 / 非法 content-type / 超 5 MB / delete 级联清理（断言关联表已空 + MinIO `delete_objects_by_prefix` 被调用）。
+  - CRUD / invite_code 唯一性 / owner-vs-editor-vs-viewer / avatar 上传成功 / 非法 content-type / 超 5 MB / delete 级联清理（断言关联表已空 + MinIO `delete_objects_by_prefix` 被调用）。
 
 - **Chunk A-5｜api/test_photos.py**（§2.2，新文件）
   - 单/多文件上传、超 5 张、超 15 MB、非法类型、部分失败；`ENABLE_SERVER_PET_RECOGNITION=True` 下的 `PET_NOT_DETECTED`；delete 触发 MinIO；`GET /photos/{id}/url` 签名 URL 指向 `PUBLIC_BASE_URL`。

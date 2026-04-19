@@ -49,9 +49,11 @@
 所有 API 需要 `Authorization: Bearer {access_token}` 头。
 
 权限说明:
-- 共享档案中，`owner` 和 `member` 都可以新增、编辑、删除体重/驱虫/疫苗记录
-- `PUT /api/v1/pets/{pet_id}/deworming-cycle` 允许 `owner` 和 `member` 修改
-- 普通记录的编辑/删除不区分创建人，只要当前用户可以访问该宠物档案即可操作
+- 当前实现的共享角色为 `owner` / `editor` / `viewer`
+- `owner` 和 `editor` 都可以新增、编辑、删除体重/驱虫/疫苗/日常记录
+- `PUT /api/v1/pets/{pet_id}/deworming-cycle` 与各类 cycle 写接口同样要求 `owner` 或 `editor`
+- `viewer` 只能查看历史、状态和详情，不能执行任何健康写操作
+- 普通记录的编辑/删除不区分创建人；只要当前用户对该宠物档案拥有 **`EDITOR` 及以上** 权限即可操作
 
 驱虫说明:
 - 猫和狗都统一支持三类驱虫: `internal` (内驱)、`external` (外驱)、`combined` (内外同驱)
@@ -806,7 +808,7 @@ class VaccineTypePresetResponse(BaseModel):
 
 ### 3.2 业务服务（`app/services/health.py`）
 
-所有写操作进入服务前，先调用 `app.services.pet.get_pet_membership(pet_id, user_id, db)` 校验：当前用户是否对该宠物存在 `owner` 或 `member` 角色，不存在则抛 `403`。该函数返回 `(pet, member_role)`，可以复用 pet 对象。
+所有写操作进入服务前，先调用 `app.services.pet.get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)` 校验：当前用户是否对该宠物拥有 **`EDITOR` 及以上** 权限；`viewer` 会收到 `403 PET_EDITOR_REQUIRED`。只读查询仍使用不带 `require_role` 的版本。该函数返回 `(pet, member_role)`，可以复用 pet 对象。
 
 驱虫周期更新使用 `model_dump(exclude_unset=True)` 仅写入显式传入的字段，并通过 `field_map` 把 schema 字段名映射到 ORM 列名（`internal_cycle_days → internal_deworming_cycle_days` 等）。
 

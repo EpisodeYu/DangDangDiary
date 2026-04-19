@@ -15,13 +15,24 @@
 3. Flutter 实现通用的宠物档案选择器组件 (供其他页面复用)
 4. 为 Phase 2 的邀请码共享功能预留接口
 
+### 当前实现同步说明
+
+Step 3 原始文档写于 Phase 1，当时共享角色只有 `owner/member`。当前 main 分支已经在 Phase 2 Step 1 中升级为 `owner/editor/viewer`，并且部分行为已随实现演进：
+
+- `viewer` 只读；`editor` 与 `owner` 都可以修改宠物基础信息和头像
+- 只有 `owner` 可以删除宠物档案、生成分享码、管理成员
+- `PetResponse` 当前除了基础字段外，还包含健康周期/提醒字段与 `share_code_active`
+- `invite_code` 仍保留在响应中做兼容，但已是 **deprecated**；新共享流程以分享码接口为准
+- 前端在“没有本地已选宠物”时，会默认选择**最早创建**的宠物，而不是接口返回列表中的第一项；只有“用户还没有任何选中记录”时，创建第一只宠物才会自动设为当前宠物
+- 宠物档案管理页当前角标文案为 `主人 / 共享 / 查看`；`editor` 可进入编辑页，`viewer` 进入只读页
+
 ---
 
 ## 0. 本步骤明确边界
 
 为避免 agent 在实现时自行扩展或误判，本步骤按以下口径执行：
 
-- `member` 在 Step 3 中只读；只有 `owner` 可以编辑和删除宠物档案
+- 当前实现中：`viewer` 只读；`editor` 与 `owner` 可编辑；只有 `owner` 可删除
 - `GET /api/v1/pets` 按全局规则支持 `page` + `page_size`
 - `POST /api/v1/pets` 成功后返回与详情接口一致的完整 `PetResponse`
 - `PetSelector` 本步需要接入「记录」「健康」「时间轴」
@@ -57,16 +68,17 @@
 | id | bigint PK | 自增主键 |
 | pet_id | bigint FK → pets.id | 宠物档案 |
 | user_id | bigint FK → users.id | 用户 |
-| role | enum(owner/member) | 角色 |
+| role | enum(owner/editor/viewer) | 角色 |
 | created_at | timestamp | 加入时间 |
 
 **关系**: 创建宠物档案时，自动在 pet_members 中创建一条 role=owner 的记录。查询用户的宠物档案时，通过 pet_members 表关联。
 
-**Step 3 权限约定**:
+**当前实现权限约定**:
 
 - `owner` 可以查看、创建、编辑、删除自己的宠物档案
-- `member` 只能查看，不能编辑、上传头像、删除
-- 后续步骤中如果 `member` 需要维护普通记录（照片、体重等），不影响本步骤的档案权限口径
+- `editor` 可以查看、编辑、上传头像，但不能删除档案
+- `viewer` 只能查看，不能编辑、上传头像、删除
+- 分享码、成员管理、退出共享等行为以 `docs/phase2-step1-pet-share.md` 为准
 
 ---
 
@@ -107,7 +119,8 @@
 
 - `invite_code` 仅在当前用户是 `owner` 时返回真实值，否则返回 `null`
 - `is_owner` 用于前端快速判断危险操作和编辑态
-- `my_role` 仅取 `owner` / `member`
+- `my_role` 当前仅取 `owner` / `editor` / `viewer`
+- `share_code_active` 仅对 `owner` 视角有意义，表示该宠物当前是否存在未撤销、未使用且未过期的分享码
 
 ### 2.1 创建宠物档案
 
@@ -193,7 +206,7 @@ GET /api/v1/pets?page=1&page_size=20
       "internal_deworming_cycle_days": null,
       "external_deworming_cycle_days": null,
       "is_owner": false,
-      "my_role": "member",
+      "my_role": "viewer",
       "created_at": "2024-01-02T00:00:00Z",
       "updated_at": "2024-01-02T00:00:00Z"
     }
@@ -206,7 +219,7 @@ GET /api/v1/pets?page=1&page_size=20
 - 通过 `pet_members` 表查询当前用户关联的所有宠物档案
 - 支持 `page`、`page_size` 查询参数
 - 包含 `is_owner` 字段标识用户是否为档案创建者
-- 包含 `my_role` 字段，便于前端判断当前用户是 `owner` 还是 `member`
+- 包含 `my_role` 字段，便于前端判断当前用户是 `owner` / `editor` / `viewer`
 - 按创建时间倒序排列（最新创建的在前）
 - `invite_code` 只在 `is_owner=true` 时返回（Phase 2 中使用）
 - 空列表时返回 `200` + `pets: []`
@@ -242,7 +255,7 @@ Content-Type: application/json
 
 业务逻辑:
 
-- 只有 `owner` 可以修改
+- 当前实现中 `owner` 与 `editor` 都可以修改
 - `pet_type` 不允许修改 (猫不能变成狗)
 - `invite_code` 不允许修改
 - 部分更新，只更新传入的字段
@@ -281,7 +294,7 @@ Content-Type: multipart/form-data
 
 业务逻辑:
 
-- 只有 `owner` 可以上传头像
+- 当前实现中 `owner` 与 `editor` 都可以上传头像
 - 验证文件类型和大小
 - 上传到 MinIO `avatars` bucket
 - 更新 `pet.avatar_url`
@@ -411,8 +424,9 @@ async def get_pet_membership(
 
 - 不再使用 `HTTPException`，统一使用项目现有的 `AppException`
 - 查询时建议一次性拿到 `Pet` + `PetMember`，避免路由层重复查询
-- `require_owner=True` 仅用于 `PUT /pets/{pet_id}`、`POST /pets/{pet_id}/avatar`、`DELETE /pets/{pet_id}`
-- `GET /pets/{pet_id}` 允许 `owner` 和 `member` 查看
+- 当前实现里 `require_owner=True` 只用于 `DELETE /pets/{pet_id}` 与分享管理类接口
+- `PUT /pets/{pet_id}`、`POST /pets/{pet_id}/avatar` 使用 `require_role=MemberRole.EDITOR`
+- `GET /pets/{pet_id}` 允许 `owner` / `editor` / `viewer` 查看
 
 推荐错误码：
 
@@ -494,7 +508,7 @@ def _ensure_bucket(bucket: str) -> None:
 1. 先修正 `app/schemas/pet.py`，统一请求/响应结构
 2. 新增邀请码与权限辅助逻辑
 3. 完善 `app/api/v1/pets.py` 中的创建、分页列表、详情、更新、头像上传、删除
-4. 补充或更新自动化测试，至少覆盖 owner/member 权限差异与分页行为
+4. 补充或更新自动化测试，至少覆盖 owner/editor/viewer 权限差异与分页行为
 
 ---
 
@@ -559,7 +573,8 @@ def _ensure_bucket(bucket: str) -> None:
 - 点击卡片进入编辑页面
 - 底部有「添加宠物」按钮
 - 卡片支持左滑显示删除按钮 (仅 owner)
-- 如果当前用户是 `member`，卡片进入详情/只读编辑态，但不显示删除入口
+- 如果当前用户是 `editor`，卡片进入可编辑页，但不显示删除入口
+- 如果当前用户是 `viewer`，卡片进入只读页，底部显示退出共享入口（详见 Phase 2 Step 1）
 
 ### 4.3 创建/编辑宠物档案页面 (`screens/profile/pet_edit_screen.dart`)
 
@@ -613,7 +628,7 @@ def _ensure_bucket(bucket: str) -> None:
 - 品种: 选填，`Autocomplete` + 自由输入，预设常见品种
 - 生日: 日期选择器
 - 编辑模式下显示「删除此宠物档案」按钮（红色描边），点击弹出确认对话框后执行删除
-- 编辑页只允许 `owner` 进入编辑态
+- 当前实现中 `owner` 与 `editor` 都可进入编辑态；`viewer` 进入只读态
 
 ### 4.4 路由建议
 
@@ -670,7 +685,7 @@ class PetSelector extends StatelessWidget {
 
 - 单选模式用于「记录」「健康」，切换后同步更新全局 `selectedPetProvider`
 - 多选模式用于「时间轴」，默认“全部宠物”选中
-- 当用户首次创建宠物成功后，自动将该宠物设置为当前选中宠物
+- 当前实现仅在“本地还没有任何已选宠物”时，才会把新建宠物设为当前选中宠物
 - 若本地持久化的宠物已不存在，应自动回退到列表第一项或空态
 
 ---
@@ -736,7 +751,7 @@ final selectedTimelinePetIdsProvider = StateProvider<List<int>>((ref) => []);
 - `build()` 中 `ref.watch(authProvider)` 使 provider 在认证状态变化时自动重建：登录后自动拉取宠物列表，登出后自动清空，无需手动失效
 - 在 auth 状态为 `unknown`（应用启动检查 token 阶段）或 `unauthenticated` 时，`build()` 返回空列表而不发起网络请求，避免触发 401
 - `selectedPetIdProvider` 使用 `StateNotifier` 并在构造时从 `SharedPreferences` 恢复上次选中值
-- 宠物创建成功后，刷新 `petListProvider`，并把新建宠物写入 `selectedPetIdProvider`
+- 宠物创建成功后，刷新 `petListProvider`；若当前没有任何已选宠物，再把新建宠物写入 `selectedPetIdProvider`
 - 宠物删除后，如果删除的是当前选中宠物，需要自动切换到 null，下次打开自动回退到列表第一项
 
 ### 5.1 前端实现蓝图
@@ -872,9 +887,9 @@ bool _shouldRetry(DioException err) {
 
 - [ ] 后端 `POST /api/v1/pets` 创建宠物档案成功，自动生成邀请码
 - [ ] 后端 `GET /api/v1/pets` 支持 `page`、`page_size`，并返回 `page`、`page_size`、`total`、`pets`
-- [ ] 后端 `GET /api/v1/pets/{id}` 对 owner/member 可见，对非成员返回 `403`
-- [ ] 后端 `PUT /api/v1/pets/{id}` 仅 owner 可修改，`pet_type` 不可修改
-- [ ] 后端 `POST /api/v1/pets/{id}/avatar` 仅 owner 可上传头像，并返回最新完整对象
+- [ ] 后端 `GET /api/v1/pets/{id}` 对 owner/editor/viewer 可见，对非成员返回 `403`
+- [ ] 后端 `PUT /api/v1/pets/{id}` 对 owner/editor 可修改，`pet_type` 不可修改
+- [ ] 后端 `POST /api/v1/pets/{id}/avatar` 对 owner/editor 可上传头像，并返回最新完整对象
 - [ ] 后端 `DELETE /api/v1/pets/{id}` 只有 owner 可以删除
 - [ ] Flutter「我的」页面展示用户信息
 - [ ] Flutter 宠物档案管理页面展示宠物卡片列表
@@ -895,9 +910,9 @@ bool _shouldRetry(DioException err) {
 1. 先用 Step 2 的登录接口获取 `access_token`
 2. 验证 `POST /api/v1/pets` 创建成功，并自动产生 owner 关系
 3. 验证 `GET /api/v1/pets?page=1&page_size=20` 的分页与排序
-4. 验证 `GET /api/v1/pets/{pet_id}` 在 owner/member/非成员三种身份下的返回
-5. 验证 `PUT /api/v1/pets/{pet_id}`、`POST /api/v1/pets/{pet_id}/avatar`、`DELETE /api/v1/pets/{pet_id}` 的 owner 限制
-6. 验证 `invite_code` 对 owner 返回真实值，对 member 返回 `null`
+4. 验证 `GET /api/v1/pets/{pet_id}` 在 owner/editor/viewer/非成员几种身份下的返回
+5. 验证 `PUT /api/v1/pets/{pet_id}`、`POST /api/v1/pets/{pet_id}/avatar` 对 owner/editor 放行，`DELETE /api/v1/pets/{pet_id}` 仍仅 owner 可用
+6. 验证 `invite_code` 对 owner 返回真实值，对 editor/viewer 返回 `null`
 
 ### 9.2 Flutter 联调顺序
 

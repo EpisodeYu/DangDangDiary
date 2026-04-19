@@ -123,7 +123,19 @@ erDiagram
         bigint id PK
         bigint pet_id FK
         bigint user_id FK
-        enum role "owner/member"
+        enum role "owner/editor/viewer"
+        timestamp created_at
+    }
+
+    pet_share_codes {
+        bigint id PK
+        bigint pet_id FK
+        varchar code UK
+        bigint created_by FK
+        timestamp expires_at
+        timestamp used_at
+        bigint used_by_user_id FK
+        timestamp revoked_at
         timestamp created_at
     }
 
@@ -133,6 +145,7 @@ erDiagram
         bigint user_id FK
         varchar storage_key
         varchar thumbnail_key
+        varchar thumbnail_sm_key
         date taken_at
         timestamp created_at
     }
@@ -176,6 +189,7 @@ erDiagram
     users ||--o{ pets : "owns"
     pets ||--o{ pet_members : "has"
     users ||--o{ pet_members : "joins"
+    pets ||--o{ pet_share_codes : "has"
     pets ||--o{ photos : "has"
     pets ||--o{ weights : "has"
     pets ||--o{ dewormings : "has"
@@ -250,8 +264,14 @@ DangDangDiary/
 - `GET /api/v1/pets` - 获取我的所有宠物档案
 - `PUT /api/v1/pets/{id}` - 更新宠物档案
 - `DELETE /api/v1/pets/{id}` - 删除宠物档案
-- `POST /api/v1/pets/{id}/join` - 通过邀请码加入档案 (Phase 2)
+- `POST /api/v1/pets/{id}/share-code` - 生成分享码 (Phase 2)
+- `GET /api/v1/pets/{id}/share-code` - 获取当前有效分享码 (Phase 2)
+- `DELETE /api/v1/pets/{id}/share-code` - 撤销当前分享码 (Phase 2)
+- `POST /api/v1/pets/redeem` - 通过分享码加入档案 (Phase 2)
+- `GET /api/v1/pets/{id}/members` - 获取共享成员列表 (Phase 2)
+- `PATCH /api/v1/pets/{id}/members/{user_id}` - 修改成员权限 (Phase 2)
 - `DELETE /api/v1/pets/{id}/members/{user_id}` - 移除成员 (Phase 2)
+- `POST /api/v1/pets/{id}/leave` - 主动退出共享档案 (Phase 2)
 
 ### 照片模块
 - `POST /api/v1/pets/{id}/photos` - 上传照片(最多5张, 单张<=15MB)
