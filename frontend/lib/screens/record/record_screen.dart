@@ -8,17 +8,24 @@ import 'package:go_router/go_router.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../config/theme.dart';
 import '../../models/photo.dart';
+import '../../models/voice_intake.dart';
+import '../../providers/health_provider.dart';
 import '../../providers/pet_provider.dart';
 import '../../services/original_photo_cache.dart';
 import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
+import '../../services/voice_service.dart';
 import '../../utils/exif_helper.dart';
 import '../../widgets/pet_selector.dart';
+import '../../widgets/voice_intake_sheet.dart';
+import '../../widgets/voice_record_button.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
+final _voiceServiceProvider = Provider<VoiceService>((ref) => VoiceService());
 
 class RecordScreen extends ConsumerStatefulWidget {
   const RecordScreen({super.key});
@@ -38,8 +45,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   final ValueNotifier<bool> _isServerProcessing = ValueNotifier(false);
   Map<int, String> _failureMessages = {};
 
+  // Phase 2 Step 2 — voice intake.
+  bool _voiceProcessing = false;
+
   final _picker = ImagePicker();
   final _dateFormat = DateFormat('yyyy-MM-dd');
+  final _uuid = const Uuid();
 
   @override
   void dispose() {
@@ -81,11 +92,60 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       return _buildEmptyState();
     }
 
+    // The voice button sits as a persistent bottom affordance across
+    // both states so users can always hold-to-talk without thinking
+    // about which mode they're in. Photo upload progress dialogs stack
+    // over this safely because they use the root navigator.
+    final Widget body;
     if (_selectedFiles.isEmpty) {
-      return _buildInitialState();
+      body = _buildInitialState();
+    } else {
+      body = _buildPhotoListState();
     }
+    return Column(
+      children: [
+        Expanded(child: body),
+        _buildVoiceBar(),
+      ],
+    );
+  }
 
-    return _buildPhotoListState();
+  Widget _buildVoiceBar() {
+    // Disabled during photo upload to avoid overlapping multipart
+    // requests fighting over the progress HUD + cache bookkeeping.
+    final disabled = _isUploading || _voiceProcessing;
+    return Container(
+      padding: EdgeInsets.fromLTRB(
+          16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Stack(
+        children: [
+          VoiceRecordButton(
+            enabled: !disabled,
+            onRecordComplete: _handleVoiceClipReady,
+          ),
+          if (_voiceProcessing)
+            const Positioned.fill(
+              child: Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 
   Widget _buildEmptyState() {
@@ -286,7 +346,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   Widget _buildBottomSubmitBar() {
     return Container(
-      padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+      // The voice bar below us owns the safe-area padding, so we only
+      // need the inner 12px breathing room here.
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -720,5 +782,171 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+  }
+
+  // ------------------ Voice intake ------------------
+
+  /// Called by [VoiceRecordButton] with the finished clip. Does:
+  ///
+  ///   1. POST /voice/intake and branch on `status` (§3.1 / §7).
+  ///   2. For `draft_pending`: show the review sheet; on confirm, fire
+  ///      the corresponding health-list provider invalidate so the new
+  ///      row shows up without needing to leave the page.
+  ///   3. Clean up the local audio file once we've heard back.
+  Future<void> _handleVoiceClipReady(File audioFile) async {
+    setState(() => _voiceProcessing = true);
+
+    try {
+      final service = ref.read(_voiceServiceProvider);
+      final selectedPet = ref.read(selectedPetProvider);
+      final clientReqId = _uuid.v4();
+
+      final response = await service.intake(
+        audioFile: audioFile,
+        clientRequestId: clientReqId,
+        defaultPetId: selectedPet?.id,
+      );
+
+      if (!mounted) return;
+
+      switch (response.status) {
+        case VoiceIntakeStatus.sttFailed:
+          _showSnack('没听清，请再说一次');
+          break;
+        case VoiceIntakeStatus.intentUnknown:
+          await _showTranscriptFallbackSheet(response);
+          break;
+        case VoiceIntakeStatus.draftPending:
+          await _showDraftReviewSheet(response);
+          break;
+      }
+    } on DioException catch (e) {
+      if (!mounted) return;
+      _showSnack(_voiceFriendlyError(e));
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack('语音识别失败，请稍后重试');
+    } finally {
+      if (mounted) setState(() => _voiceProcessing = false);
+      // Local audio cleanup — server already has its own copy.
+      try {
+        await audioFile.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _showDraftReviewSheet(VoiceIntakeResponse response) async {
+    final pets = ref.read(petListProvider).valueOrNull?.pets ?? const [];
+    final service = ref.read(_voiceServiceProvider);
+
+    final result = await showVoiceIntakeSheet(
+      context,
+      response: response,
+      pets: pets,
+      service: service,
+    );
+
+    if (result == null || !mounted) return;
+
+    // Refresh the matching list + status providers so the new record is
+    // visible next time the user opens the health screen / cycle status.
+    _invalidateProvidersForIntent(response.intent, result.entity);
+
+    final intentLabel = response.intent == null
+        ? '记录'
+        : '${voiceIntentLabel(response.intent!)}记录';
+    _showSnack('已创建$intentLabel');
+  }
+
+  void _invalidateProvidersForIntent(
+    VoiceIntent? intent,
+    Map<String, dynamic> entity,
+  ) {
+    final petId = entity['pet_id'] as int?;
+    if (petId == null || intent == null) return;
+    switch (intent) {
+      case VoiceIntent.deworming:
+        ref.invalidate(dewormingListProvider(petId));
+        ref.invalidate(dewormingStatusProvider(petId));
+        break;
+      case VoiceIntent.vaccination:
+        ref.invalidate(vaccinationListProvider(petId));
+        break;
+      case VoiceIntent.weight:
+        ref.invalidate(weightListProvider(petId));
+        break;
+      case VoiceIntent.routine:
+        ref.invalidate(routineListProvider(petId));
+        ref.invalidate(routineStatusProvider(petId));
+        break;
+      case VoiceIntent.unknown:
+        break;
+    }
+  }
+
+  Future<void> _showTranscriptFallbackSheet(VoiceIntakeResponse response) async {
+    final transcript = response.transcript ?? '';
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('没能识别出想记录的事',
+                  style: TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 12),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF4EE),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  transcript.isEmpty ? '（未识别到语音内容）' : '"$transcript"',
+                  style: const TextStyle(fontSize: 14),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '请换一种说法再试，例如："今天给咪咪做了体内驱虫"。',
+                style:
+                    TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                height: 44,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppTheme.primaryColor,
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  child: const Text('我再说一遍',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _voiceFriendlyError(DioException e) {
+    final data = e.response?.data;
+    if (data is Map && data['message'] is String) {
+      return data['message'] as String;
+    }
+    final code = e.response?.statusCode;
+    if (code == 503) return '语音服务暂时不可用，请稍后再试';
+    return '语音识别失败，请稍后重试';
   }
 }

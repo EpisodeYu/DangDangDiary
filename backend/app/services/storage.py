@@ -102,6 +102,9 @@ def ensure_all_buckets() -> None:
     _ensure_bucket(settings.MINIO_BUCKET_PHOTOS, public=False)
     _ensure_bucket(settings.MINIO_BUCKET_THUMBNAILS, public=True)
     _ensure_bucket(settings.MINIO_BUCKET_AVATARS, public=True)
+    # Voice intake audio: private + 24h lifecycle handled by server cron
+    # / MinIO bucket lifecycle policy (operator configures outside code).
+    _ensure_bucket(settings.MINIO_BUCKET_VOICE_INTAKE, public=False)
 
 
 async def aensure_all_buckets() -> None:
@@ -352,3 +355,79 @@ async def adelete_object_by_url(url: str) -> None:
 
 async def adelete_objects_by_prefix(bucket: str, prefix: str) -> None:
     await asyncio.to_thread(delete_objects_by_prefix, bucket, prefix)
+
+
+# ----------------------- Voice intake audio -----------------------
+
+_VOICE_EXT_MAP = {
+    "audio/m4a": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+}
+
+
+def upload_voice_audio(
+    user_id: int,
+    data: bytes,
+    content_type: str,
+    *,
+    request_id: str,
+) -> str:
+    """Upload a voice-intake audio blob to the private voice-intake bucket.
+
+    Returns the bucket-local object key (e.g.
+    ``12/20260420/8b1c....m4a``). The caller stores this key in
+    `voice_intake_logs.audio_object_key` — it is never exposed to the
+    client. Bucket-level lifecycle policy deletes the object after 24h.
+    """
+    import time
+
+    bucket = settings.MINIO_BUCKET_VOICE_INTAKE
+    _ensure_bucket(bucket, public=False)
+
+    ext = _VOICE_EXT_MAP.get(content_type.lower(), "m4a")
+    # Group by day so the MinIO lifecycle rule can prune entire day
+    # prefixes if needed.
+    ymd = time.strftime("%Y%m%d", time.gmtime())
+    object_key = f"{user_id}/{ymd}/{request_id}.{ext}"
+
+    _get_client().put_object(
+        bucket,
+        object_key,
+        io.BytesIO(data),
+        length=len(data),
+        content_type=content_type,
+    )
+    return object_key
+
+
+def delete_voice_audio(object_key: str | None) -> None:
+    if not object_key:
+        return
+    try:
+        _get_client().remove_object(
+            settings.MINIO_BUCKET_VOICE_INTAKE, object_key
+        )
+    except Exception:
+        logger.warning("Failed to delete voice audio: %s", object_key)
+
+
+async def aupload_voice_audio(
+    user_id: int,
+    data: bytes,
+    content_type: str,
+    *,
+    request_id: str,
+) -> str:
+    return await asyncio.to_thread(
+        upload_voice_audio, user_id, data, content_type, request_id=request_id,
+    )
+
+
+async def adelete_voice_audio(object_key: str | None) -> None:
+    await asyncio.to_thread(delete_voice_audio, object_key)

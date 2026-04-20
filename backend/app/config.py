@@ -46,6 +46,20 @@ class Settings(BaseSettings):
     ALIYUN_IMAGERECOG_ENDPOINT: str = "imagerecog.cn-shanghai.aliyuncs.com"
     ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
+    # DashScope (Phase 2 Step 2 voice intake)
+    # 统一用一个北京地域的 DashScope API Key 服务 STT + LLM。新加坡地域
+    # 不提供 paraformer-realtime-v2，申请时务必选北京。
+    DASHSCOPE_API_KEY: str = ""
+    DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    DASHSCOPE_STT_MODEL: str = "paraformer-realtime-v2"
+    TONGYI_MODEL: str = "qwen-plus"
+
+    # Voice intake hard limits (front/back both enforce)
+    VOICE_INTAKE_MAX_SECONDS: int = 30
+    VOICE_INTAKE_MAX_MB: int = 2
+    VOICE_AUDIO_TTL_HOURS: int = 24
+    MINIO_BUCKET_VOICE_INTAKE: str = "voice-intake"
+
     model_config = {"env_file": ".env"}
 
 

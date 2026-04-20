@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- Phase 2 Step 2: voice intake -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <application
         android:label="dangdang_diary"
         android:name="${applicationName}"
