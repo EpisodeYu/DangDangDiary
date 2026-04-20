@@ -19,7 +19,7 @@ Phase 1 的记录页（[frontend/lib/screens/record/record_screen.dart](../front
 ## 本步骤目标
 
 1. **后端**：新增 `pet_photo_embeddings` 表（pgvector + ivfflat 索引）、新增 `POST /api/v1/photos/classify` 单接口；在现有 `POST /pets/{pet_id}/photos` 成功后**异步回流**照片 embedding，无需改该接口的响应。
-2. **后端**：新增 `services/embedding.py`（DashScope `multimodal-embedding-v1` 封装）、`services/pet_centroid.py`（向量读写 + 判决 + Redis 缓存）。
+2. **后端**：新增 `services/embedding.py`（DashScope `tongyi-embedding-vision-plus-2026-03-06` 封装，通过官方 `dashscope` Python SDK 的 `MultiModalEmbedding.call()` 调用；**多模态独立向量化不支持 OpenAI 兼容接口**，只能走 DashScope SDK / 原生 API，详见 [docs/API_docs/多模态向量化,md](API_docs/多模态向量化,md)）、`services/pet_centroid.py`（向量读写 + 判决 + Redis 缓存）。
 3. **基础设施**：`docker-compose.yml` 的 postgres 镜像从 `postgres:16-alpine` 换成 `pgvector/pgvector:pg16`；Alembic 迁移里 `CREATE EXTENSION vector`。
 4. **前端**：记录页大改——去掉 AppBar 的 `PetSelector`，每张照片卡片下方的"日期行"右侧增加 `PetChipDropdown`；选照片完成后并发调 classify，Chip 自动填入识别结果；提交按 `pet_id` 分组，对每组调一次现有 `PhotoService.uploadPhotos`。
 5. **UX 细节**：识别超时 / 无参照档案 / 低置信度统一走"Chip 显示「选择宠物」"；用户改过的 Chip 在提交后把这张照片标成 `user_corrected` 入池作为强信号。
@@ -46,7 +46,7 @@ Phase 1 的记录页（[frontend/lib/screens/record/record_screen.dart](../front
     ▼
 对过滤通过的 N' 张并发调 POST /api/v1/photos/classify
     │
-    ├─ 服务端压缩 → DashScope multimodal-embedding-v1 → vector(1024)
+    ├─ 服务端压缩 → DashScope tongyi-embedding-vision-plus-2026-03-06 (dim=1024) → vector(1024)
     ├─ 拿调用方 pet 集合的 centroid → cosine sim Top-3
     └─ 判决：Top-1 ≥ 0.78 且与 Top-2 差 ≥ 0.05 → {pet_id, confidence}
                                             否则 → null
@@ -124,7 +124,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.database import Base
 from app.utils.time import utcnow
 
-EMBEDDING_DIM = 1024  # DashScope multimodal-embedding-v1
+EMBEDDING_DIM = 1024  # DashScope tongyi-embedding-vision-plus-2026-03-06 (choose 1024 via `dimension` param)
 
 
 class EmbeddingSource(str, enum.Enum):
@@ -249,25 +249,30 @@ def _compile_vector_sqlite(type_, compiler, **kw):
 
 ### 5.1 `services/embedding.py`（DashScope 封装）
 
+**关键约束**：DashScope 的「多模态独立向量化」只开放 **DashScope SDK / 原生 REST** 两个通道，**不支持** OpenAI 兼容接口（参见 [docs/API_docs/多模态向量化,md](../docs/API_docs/多模态向量化,md) 第 168 行原文）。Phase 2 Step 2 的 LLM 调用走 `openai` SDK + 兼容端点，本步骤则走 **`dashscope.MultiModalEmbedding.call()`**，SDK 与 Step 2 的 `dashscope.audio.asr.Recognition` 同属 `dashscope` 包（已在 `requirements.txt` 里），无需额外装依赖。
+
 新建 [backend/app/services/embedding.py](../backend/app/services/embedding.py)：
 
 ```python
+import asyncio
 import base64
 import io
 import logging
-from typing import Sequence
+from http import HTTPStatus
 
-import httpx
+import dashscope
 from PIL import Image
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_DASHSCOPE_EMBEDDING_URL = (
-    "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
-)
-_MAX_SIDE = 512
+# dashscope SDK 默认读 DASHSCOPE_API_KEY 环境变量；显式再写一遍便于测试注入
+dashscope.api_key = settings.DASHSCOPE_API_KEY
+
+_MAX_SIDE = 512              # 长边压缩到 512px；模型侧单张 ≤ 5 MB，余量巨大
+_JPEG_QUALITY = 85
+_DIMENSION = 1024            # 与 PetPhotoEmbedding.embedding 的 Vector(1024) 严格对齐
 
 
 class EmbeddingUnavailableError(RuntimeError):
@@ -277,44 +282,45 @@ class EmbeddingUnavailableError(RuntimeError):
 async def embed_image(image_bytes: bytes) -> list[float]:
     """调 DashScope 多模态 embedding，返回 1024 维向量。
 
-    image_bytes: 原图 JPEG/PNG/WEBP 都行；内部压缩到长边 512 再转 base64。
+    image_bytes: 原图 JPEG/PNG/WEBP/BMP 都行；内部压缩到长边 512 再转 base64 data URI。
     """
     if not settings.DASHSCOPE_API_KEY:
         raise EmbeddingUnavailableError("DASHSCOPE_API_KEY 未配置")
 
-    compressed = _compress(image_bytes)
-    b64 = base64.b64encode(compressed).decode("ascii")
+    # 压缩 + base64 是 CPU 密集，用 to_thread 避免阻塞事件循环
+    data_uri = await asyncio.to_thread(_compress_to_data_uri, image_bytes)
 
-    payload = {
-        "model": settings.DASHSCOPE_EMBEDDING_MODEL,
-        "input": {"contents": [{"image": f"data:image/jpeg;base64,{b64}"}]},
-    }
-    headers = {
-        "Authorization": f"Bearer {settings.DASHSCOPE_API_KEY}",
-        "Content-Type": "application/json",
-    }
+    # MultiModalEmbedding.call 是同步阻塞调用；同样放线程池
+    result = await asyncio.to_thread(
+        dashscope.MultiModalEmbedding.call,
+        model=settings.DASHSCOPE_EMBEDDING_MODEL,       # 默认 tongyi-embedding-vision-plus-2026-03-06
+        input=[{"image": data_uri}],
+        dimension=_DIMENSION,                            # 选 1024 维
+    )
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.post(_DASHSCOPE_EMBEDDING_URL, json=payload, headers=headers)
-    if resp.status_code >= 400:
-        logger.warning("DashScope embedding failed: %s %s", resp.status_code, resp.text[:500])
-        raise EmbeddingUnavailableError(f"HTTP {resp.status_code}")
+    if result.status_code != HTTPStatus.OK:
+        logger.warning(
+            "dashscope embedding non-200: %s %s", result.status_code, result.message
+        )
+        raise EmbeddingUnavailableError(f"HTTP {result.status_code}: {result.message}")
 
-    data = resp.json()
+    # tongyi-embedding-vision-plus-2026-03-06 的 output 结构：
+    #   {"embeddings": [{"type": "image", "embedding": [...], "index": 0}], ...}
     try:
-        vec = data["output"]["embeddings"][0]["embedding"]
-    except (KeyError, IndexError) as e:
-        raise EmbeddingUnavailableError(f"Bad response: {data}") from e
+        items = result.output["embeddings"]
+        vec = items[0]["embedding"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise EmbeddingUnavailableError(f"Bad response shape: {result.output!r}") from e
 
-    if len(vec) != 1024:
+    if len(vec) != _DIMENSION:
         raise EmbeddingUnavailableError(
-            f"Unexpected dim {len(vec)}, expected 1024. "
+            f"Unexpected dim {len(vec)}, expected {_DIMENSION}. "
             f"Check DASHSCOPE_EMBEDDING_MODEL={settings.DASHSCOPE_EMBEDDING_MODEL}"
         )
     return vec
 
 
-def _compress(image_bytes: bytes) -> bytes:
+def _compress_to_data_uri(image_bytes: bytes) -> str:
     im = Image.open(io.BytesIO(image_bytes))
     im = im.convert("RGB")
     w, h = im.size
@@ -322,8 +328,20 @@ def _compress(image_bytes: bytes) -> bytes:
     if scale < 1:
         im = im.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
     buf = io.BytesIO()
-    im.save(buf, format="JPEG", quality=85)
-    return buf.getvalue()
+    im.save(buf, format="JPEG", quality=_JPEG_QUALITY)
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/jpeg;base64,{b64}"
+```
+
+**单元测试侧**（§11.1 的对应条目已同步更新）：monkeypatch `dashscope.MultiModalEmbedding.call` 返回一个带 `.status_code / .output / .message` 三属性的 stub；不打真实网络。示例：
+
+```python
+class _FakeResult:
+    status_code = 200
+    output = {"embeddings": [{"type": "image", "embedding": [0.1] * 1024, "index": 0}]}
+    message = ""
+
+monkeypatch.setattr("dashscope.MultiModalEmbedding.call", lambda **kw: _FakeResult())
 ```
 
 ### 5.2 `services/pet_centroid.py`（向量库读写 + 判决）
@@ -974,8 +992,10 @@ if (classifySources != null) {
 
 ## 10. 成本 / 延迟控制
 
-- **Embedding 模型**：`multimodal-embedding-v1`，1024 维。当前 DashScope 挂牌价 ≈ ¥0.0007/张输入（以官网为准）。
-- **单次 classify 成本**：≤ ¥0.001（5 张并发总计 < ¥0.005）。
+- **Embedding 模型**：`tongyi-embedding-vision-plus-2026-03-06`，选用 1024 维（模型支持 1152/1024/512/256/128/64）。当前 DashScope 挂牌价 ≈ **¥0.0005 / 千输入 token**（以官网为准）；单张 512px 压缩后图片约消耗 300-500 tokens，实际成本 ≈ **¥0.0002 / 张**。
+- **单次 classify 成本**：≤ ¥0.0005（5 张并发总计 < ¥0.003）——比原计划用 `multimodal-embedding-v1` 便宜约 5 倍，比 `qwen3-vl-embedding` 便宜约 10 倍。
+- **为什么不选 `qwen3-vl-embedding`**：它主打"文本+图像融合向量"（例如"找相似风格但更显年轻的款式"这种带指令的跨模态检索），对我们"纯图像 → 是哪只宠物"的场景属于过度能力，且单价高 3 倍。
+- **为什么不选 `tongyi-embedding-vision-flash-2026-03-06`**：flash 版最大 768 维，且官方定位"极致低价轻量"。等上线后命中率回归确认足够，再作为降级项灰度替换。
 - **单次 classify 延迟**（99 分位，5 张并发）：
   - 压缩 50ms × 5 = 250ms（在服务端 `asyncio.to_thread`）
   - DashScope 往返 400ms（上海 region）
@@ -992,8 +1012,8 @@ if (classifySources != null) {
 
 ### 11.1 单元
 
-- `services/embedding._compress`：1080p 输入 → 长边 512；极小图不放大；非 RGB 模式转 RGB
-- `services/embedding.embed_image`：用 `httpx.MockTransport` 桩，断言 POST body / headers；响应 `embeddings[0].embedding` 被正确解析；错 shape / 非 200 抛 `EmbeddingUnavailableError`
+- `services/embedding._compress_to_data_uri`：1080p 输入 → 长边 512；极小图不放大；非 RGB 模式转 RGB；输出必为 `data:image/jpeg;base64,...`
+- `services/embedding.embed_image`：monkeypatch `dashscope.MultiModalEmbedding.call` 返回伪 `Result`（带 `status_code / output / message`）；断言 `call` 收到的 kwargs 包含正确的 `model`、`dimension=1024`、`input=[{"image": data_uri}]`；响应 `output.embeddings[0].embedding` 被正确解析；错 shape / 非 200 抛 `EmbeddingUnavailableError`
 - `services/pet_centroid.classify`：
   - 空池 → `(null, null)`
   - 只有一只宠物且 sim=0.9 → 命中（margin 规则在单行时视为 `top2_sim=0`）
@@ -1054,9 +1074,9 @@ if (classifySources != null) {
 
 | 键名 | 必填 | 默认 | 说明 |
 |---|---|---|---|
-| `DASHSCOPE_API_KEY` | 是 | — | 与 [phase2-step2](phase2-step2-voice-intake.md) 共用同一 key |
-| `DASHSCOPE_EMBEDDING_MODEL` | 否 | `multimodal-embedding-v1` | 输出 1024 维 |
-| `CLASSIFY_SIM_TOP1_MIN` | 否 | `0.78` | 命中阈值 |
+| `DASHSCOPE_API_KEY` | 是 | — | 与 [phase2-step2](phase2-step2-voice-intake.md) 共用同一 key（北京地域）；**不需要**在控制台单独"开通"向量模型，持有 key 即可直接调用 |
+| `DASHSCOPE_EMBEDDING_MODEL` | 否 | `tongyi-embedding-vision-plus-2026-03-06` | 通过 `dimension=1024` 参数输出 1024 维向量；升级到 `tongyi-embedding-vision-plus-2026-xx-xx` 时只改此键 |
+| `CLASSIFY_SIM_TOP1_MIN` | 否 | `0.78` | 命中阈值（首版以该模型的实测分布为准；上线 1 周后按 §附录 B 调优） |
 | `CLASSIFY_SIM_MARGIN_MIN` | 否 | `0.05` | Top-1 与 Top-2 最小差 |
 | `CLASSIFY_CACHE_TTL_SECONDS` | 否 | `300` | pet 列表缓存 |
 
