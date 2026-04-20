@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -274,7 +275,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
               backgroundImage: _avatarBytes != null
                   ? MemoryImage(_avatarBytes!)
                   : (_existingPet?.avatarUrl != null
-                      ? NetworkImage(_existingPet!.avatarUrl!)
+                      ? CachedNetworkImageProvider(_existingPet!.avatarUrl!)
                       : null),
               child: _avatarBytes == null && _existingPet?.avatarUrl == null
                   ? const Icon(Icons.camera_alt, size: 32, color: AppTheme.primaryColor)

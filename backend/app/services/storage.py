@@ -129,6 +129,26 @@ def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
     return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
 
 
+def upload_user_avatar(user_id: int, data: bytes, content_type: str) -> str:
+    """Upload user avatar and return the public URL path."""
+    bucket = settings.MINIO_BUCKET_AVATARS
+    _ensure_bucket(bucket)
+
+    ext = EXT_MAP.get(content_type, "jpg")
+    object_key = f"users/{user_id}/{int(time.time())}.{ext}"
+
+    client = _get_client()
+    client.put_object(
+        bucket,
+        object_key,
+        io.BytesIO(data),
+        length=len(data),
+        content_type=content_type,
+    )
+
+    return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+
+
 def upload_photo(
     pet_id: int, file_data: bytes, content_type: str
 ) -> tuple[str, str, str]:
@@ -308,6 +328,12 @@ async def aupload_pet_avatar(
     pet_id: int, data: bytes, content_type: str,
 ) -> str:
     return await asyncio.to_thread(upload_pet_avatar, pet_id, data, content_type)
+
+
+async def aupload_user_avatar(
+    user_id: int, data: bytes, content_type: str,
+) -> str:
+    return await asyncio.to_thread(upload_user_avatar, user_id, data, content_type)
 
 
 async def adelete_photo_objects(

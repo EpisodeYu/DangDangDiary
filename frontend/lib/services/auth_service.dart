@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/user.dart';
@@ -65,6 +68,22 @@ class AuthService {
 
   Future<User> updateMe({required String nickname}) async {
     final resp = await _api.dio.put('/auth/me', data: {'nickname': nickname});
+    return User.fromJson(resp.data as Map<String, dynamic>);
+  }
+
+  Future<User> uploadAvatar(
+    Uint8List bytes,
+    String filename, {
+    ProgressCallback? onSendProgress,
+  }) async {
+    final formData = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: filename),
+    });
+    final resp = await _api.dio.post(
+      '/auth/me/avatar',
+      data: formData,
+      onSendProgress: onSendProgress,
+    );
     return User.fromJson(resp.data as Map<String, dynamic>);
   }
 }

@@ -1,12 +1,27 @@
+import 'dart:io';
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
 
-class ProfileScreen extends ConsumerWidget {
+class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  ConsumerState<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends ConsumerState<ProfileScreen> {
+  Uint8List? _pendingAvatarBytes;
+  double? _uploadProgress;
 
   String _maskedPhone(String phone) {
     if (phone.length >= 7) {
@@ -16,7 +31,7 @@ class ProfileScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final authState = ref.watch(authProvider);
     final user = authState.user;
 
@@ -29,15 +44,70 @@ class ProfileScreen extends ConsumerWidget {
             color: Colors.white,
             child: Row(
               children: [
-                CircleAvatar(
-                  radius: 32,
-                  backgroundColor: AppTheme.secondaryColor.withValues(alpha: 0.3),
-                  backgroundImage: user?.avatarUrl != null
-                      ? NetworkImage(user!.avatarUrl!)
-                      : null,
-                  child: user?.avatarUrl == null
-                      ? const Icon(Icons.person, size: 32, color: AppTheme.primaryColor)
-                      : null,
+                GestureDetector(
+                  onTap: _uploadProgress != null ? null : _pickAndUploadAvatar,
+                  child: Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 32,
+                        backgroundColor:
+                            AppTheme.secondaryColor.withValues(alpha: 0.3),
+                        backgroundImage: _pendingAvatarBytes != null
+                            ? MemoryImage(_pendingAvatarBytes!)
+                            : (user?.avatarUrl != null
+                                ? CachedNetworkImageProvider(user!.avatarUrl!)
+                                : null) as ImageProvider?,
+                        child: _pendingAvatarBytes == null &&
+                                user?.avatarUrl == null
+                            ? const Icon(
+                                Icons.person,
+                                size: 32,
+                                color: AppTheme.primaryColor,
+                              )
+                            : null,
+                      ),
+                      if (_uploadProgress != null)
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.black.withValues(alpha: 0.5),
+                            ),
+                            child: Center(
+                              child: SizedBox(
+                                width: 32,
+                                height: 32,
+                                child: CircularProgressIndicator(
+                                  value: _uploadProgress,
+                                  strokeWidth: 2.5,
+                                  color: Colors.white,
+                                  backgroundColor:
+                                      Colors.white.withValues(alpha: 0.3),
+                                ),
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: Colors.white, width: 2),
+                            ),
+                            child: const Icon(
+                              Icons.camera_alt,
+                              size: 12,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
@@ -45,7 +115,8 @@ class ProfileScreen extends ConsumerWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       GestureDetector(
-                        onTap: () => _showEditNicknameDialog(context, ref, user?.nickname),
+                        onTap: () => _showEditNicknameDialog(
+                            context, ref, user?.nickname),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -61,7 +132,8 @@ class ProfileScreen extends ConsumerWidget {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            const Icon(Icons.edit, size: 16, color: AppTheme.textSecondary),
+                            const Icon(Icons.edit,
+                                size: 16, color: AppTheme.textSecondary),
                           ],
                         ),
                       ),
@@ -133,7 +205,72 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 
-  void _showEditNicknameDialog(BuildContext context, WidgetRef ref, String? currentNickname) {
+  Future<({Uint8List bytes, String filename})?> _compressAvatar(
+      XFile xfile) async {
+    final dir = await getTemporaryDirectory();
+    final outPath =
+        '${dir.path}/user_avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final result = await FlutterImageCompress.compressAndGetFile(
+      xfile.path,
+      outPath,
+      minWidth: 400,
+      minHeight: 400,
+      format: CompressFormat.jpeg,
+      quality: 80,
+    );
+    if (result == null) {
+      final raw = await xfile.readAsBytes();
+      return (bytes: raw, filename: xfile.name);
+    }
+    final bytes = await File(result.path).readAsBytes();
+    return (bytes: bytes, filename: 'avatar.jpg');
+  }
+
+  Future<void> _pickAndUploadAvatar() async {
+    final picker = ImagePicker();
+    final file = await picker.pickImage(source: ImageSource.gallery);
+    if (file == null) return;
+
+    final compressed = await _compressAvatar(file);
+    if (compressed == null || !mounted) return;
+
+    setState(() {
+      _pendingAvatarBytes = compressed.bytes;
+      _uploadProgress = 0;
+    });
+
+    final success = await ref.read(authProvider.notifier).uploadAvatar(
+      compressed.bytes,
+      compressed.filename,
+      onSendProgress: (sent, total) {
+        if (mounted && total > 0) {
+          setState(() => _uploadProgress = sent / total);
+        }
+      },
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _uploadProgress = null;
+      if (success) _pendingAvatarBytes = null;
+    });
+
+    if (!success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('头像上传失败，请重试')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('头像上传成功'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  void _showEditNicknameDialog(
+      BuildContext context, WidgetRef ref, String? currentNickname) {
     final controller = TextEditingController(text: currentNickname ?? '');
 
     showDialog(
@@ -159,7 +296,8 @@ class ProfileScreen extends ConsumerWidget {
               final nickname = controller.text.trim();
               if (nickname.isEmpty) return;
               Navigator.of(ctx).pop();
-              final success = await ref.read(authProvider.notifier).updateNickname(nickname);
+              final success =
+                  await ref.read(authProvider.notifier).updateNickname(nickname);
               if (!success && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('昵称修改失败，请重试')),

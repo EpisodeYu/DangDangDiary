@@ -142,6 +142,25 @@ class AuthNotifier extends StateNotifier<AuthState> {
     }
   }
 
+  Future<bool> uploadAvatar(
+    Uint8List bytes,
+    String filename, {
+    ProgressCallback? onSendProgress,
+  }) async {
+    try {
+      final user = await _authService.uploadAvatar(
+        bytes,
+        filename,
+        onSendProgress: onSendProgress,
+      );
+      state = state.copyWith(user: user);
+      return true;
+    } catch (e) {
+      state = state.copyWith(error: _extractError(e));
+      return false;
+    }
+  }
+
   Future<void> logout() async {
     state = state.copyWith(isLoading: true);
     try {
