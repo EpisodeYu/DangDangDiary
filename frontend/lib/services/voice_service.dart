@@ -20,10 +20,10 @@ class VoiceService {
     final form = FormData.fromMap({
       'audio_file': await MultipartFile.fromFile(
         audioFile.path,
-        filename: 'clip.m4a',
-        // Flutter's `record` package default on Android/iOS: AAC in an
-        // MP4 container, which matches audio/m4a on the backend side.
-        contentType: _m4aMediaType(),
+        filename: 'clip.wav',
+        // We record 16kHz mono PCM wav because DashScope paraformer-
+        // realtime-v2 does not accept the m4a/mp4 container.
+        contentType: _wavMediaType(),
       ),
       'client_request_id': clientRequestId,
       'default_pet_id': ?defaultPetId,
@@ -72,4 +72,4 @@ class VoiceService {
 
 /// dio's `http_parser.MediaType` lives under a transitive dep; pass a
 /// small shim so callers don't have to import it directly.
-DioMediaType _m4aMediaType() => DioMediaType('audio', 'm4a');
+DioMediaType _wavMediaType() => DioMediaType('audio', 'wav');

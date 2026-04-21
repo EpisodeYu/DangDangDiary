@@ -222,15 +222,17 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
 
     final dir = await getTemporaryDirectory();
     final path =
-        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.wav';
 
     try {
       await _recorder.start(
         const RecordConfig(
-          encoder: AudioEncoder.aacLc,
-          sampleRate: 16000, // match DashScope Paraformer expectation
+          // DashScope paraformer-realtime-v2 rejects the m4a container
+          // (UNSUPPORTED_FORMAT) — record as 16kHz mono PCM wav instead,
+          // which is directly in its supported format list.
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
           numChannels: 1,
-          bitRate: 64000,
         ),
         path: path,
       );
