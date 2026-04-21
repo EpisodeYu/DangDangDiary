@@ -34,6 +34,18 @@ def test_parse_date_iso_and_future_guard():
     assert vi._parse_date("2030-01-01", today=today) is None
 
 
+def test_parse_date_rejects_wildly_old_iso():
+    # LLM hallucination guard: before we started anchoring the LLM with
+    # today's date, phrases like "上个月 8 号" would be written out to a
+    # date pulled from training priors (commonly 2024-05-08). A date
+    # more than ~10y in the past is almost certainly a hallucination and
+    # should fall back to missing, not silently pre-fill the form.
+    today = date(2026, 4, 21)
+    assert vi._parse_date("2010-01-01", today=today) is None
+    # But "上个月 8 号" resolved correctly to 2026-03-08 must still pass.
+    assert vi._parse_date("2026-03-08", today=today) == date(2026, 3, 8)
+
+
 def test_parse_date_rejects_junk():
     today = date(2026, 4, 20)
     assert vi._parse_date(None, today=today) is None
@@ -195,6 +207,7 @@ def test_llm_user_msg_with_pet_list_included():
         "今天给咪咪做了驱虫",
         known_pet_names=["咪咪", "橘子"],
         default_pet_name="咪咪",
+        today=date(2026, 4, 21),
     )
     assert "「咪咪」" in msg
     assert "「橘子」" in msg
@@ -205,6 +218,27 @@ def test_llm_user_msg_with_pet_list_included():
 def test_llm_user_msg_without_pet_list():
     from app.services import llm as llm_mod
     msg = llm_mod._build_user_message(
-        "今天好开心", known_pet_names=[], default_pet_name=None,
+        "今天好开心",
+        known_pet_names=[],
+        default_pet_name=None,
+        today=date(2026, 4, 21),
     )
     assert "暂无宠物档案" in msg
+
+
+def test_llm_user_msg_includes_today_anchor():
+    """The LLM needs today's date to resolve "上个月 8 号" / "前天" etc.
+
+    Regression for the bug where qwen-plus produced 2024-05-08 for "上个月
+    8 号" because the prompt contained no date anchor (see
+    voice-intake/v2 prompt bump).
+    """
+    from app.services import llm as llm_mod
+    msg = llm_mod._build_user_message(
+        "上个月8号给吉祥洗澡了",
+        known_pet_names=["吉祥"],
+        default_pet_name="吉祥",
+        today=date(2026, 4, 21),
+    )
+    assert "当前日期：2026-04-21" in msg
+    assert "星期二" in msg

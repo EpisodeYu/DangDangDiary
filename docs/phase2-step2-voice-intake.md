@@ -292,8 +292,9 @@ async def confirm(request_id: str, user: User, intent: str,
 - 两个 region 按优先级串行重试，与 STT 的 `_regions_in_priority_order()` 对称：
   1. **新加坡（主）**：`api_key = settings.DASHSCOPE_API_KEY_SAG`，`base_url = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'`
   2. **北京回落**：`api_key = settings.DASHSCOPE_API_KEY`，`base_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'`
-- `extract_intent(transcript, *, known_pet_names, default_pet_name) -> dict`：SG 抛 `OpenAIError` 或其他异常时**自动换 region 重试**；所有 region 失败 → `LlmUnavailableError`。`malformed json` 情况**不回落**（模型本身返回坏 JSON，换区也没用），直接外抛以免浪费用户另一秒。
+- `extract_intent(transcript, *, known_pet_names, default_pet_name, today) -> dict`：SG 抛 `OpenAIError` 或其他异常时**自动换 region 重试**；所有 region 失败 → `LlmUnavailableError`。`malformed json` 情况**不回落**（模型本身返回坏 JSON，换区也没用），直接外抛以免浪费用户另一秒。
 - 生成 prompt 时把用户宠物列表作为**闭集**传入（`known_pet_names`），让 qwen-plus 自己做同音字矫正（STT 常把「咪咪」听成「米米」，在 LLM 侧就近映射比后端做 fuzzy match 鲁棒）。
+- 生成 prompt 时**必须**把 `today`（服务端当日）写进 user message（格式「当前日期：YYYY-MM-DD（星期X）」）。这是 **prompt v2** 的关键修复：v1 依赖"LLM 只吐 today / yesterday / N_days_ago 快捷写法"的约定，但遇到「上个月 8 号 / 上周三 / 两周前」这种无法用快捷写法表达的相对日期时，LLM 会被迫退化到 `YYYY-MM-DD`；在没有日期锚点的情况下它会从训练先验里幻觉一个日期（实测 2026-04-21 问"上个月 8 号"→ `2024-05-08`）。v2 起允许 LLM 自己把相对日期换算成 `YYYY-MM-DD`，同时 `_parse_date` 加了「不晚于今天 & 不早于 10 年前」的兜底。
 - 成功时在返回 dict 里塞一个 `_raw` 字段，调用方把原始字符串落到 `voice_intake_logs.llm_raw` 用于 prompt 迭代审计（`voice_intake_service` 会把它 pop 掉后再返回给客户端）。
 - 参数：`temperature=0, top_p=1, max_tokens=300, seed=42, response_format={"type": "json_object"}`，`model = settings.TONGYI_MODEL`（默认 `qwen-plus`）。
 
@@ -323,13 +324,17 @@ JSON mode + 严格 schema。系统提示词要点：
 }
 
 规则：
-1. 日期一律返回上述受限格式，不要自己算成 "YYYY-MM-DD"，由服务端解析。
+1. 日期字段输出规范：
+   - 「今天」→ "today"；「昨天」→ "yesterday"；「前天 / N 天前」→ "N_days_ago:<n>"。
+   - 其它相对表达（「上个月 8 号」「上周三」「两周前」等）必须基于 user 消息里给出的「当前日期」换算为 "YYYY-MM-DD"；禁止无锚点猜日期。
+   - 输出的 YYYY-MM-DD 不得晚于「当前日期」。
 2. 只要一个字段你没有明确听到，就返回 null；禁止猜测。
 3. 如果这句话不是在记一件宠物相关的事，intent 直接返回 "unknown"，其余字段 null。
 4. 只输出 JSON，不要解释。
 ```
 
 - 温度 0，top_p 1。
+- user message 首行固定追加「当前日期：YYYY-MM-DD（星期X）」，作为所有相对日期换算的锚点；缺了这一行 qwen-plus 对「上个月 8 号」等表达会从训练先验里幻觉日期（v1 → v2 修复点）。
 - prompt 版本号随 log 一起存，便于 A/B。
 - 上线前备一份金标集（20-30 条典型语句 × 预期 JSON），在 CI 里跑 `llm.extract_intent` 的离线回归——允许轻度偏移，但 `intent` 必须 100% 命中。
 

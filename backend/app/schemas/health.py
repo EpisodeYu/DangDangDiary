@@ -5,6 +5,7 @@ from pydantic import BaseModel, field_validator
 
 from app.models.deworming import DewormingType
 from app.models.routine import RoutineType
+from app.utils.time import today_cn
 
 
 # ---------------- Weight ----------------
@@ -26,7 +27,7 @@ class WeightCreate(BaseModel):
     @field_validator("recorded_at")
     @classmethod
     def validate_date(cls, v: date) -> date:
-        if v > date.today():
+        if v > today_cn():
             raise ValueError("记录日期不能是未来日期")
         return v
 
@@ -63,7 +64,7 @@ class DewormingCreate(BaseModel):
     @field_validator("dewormed_at")
     @classmethod
     def validate_date(cls, v: date) -> date:
-        if v > date.today():
+        if v > today_cn():
             raise ValueError("驱虫日期不能是未来日期")
         return v
 
@@ -152,7 +153,7 @@ class VaccinationCreate(BaseModel):
     @field_validator("vaccinated_at")
     @classmethod
     def validate_date(cls, v: date) -> date:
-        if v > date.today():
+        if v > today_cn():
             raise ValueError("接种日期不能是未来日期")
         return v
 
@@ -194,7 +195,7 @@ class RoutineCreate(BaseModel):
     @field_validator("performed_at")
     @classmethod
     def validate_date(cls, v: date) -> date:
-        if v > date.today():
+        if v > today_cn():
             raise ValueError("日常记录日期不能是未来日期")
         return v
 

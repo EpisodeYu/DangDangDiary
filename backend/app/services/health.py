@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import AppException
-from app.utils.time import utcnow
+from app.utils.time import today_cn, utcnow
 from app.models.deworming import Deworming, DewormingType
 from app.models.pet import MemberRole, Pet
 from app.models.routine import Routine, RoutineType
@@ -340,7 +340,7 @@ async def _calc_status(
         )
 
     next_due = last_date + timedelta(days=cycle_days)
-    remaining = (next_due - date.today()).days
+    remaining = (next_due - today_cn()).days
     return DewormingStatusItem(
         reminder_enabled=True,
         last_dewormed_at=last_date,
@@ -667,7 +667,7 @@ async def _calc_routine_status(
         )
 
     next_due = last_date + timedelta(days=cycle_days)
-    remaining = (next_due - date.today()).days
+    remaining = (next_due - today_cn()).days
     return RoutineStatusItem(
         reminder_enabled=True,
         last_performed_at=last_date,

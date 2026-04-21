@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from app.config import settings
@@ -60,7 +61,11 @@ def _regions_in_priority_order() -> list[_Region]:
 
 # Prompt version — stored alongside each log so we can A/B prompts
 # without mixing datasets. Bump on every semantic change.
-PROMPT_VERSION = "voice-intake/v1"
+# v2 (2026-04-21): inject current date into the user message so the LLM
+# can resolve "上个月 8 号 / 前天 / 上周三" against a real calendar.
+# Before v2, the LLM had no date anchor and would hallucinate ISO dates
+# from training-data priors (e.g. "上个月 8 号" → 2024-05-08).
+PROMPT_VERSION = "voice-intake/v2"
 
 
 SYSTEM_PROMPT = (
@@ -80,7 +85,11 @@ SYSTEM_PROMPT = (
     "  \"confidence\": integer 0-100\n"
     "}\n"
     "规则：\n"
-    "1. 日期一律返回受限格式（today / yesterday / N_days_ago:<n> / YYYY-MM-DD），不要自己换算，由服务端解析。\n"
+    "1. 日期字段输出规范：\n"
+    "   - 用户说「今天」→ \"today\"；说「昨天」→ \"yesterday\"；说「前天 / N 天前」→ \"N_days_ago:<n>\"（n 为整数天数）。\n"
+    "   - 其它相对表达（如「上个月 8 号」「上周三」「大前天」「两周前」「去年 5 月」等）必须**基于 user 消息里给出的「当前日期」** 换算为 \"YYYY-MM-DD\"；禁止在没有「当前日期」的情况下凭空写日期。\n"
+    "   - 用户直接说了绝对日期（如「3 月 8 号」）也基于「当前日期」补全年份后输出 \"YYYY-MM-DD\"，默认选择**不晚于当前日期**的最近一次；如果明确说了年份就照用。\n"
+    "   - 输出的 YYYY-MM-DD 不得晚于「当前日期」。\n"
     "2. 只要一个字段你没有明确听到，就返回 null；禁止猜测。\n"
     "3. 如果这句话不是在记一件宠物相关的事，intent 直接返回 \"unknown\"，其余字段 null。\n"
     "4. routine_type 只接受 bath / nail_trim / grooming（洗澡 / 剪指甲 / 美容梳毛）。其它动作（散步、喂饭等）当作 unknown。\n"
@@ -89,11 +98,16 @@ SYSTEM_PROMPT = (
 )
 
 
+# Chinese weekday names, index 0 = Monday to match `date.weekday()`.
+_WEEKDAY_ZH = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
+
 def _build_user_message(
     transcript: str,
     *,
     known_pet_names: list[str] | None,
     default_pet_name: str | None,
+    today: date | None = None,
 ) -> str:
     """Compose the user-visible prompt.
 
@@ -101,8 +115,23 @@ def _build_user_message(
     correct for STT homophones (e.g. "咪咪" misheard as "米米"). The
     default pet name is a weaker hint — included so the model can
     prefer it when the audio genuinely doesn't mention any name.
+
+    ``today`` anchors the LLM's date arithmetic. Without it, relative
+    phrases like "上个月 8 号" make the model hallucinate ISO dates
+    from training-data priors. Callers **should** pass an explicit
+    China-calendar `today` (see `app.utils.time.today_cn`); the fallback
+    here uses CN time too, so we never accidentally ship a UTC/JST day
+    if a caller forgets.
     """
-    lines: list[str] = []
+    if today is None:
+        # Import locally to keep `llm.py` reusable outside the FastAPI
+        # app (e.g. offline golden-set regression scripts) without a
+        # circular / heavy import at module load.
+        from app.utils.time import today_cn
+        today = today_cn()
+    lines: list[str] = [
+        f"当前日期：{today.isoformat()}（{_WEEKDAY_ZH[today.weekday()]}）",
+    ]
     if known_pet_names:
         # Quote names so punctuation in a pet name can't break parsing.
         quoted = "、".join(f"「{n}」" for n in known_pet_names)
@@ -120,6 +149,7 @@ async def extract_intent(
     *,
     known_pet_names: list[str] | None = None,
     default_pet_name: str | None = None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     """Call qwen-plus in JSON mode and return the parsed dict.
 
@@ -147,6 +177,7 @@ async def extract_intent(
         transcript,
         known_pet_names=known_pet_names,
         default_pet_name=default_pet_name,
+        today=today,
     )
 
     last_error: LlmUnavailableError | None = None

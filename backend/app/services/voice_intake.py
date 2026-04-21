@@ -55,7 +55,7 @@ from app.services.health import (
     create_vaccination,
     create_weight,
 )
-from app.utils.time import utcnow
+from app.utils.time import today_cn, utcnow
 
 
 logger = logging.getLogger(__name__)
@@ -108,12 +108,22 @@ _DATE_NDAYS_RE = re.compile(r"^n_days_ago:(\d+)$", re.IGNORECASE)
 _DATE_ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+# Upper bound on how far back an LLM-produced ISO date is allowed to be
+# relative to today. This is a hallucination guard: when the LLM lacks a
+# solid date anchor (pre-v2 prompt) or mis-hears the user, it tends to
+# produce dates pulled from its training priors (e.g. "上个月 8 号" →
+# "2024-05-08" with today = 2026-04-21). 10 years comfortably covers any
+# legitimate retroactive pet record while rejecting obvious hallucinations.
+_MAX_PAST_DAYS = 3650  # ~10 years
+
+
 def _parse_date(value: Any, *, today: date) -> date | None:
     """Parse an LLM-produced date literal into a `date`.
 
     Accepts: `today`, `yesterday`, `N_days_ago:<n>`, `YYYY-MM-DD`.
-    Returns `None` for anything else — including future dates — so the
-    field falls into `missing_fields` rather than being silently wrong.
+    Returns `None` for anything else — including future dates and dates
+    more than ~10 years in the past — so the field falls into
+    `missing_fields` rather than being silently wrong.
     """
     if value is None:
         return None
@@ -129,7 +139,7 @@ def _parse_date(value: Any, *, today: date) -> date | None:
     m = _DATE_NDAYS_RE.match(s)
     if m:
         n = int(m.group(1))
-        if n < 0 or n > 3650:
+        if n < 0 or n > _MAX_PAST_DAYS:
             return None
         return today - timedelta(days=n)
     if _DATE_ISO_RE.match(s):
@@ -140,6 +150,9 @@ def _parse_date(value: Any, *, today: date) -> date | None:
         # Future dates are out of scope for a diary app; drop rather
         # than accept.
         if d > today:
+            return None
+        # Hallucination guard — see `_MAX_PAST_DAYS` above.
+        if (today - d).days > _MAX_PAST_DAYS:
             return None
         return d
     return None
@@ -344,7 +357,10 @@ async def intake(
     mime = _validate_audio_upload(audio, len(data))
 
     request_id = uuid.uuid4().hex
-    today = date.today()
+    # Use China-calendar "today" so "今天 / 上个月 8 号" always maps to
+    # the day the user actually lived (the host TZ may be UTC in a
+    # container or JST on the Tokyo benchmark box — see `today_cn`).
+    today = today_cn()
 
     # ---------- Upload to MinIO, then STT via presigned URL ----------
     # DashScope's async file-transcription API fetches the audio over
@@ -422,6 +438,7 @@ async def intake(
             transcript,
             known_pet_names=[p.name for p in user_pets],
             default_pet_name=default_pet_name,
+            today=today,
         )
     except _llm.LlmUnavailableError as e:
         logger.info("llm failed: %s", e)
@@ -558,11 +575,13 @@ async def llm_extract_intent(
     *,
     known_pet_names: list[str] | None = None,
     default_pet_name: str | None = None,
+    today: date | None = None,
 ) -> dict[str, Any]:
     return await _llm.extract_intent(
         transcript,
         known_pet_names=known_pet_names,
         default_pet_name=default_pet_name,
+        today=today,
     )
 
 
