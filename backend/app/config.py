@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     ALIYUN_ACCESS_KEY_ID: str = ""
     ALIYUN_ACCESS_KEY_SECRET: str = ""
 
+    # Aliyun NLS (智能语音交互) AppKey. Not used by the production STT path
+    # anymore — DashScope fun-asr is preferred (see §0.5.1 of the voice
+    # intake doc). Kept so it can be wired up ad-hoc by
+    # `scripts/stt_bench.py` and so the field can live in `.env` without
+    # tripping pydantic's forbid-extra check.
+    ALIYUN_STT_APP_KEY: str = ""
+
     # SMS (Aliyun Dypnsapi)
     ALIYUN_SMS_SIGN_NAME: str = "速通互联验证码"
     ALIYUN_SMS_TEMPLATE_CODE: str = "100001"
@@ -51,13 +58,30 @@ class Settings(BaseSettings):
     ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
     # DashScope (Phase 2 Step 2 voice intake)
-    # 统一用一个北京地域的 DashScope API Key 服务 STT + LLM。STT 走录音
-    # 文件识别（Transcription.async_call）+ paraformer-v1；实测 3-5s，
-    # 远快于 paraformer-realtime-v2 的文件模式（7-60s+，见
-    # docs/phase2-step2-voice-intake.md §0.5.1）。
-    DASHSCOPE_API_KEY: str = ""
+    #
+    # Split by region on purpose (benchmarked 2026-04-21 from the Tokyo
+    # origin, N=10 on a 3.1s / 16kHz clip; see `scripts/stt_bench.py`):
+    #
+    #                                      p50     p90    success
+    #   Beijing paraformer-v1 (legacy)     6.34s   7.24s  10/10
+    #   Beijing fun-asr                    6.28s  84.2s   10/10 (134s tail!)
+    #   Singapore fun-asr  (current)       2.60s   4.33s  10/10
+    #
+    # Root cause: TLS handshake Tokyo→dashscope.aliyuncs.com ≈ 3.2s
+    # vs Tokyo→dashscope-intl.aliyuncs.com ≈ 0.08s (40× difference).
+    # STT therefore uses the Singapore region + fun-asr by default,
+    # falling back to the Beijing key + paraformer-v1 if the SG key is
+    # not configured. LLM and embedding still default to the Beijing
+    # key since qwen-plus / multimodal-embedding-v1 pricing & quota
+    # live there and the OpenAI-compatible endpoint for LLM is less
+    # latency-sensitive.
+    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM + embeddings + STT fallback)
+    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (preferred for STT)
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    DASHSCOPE_STT_MODEL: str = "paraformer-v1"
+    DASHSCOPE_STT_BASE_URL: str = "https://dashscope-intl.aliyuncs.com/api/v1"
+    DASHSCOPE_STT_FALLBACK_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
+    DASHSCOPE_STT_MODEL: str = "fun-asr"                # Singapore region
+    DASHSCOPE_STT_FALLBACK_MODEL: str = "paraformer-v1"  # Beijing region
     TONGYI_MODEL: str = "qwen-plus"
 
     # Voice intake hard limits (front/back both enforce)
