@@ -4,15 +4,16 @@ import logging
 import math
 from datetime import date
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Query, UploadFile
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
-from app.database import get_db
+from app.database import async_session_maker, get_db
 from app.dependencies import get_current_user_id
 from app.exceptions import AppException
 from app.models.pet import MemberRole
+from app.models.pet_photo_embedding import EmbeddingSource
 from app.models.photo import Photo
 from app.schemas.photo import (
     PhotoListResponse,
@@ -25,8 +26,10 @@ from app.schemas.photo import (
     TimelineWindowResponse,
 )
 from app.config import settings
+from app.services.embedding import EmbeddingUnavailableError, embed_image
 from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
+from app.services.pet_centroid import add_embedding
 from app.utils.time import utcnow
 from app.services.storage import (
     adelete_photo_objects,
@@ -48,6 +51,93 @@ router = APIRouter(tags=["photos"])
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
 MAX_FILES_PER_UPLOAD = 5
+
+# Valid values for the per-file `classify_source` form field added for
+# Phase 2 Step 3. "auto" means "user accepted the model's chip as-is"
+# (or the model offered no chip, which is still a user-driven pick);
+# "corrected" means the user overrode the model's guess, which we
+# promote to a stronger bootstrap signal when backfilling embeddings.
+_ALLOWED_CLASSIFY_SOURCES = {"auto", "corrected"}
+
+
+def _parse_classify_sources(
+    raw: list[str] | None, file_count: int,
+) -> list[EmbeddingSource]:
+    """Map the per-file Form strings to the DB enum, with validation.
+
+    Old clients that don't know about Step 3 omit the field entirely;
+    we default every row to ``USER_UPLOADED``. Any value other than the
+    two supported literals is rejected with a 400 so silent bugs
+    surface in testing.
+    """
+    if not raw:
+        return [EmbeddingSource.USER_UPLOADED] * file_count
+    if len(raw) != file_count:
+        raise AppException(
+            400, "CLASSIFY_SOURCE_MISMATCH",
+            "classify_source 数量必须与照片数量一致",
+        )
+    out: list[EmbeddingSource] = []
+    for v in raw:
+        v_norm = (v or "").strip().lower()
+        if v_norm not in _ALLOWED_CLASSIFY_SOURCES:
+            raise AppException(
+                400, "CLASSIFY_SOURCE_INVALID",
+                f"无效的 classify_source：{v!r}",
+            )
+        out.append(
+            EmbeddingSource.USER_CORRECTED
+            if v_norm == "corrected"
+            else EmbeddingSource.USER_UPLOADED
+        )
+    return out
+
+
+async def _backfill_embedding(
+    pet_id: int,
+    photo_id: int,
+    file_data: bytes,
+    source: EmbeddingSource,
+) -> None:
+    """Fire-and-forget: embed one uploaded photo and store the vector.
+
+    Runs inside FastAPI ``BackgroundTasks`` after the upload response
+    has already been sent, so failures (DashScope outage, DB flaps)
+    *must not* propagate — at worst the classify pool loses one
+    sample that future classify calls can re-attempt next time.
+
+    Uses its own DB session because the request session has already
+    closed by the time BackgroundTasks runs.
+    """
+    try:
+        vec = await embed_image(file_data)
+    except EmbeddingUnavailableError as e:
+        logger.warning(
+            "embedding backfill skipped pet=%s photo=%s: %s",
+            pet_id, photo_id, e,
+        )
+        return
+    except Exception as e:
+        logger.exception(
+            "embedding backfill unexpected error pet=%s photo=%s: %s",
+            pet_id, photo_id, e,
+        )
+        return
+
+    try:
+        async with async_session_maker() as session:
+            await add_embedding(
+                session,
+                pet_id=pet_id,
+                photo_id=photo_id,
+                vector=vec,
+                source=source,
+            )
+    except Exception as e:
+        logger.exception(
+            "embedding backfill db write failed pet=%s photo=%s: %s",
+            pet_id, photo_id, e,
+        )
 
 
 def _photo_to_response(photo: Photo) -> PhotoResponse:
@@ -71,8 +161,14 @@ def _photo_to_response(photo: Photo) -> PhotoResponse:
 @router.post("/pets/{pet_id}/photos", response_model=PhotoUploadResponse)
 async def upload_photos(
     pet_id: int,
+    background_tasks: BackgroundTasks,
     taken_at: list[str] = Form(...),
     files: list[UploadFile] = File(...),
+    # Phase 2 Step 3: per-file hint about whether the pet chip the user
+    # submitted was the one the model suggested ("auto") or a manual
+    # correction ("corrected"). Defaults to "auto" for pre-Step-3
+    # clients. Used only to tag the backfilled embedding.
+    classify_source: list[str] = Form(default_factory=list),
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
@@ -86,6 +182,8 @@ async def upload_photos(
 
     if len(taken_at) != len(files):
         raise AppException(400, "TAKEN_AT_MISMATCH", "拍摄日期数量必须与照片数量一致")
+
+    embedding_sources = _parse_classify_sources(classify_source, len(files))
 
     parsed_dates: list[date] = []
     for ta in taken_at:
@@ -174,9 +272,16 @@ async def upload_photos(
         *(_process_one(idx, fn, data, ct) for idx, fn, data, ct in file_entries)
     )
 
+    # Map original idx → file bytes so we can backfill embeddings below
+    # without re-reading the upload streams (they're already exhausted).
+    data_by_idx: dict[int, bytes] = {idx: data for idx, _, data, _ in file_entries}
+
     # --- DB inserts (sequential to keep DB session safe) ---
     successes: list[PhotoUploadSuccess] = []
     failures: list[PhotoUploadFailure] = list(early_failures)
+    # Collect (pet_id, photo_id, data, source) here so we can enqueue
+    # backfill tasks only after the commit succeeds.
+    pending_embeddings: list[tuple[int, int, bytes, EmbeddingSource]] = []
 
     for result in results:
         if isinstance(result, PhotoUploadFailure):
@@ -200,9 +305,29 @@ async def upload_photos(
             filename=result.filename,
             photo=_photo_to_response(photo),
         ))
+        pending_embeddings.append((
+            pet_id,
+            photo.id,
+            data_by_idx[result.idx],
+            embedding_sources[result.idx],
+        ))
 
     if successes:
         await db.commit()
+
+        # Fire-and-forget: enqueue embedding backfill AFTER the insert
+        # has committed so we never schedule work for a photo that's
+        # about to be rolled back. BackgroundTasks run after the
+        # response is sent (FastAPI semantics), so the user never waits
+        # on DashScope.
+        for bf_pet_id, bf_photo_id, bf_data, bf_source in pending_embeddings:
+            background_tasks.add_task(
+                _backfill_embedding,
+                bf_pet_id,
+                bf_photo_id,
+                bf_data,
+                bf_source,
+            )
 
     return PhotoUploadResponse(
         successes=successes,

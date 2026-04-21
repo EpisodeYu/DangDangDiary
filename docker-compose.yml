@@ -13,7 +13,12 @@ services:
       - minio
 
   postgres:
-    image: postgres:16-alpine
+    # Phase 2 Step 3 — uses the official pgvector image so the
+    # `vector` extension is available for `pet_photo_embeddings`.
+    # On an existing alpine data dir this is NOT an in-place upgrade:
+    # run `docker compose down -v && up -d` on dev machines (prod
+    # needs a dump/restore window).
+    image: pgvector/pgvector:pg16
     container_name: dangdang-postgres
     restart: unless-stopped
     environment:

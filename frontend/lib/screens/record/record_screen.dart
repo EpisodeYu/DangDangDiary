@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -11,21 +12,25 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../config/theme.dart';
+import '../../models/pet.dart';
 import '../../models/photo.dart';
 import '../../models/voice_intake.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/pet_provider.dart';
+import '../../services/classify_service.dart';
 import '../../services/original_photo_cache.dart';
 import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
 import '../../services/voice_service.dart';
 import '../../utils/exif_helper.dart';
-import '../../widgets/pet_selector.dart';
+import '../../widgets/pet_chip_dropdown.dart';
 import '../../widgets/voice_intake_sheet.dart';
 import '../../widgets/voice_record_button.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 final _voiceServiceProvider = Provider<VoiceService>((ref) => VoiceService());
+final _classifyServiceProvider =
+    Provider<ClassifyService>((ref) => ClassifyService());
 
 class RecordScreen extends ConsumerStatefulWidget {
   const RecordScreen({super.key});
@@ -35,11 +40,18 @@ class RecordScreen extends ConsumerStatefulWidget {
 }
 
 class _RecordScreenState extends ConsumerState<RecordScreen> {
+  // --- Per-photo parallel lists. All of these MUST stay in lockstep;
+  // any add/remove path updates every one of them at the same index.
   final List<File> _selectedFiles = [];
   final List<DateTime> _photoDates = [];
-  // Parallel to [_selectedFiles]; each pending token points at an entry in the
-  // persistent original-photo cache so the bytes are reused after upload.
+  // Each pending token points at an entry in the persistent
+  // original-photo cache so the bytes are reused after upload.
   final List<String> _pendingTokens = [];
+  // Phase 2 Step 3: classify chip state per photo.
+  final List<int?> _assignedPetIds = [];
+  final List<bool> _wasAutoAssigned = [];
+  final List<bool> _isRecognizing = [];
+
   bool _isUploading = false;
   final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
   final ValueNotifier<bool> _isServerProcessing = ValueNotifier(false);
@@ -59,43 +71,51 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     super.dispose();
   }
 
+  // --- Computed state ---
+
+  /// Only pets the caller can *write* to are valid chip targets. The
+  /// classify endpoint filters the same way server-side, so keeping
+  /// this consistent avoids surfacing a pet whose upload would later
+  /// 403.
+  List<Pet> get _editableCandidatePets {
+    final pets = ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+    return pets
+        .where((p) => p.role == PetRole.owner || p.role == PetRole.editor)
+        .toList();
+  }
+
   @override
   Widget build(BuildContext context) {
     final petListAsync = ref.watch(petListProvider);
-    final selectedPet = ref.watch(selectedPetProvider);
-    final pets = petListAsync.valueOrNull?.pets ?? [];
+    final pets = petListAsync.valueOrNull?.pets ?? const <Pet>[];
+    final editable = pets
+        .where((p) => p.role == PetRole.owner || p.role == PetRole.editor)
+        .toList();
 
     return Scaffold(
       appBar: AppBar(
         titleSpacing: 16,
-        centerTitle: false,
-        title: Row(
-          children: [
-            PetSelector(
-              pets: pets,
-              selectedPet: selectedPet,
-              onSingleChanged: (pet) {
-                if (pet != null) {
-                  ref.read(selectedPetIdProvider.notifier).select(pet.id);
-                }
-              },
-            ),
-          ],
+        centerTitle: true,
+        title: const Text(
+          '记录',
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.textPrimary,
+          ),
         ),
       ),
-      body: _buildBody(selectedPet, pets.isEmpty),
+      body: _buildBody(
+        noPets: pets.isEmpty,
+        noEditablePets: pets.isNotEmpty && editable.isEmpty,
+      ),
     );
   }
 
-  Widget _buildBody(dynamic selectedPet, bool noPets) {
-    if (noPets) {
-      return _buildEmptyState();
-    }
+  Widget _buildBody({required bool noPets, required bool noEditablePets}) {
+    if (noPets) return _buildEmptyState();
+    if (noEditablePets) return _buildReadonlyState();
 
-    // The voice button sits as a persistent bottom affordance across
-    // both states so users can always hold-to-talk without thinking
-    // about which mode they're in. Photo upload progress dialogs stack
-    // over this safely because they use the root navigator.
     final Widget body;
     if (_selectedFiles.isEmpty) {
       body = _buildInitialState();
@@ -155,18 +175,49 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         children: [
           Icon(Icons.pets, size: 64, color: Colors.grey.shade400),
           const SizedBox(height: 16),
-          const Text('请先创建宠物档案', style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
+          const Text('请先创建宠物档案',
+              style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: () => context.push('/profile/pets/new'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryColor,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape:
+                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
             child: const Text('去创建'),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildReadonlyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.visibility_outlined,
+                size: 64, color: Colors.grey.shade400),
+            const SizedBox(height: 16),
+            const Text(
+              '当前没有可编辑的宠物档案',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 16, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '只能查看的档案无法上传照片，请联系档案拥有者获取编辑权限，或自行创建档案。',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -187,16 +238,20 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   color: AppTheme.secondaryColor.withValues(alpha: 0.4),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.add_a_photo_outlined, size: 36, color: AppTheme.primaryColor),
+                child: const Icon(Icons.add_a_photo_outlined,
+                    size: 36, color: AppTheme.primaryColor),
               ),
               const SizedBox(height: 16),
               const Text(
                 '点击添加照片',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: AppTheme.textPrimary),
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textPrimary),
               ),
               const SizedBox(height: 6),
               Text(
-                '支持从相册选择或拍照，最多5张',
+                '选完照片将自动识别归属的宠物，最多 5 张',
                 style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
               ),
             ],
@@ -212,7 +267,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-            itemCount: _selectedFiles.length + (_selectedFiles.length < 5 && !_isUploading ? 1 : 0),
+            itemCount: _selectedFiles.length +
+                (_selectedFiles.length < 5 && !_isUploading ? 1 : 0),
             itemBuilder: (context, index) {
               if (index < _selectedFiles.length) {
                 return _buildPhotoCard(index);
@@ -230,6 +286,23 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final file = _selectedFiles[index];
     final date = _photoDates[index];
     final failureMsg = _failureMessages[index];
+    final pets = _editableCandidatePets;
+    final assigned = _assignedPetIds[index];
+    Pet? selectedPet;
+    if (assigned != null) {
+      for (final p in pets) {
+        if (p.id == assigned) {
+          selectedPet = p;
+          break;
+        }
+      }
+      // If the pet vanished (e.g. share revoked between pick + submit),
+      // fall back to null so the user is nudged to pick again.
+      if (selectedPet == null) {
+        _assignedPetIds[index] = null;
+        _wasAutoAssigned[index] = false;
+      }
+    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -251,7 +324,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           Stack(
             children: [
               ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(12)),
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: Image.file(file, fit: BoxFit.cover, cacheWidth: 600),
@@ -270,7 +344,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                         color: Colors.black.withValues(alpha: 0.5),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.close, size: 16, color: Colors.white),
+                      child:
+                          const Icon(Icons.close, size: 16, color: Colors.white),
                     ),
                   ),
                 ),
@@ -280,7 +355,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   left: 0,
                   right: 0,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: AppTheme.errorColor.withValues(alpha: 0.85),
                     ),
@@ -294,23 +370,45 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 ),
             ],
           ),
-          // Date picker row
-          GestureDetector(
-            onTap: _isUploading ? null : () => _pickDateForPhoto(index),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.calendar_today, size: 18, color: AppTheme.textSecondary),
-                  const SizedBox(width: 8),
-                  Text(
-                    _dateFormat.format(date),
-                    style: const TextStyle(fontSize: 15, color: AppTheme.textPrimary),
+          // Date + pet chip row
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: _isUploading ? null : () => _pickDateForPhoto(index),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.calendar_today,
+                          size: 18, color: AppTheme.textSecondary),
+                      const SizedBox(width: 8),
+                      Text(
+                        _dateFormat.format(date),
+                        style: const TextStyle(
+                            fontSize: 15, color: AppTheme.textPrimary),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(Icons.chevron_right,
+                          size: 20, color: Colors.grey.shade400),
+                    ],
                   ),
-                  const Spacer(),
-                  Icon(Icons.chevron_right, size: 20, color: Colors.grey.shade400),
-                ],
-              ),
+                ),
+                const Spacer(),
+                PetChipDropdown(
+                  pets: pets,
+                  selected: selectedPet,
+                  isRecognizing: _isRecognizing[index],
+                  wasAutoAssigned: _wasAutoAssigned[index],
+                  enabled: !_isUploading,
+                  onChanged: (pet) {
+                    setState(() {
+                      _assignedPetIds[index] = pet.id;
+                      _wasAutoAssigned[index] = false;
+                    });
+                  },
+                ),
+              ],
             ),
           ),
         ],
@@ -368,9 +466,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             backgroundColor: AppTheme.primaryColor,
             foregroundColor: Colors.white,
             disabledBackgroundColor: Colors.grey.shade300,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
-          child: const Text('记录完成', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          child: const Text('记录完成',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
         ),
       ),
     );
@@ -462,21 +562,31 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     if (!mounted) return;
     Navigator.of(context, rootNavigator: true).pop();
 
-    if (files.isNotEmpty) {
-      setState(() {
-        _selectedFiles.addAll(files);
-        _pendingTokens.addAll(tokens);
-        _photoDates.addAll(dates);
-        _failureMessages = {};
-      });
-    }
-    if (rejected > 0) {
-      _showSnack(
-        rejected == toProcess.length
+    if (files.isEmpty) {
+      if (rejected > 0) {
+        _showSnack(rejected == toProcess.length
             ? '未识别到猫狗，请换一张图片试试吧！'
-            : '已跳过 $rejected 张未识别到猫狗的图片',
-      );
+            : '已跳过 $rejected 张未识别到猫狗的图片');
+      }
+      return;
     }
+
+    final baseIdx = _selectedFiles.length;
+    setState(() {
+      _selectedFiles.addAll(files);
+      _photoDates.addAll(dates);
+      _pendingTokens.addAll(tokens);
+      _assignedPetIds.addAll(List<int?>.filled(files.length, null));
+      _wasAutoAssigned.addAll(List<bool>.filled(files.length, true));
+      _isRecognizing.addAll(List<bool>.filled(files.length, true));
+      _failureMessages = {};
+    });
+
+    if (rejected > 0) {
+      _showSnack('已跳过 $rejected 张未识别到猫狗的图片');
+    }
+
+    _runClassifyAssignment(baseIdx: baseIdx, files: files);
   }
 
   Future<void> _takePhoto() async {
@@ -500,12 +610,67 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final converted = await _ensureJpeg(xfile);
 
     final token = await _cachePending(converted);
+    final baseIdx = _selectedFiles.length;
     setState(() {
       _selectedFiles.add(converted);
       _pendingTokens.add(token);
       _photoDates.add(DateTime.now());
+      _assignedPetIds.add(null);
+      _wasAutoAssigned.add(true);
+      _isRecognizing.add(true);
       _failureMessages = {};
     });
+
+    _runClassifyAssignment(baseIdx: baseIdx, files: [converted]);
+  }
+
+  /// Fire off a classify request for the just-added photos and patch
+  /// the per-photo chip state when the response comes back.
+  ///
+  /// Run "unawaited" so the picker UI doesn't sit blocking on the
+  /// network; all state updates re-check [mounted] because users can
+  /// leave the page mid-flight.
+  void _runClassifyAssignment({
+    required int baseIdx,
+    required List<File> files,
+  }) {
+    unawaited(() async {
+      try {
+        final service = ref.read(_classifyServiceProvider);
+        final results = await service.classify(files);
+        if (!mounted) return;
+
+        setState(() {
+          // Clear "识别中" for every file in the batch first — partial
+          // responses from the server will overwrite with specifics.
+          for (int i = 0; i < files.length; i++) {
+            final absIdx = baseIdx + i;
+            if (absIdx < _isRecognizing.length) {
+              _isRecognizing[absIdx] = false;
+            }
+          }
+
+          for (final r in results) {
+            final absIdx = baseIdx + r.fileIndex;
+            if (absIdx < 0 || absIdx >= _assignedPetIds.length) continue;
+            _assignedPetIds[absIdx] = r.petId;
+            _wasAutoAssigned[absIdx] = r.petId != null;
+          }
+        });
+      } catch (_) {
+        if (!mounted) return;
+        // The whole call failed → drop "识别中" and let the user pick.
+        setState(() {
+          for (int i = 0; i < files.length; i++) {
+            final absIdx = baseIdx + i;
+            if (absIdx < _isRecognizing.length) {
+              _isRecognizing[absIdx] = false;
+              _wasAutoAssigned[absIdx] = false;
+            }
+          }
+        });
+      }
+    }());
   }
 
   void _showRecognizingDialog() {
@@ -573,6 +738,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         _pendingTokens.removeAt(index);
       }
       _photoDates.removeAt(index);
+      if (index < _assignedPetIds.length) _assignedPetIds.removeAt(index);
+      if (index < _wasAutoAssigned.length) _wasAutoAssigned.removeAt(index);
+      if (index < _isRecognizing.length) _isRecognizing.removeAt(index);
       _failureMessages = {};
     });
   }
@@ -590,8 +758,26 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   }
 
   Future<void> _submit() async {
-    final selectedPet = ref.read(selectedPetProvider);
-    if (selectedPet == null || _selectedFiles.isEmpty) return;
+    if (_selectedFiles.isEmpty) return;
+
+    // Every photo must have a pet chip before we can group. Callers
+    // can always tap to pick so this is just a gentle guard.
+    final unassigned = <int>[];
+    for (int i = 0; i < _assignedPetIds.length; i++) {
+      if (_assignedPetIds[i] == null) unassigned.add(i + 1);
+    }
+    if (unassigned.isNotEmpty) {
+      _showSnack('第 ${unassigned.join("、")} 张还没选择宠物哦');
+      return;
+    }
+
+    // Group photo indices by pet so we can make one upload call per pet.
+    final Map<int, List<int>> groups = {};
+    for (int i = 0; i < _selectedFiles.length; i++) {
+      final pid = _assignedPetIds[i];
+      if (pid == null) continue;
+      groups.putIfAbsent(pid, () => []).add(i);
+    }
 
     setState(() {
       _isUploading = true;
@@ -602,29 +788,71 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     _showUploadDialog();
 
+    final service = ref.read(_photoServiceProvider);
+
+    final Set<int> allSuccessIndices = {};
+    final Map<int, String> newFailureMessages = {};
+    int totalSent = 0;
+
+    // Weight each group's progress by its share of total files so the
+    // HUD advances smoothly across multi-group submits.
+    final totalFiles = _selectedFiles.length;
+
     try {
-      final service = ref.read(_photoServiceProvider);
-      final takenAtDates = _photoDates.map((d) => _dateFormat.format(d)).toList();
-      final response = await service.uploadPhotos(
-        petId: selectedPet.id,
-        files: _selectedFiles,
-        takenAtDates: takenAtDates,
-        onSendProgress: (sent, total) {
-          if (total > 0) {
-            final progress = sent / total;
+      int groupsDone = 0;
+      for (final entry in groups.entries) {
+        final petId = entry.key;
+        final indices = entry.value;
+        final files = [for (final i in indices) _selectedFiles[i]];
+        final dates = [
+          for (final i in indices) _dateFormat.format(_photoDates[i])
+        ];
+        final sources = [
+          for (final i in indices) _wasAutoAssigned[i] ? 'auto' : 'corrected'
+        ];
+
+        final response = await service.uploadPhotos(
+          petId: petId,
+          files: files,
+          takenAtDates: dates,
+          classifySources: sources,
+          onSendProgress: (sent, total) {
+            if (total <= 0) return;
+            // Fraction within this group, rescaled by (group_files / total_files).
+            final groupShare = files.length / totalFiles;
+            final baseProgress = groupsDone / groups.length;
+            final within = (sent / total) * groupShare;
+            final progress = (baseProgress + within).clamp(0.0, 1.0);
             _uploadProgress.value = progress;
             if (progress >= 1.0 && !_isServerProcessing.value) {
               _isServerProcessing.value = true;
             }
-          }
-        },
-      );
+          },
+        );
+
+        totalSent += response.totalCount;
+        groupsDone++;
+
+        // Bind cache + collect absolute successes/failures.
+        await _bindGroupUploadedToCache(response, indices);
+        for (final s in response.successes) {
+          final abs = s.index < indices.length ? indices[s.index] : null;
+          if (abs != null) allSuccessIndices.add(abs);
+        }
+        for (final f in response.failures) {
+          final abs = f.index < indices.length ? indices[f.index] : null;
+          if (abs != null) newFailureMessages[abs] = f.message;
+        }
+      }
 
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
 
-      await _bindUploadedToCache(response);
-      _handleUploadResult(response);
+      _applyUploadResult(
+        totalCount: totalSent,
+        successIndices: allSuccessIndices,
+        failureMessagesByAbs: newFailureMessages,
+      );
     } on DioException catch (e) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
@@ -635,7 +863,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         message = (data['message'] as String?) ?? message;
       }
       _showSnack(message);
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
       _showSnack('上传失败，请稍后重试');
@@ -661,13 +889,16 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('正在识别照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                    const Text('正在识别照片...',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 16),
                     const LinearProgressIndicator(),
                     const SizedBox(height: 8),
                     Text(
                       '共 $fileCount 张，正在检测宠物内容',
-                      style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                      style: const TextStyle(
+                          fontSize: 12, color: AppTheme.textSecondary),
                     ),
                   ],
                 ),
@@ -680,18 +911,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('正在上传照片...', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      const Text('正在上传照片...',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
                       const SizedBox(height: 16),
                       LinearProgressIndicator(value: progress),
                       const SizedBox(height: 8),
                       Text(
                         '${(progress * 100).toInt()}%',
-                        style: const TextStyle(color: AppTheme.textSecondary),
+                        style:
+                            const TextStyle(color: AppTheme.textSecondary),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '共 $fileCount 张，请勿关闭页面',
-                        style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                        style: const TextStyle(
+                            fontSize: 12, color: AppTheme.textSecondary),
                       ),
                     ],
                   ),
@@ -704,107 +939,130 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     );
   }
 
-  /// Promote pending cache entries to photo-id bound entries for each upload
-  /// success. Failures keep their pending token so the file can be reused on
-  /// retry.
-  Future<void> _bindUploadedToCache(PhotoUploadResponse response) async {
+  /// Promote pending cache entries to photo-id bound entries for the
+  /// successes in a single group's response. Failures keep their
+  /// pending token so the file can be reused on retry.
+  Future<void> _bindGroupUploadedToCache(
+    PhotoUploadResponse response,
+    List<int> groupIndices,
+  ) async {
     for (final success in response.successes) {
-      if (success.index < 0 || success.index >= _pendingTokens.length) continue;
-      final token = _pendingTokens[success.index];
+      if (success.index < 0 || success.index >= groupIndices.length) continue;
+      final absIdx = groupIndices[success.index];
+      if (absIdx < 0 || absIdx >= _pendingTokens.length) continue;
+      final token = _pendingTokens[absIdx];
       if (token.isEmpty) continue;
       try {
         await OriginalPhotoCache.instance
             .bindPendingToPhoto(token, success.photo.id);
       } catch (_) {
-        // Binding is best-effort; the original will simply be re-downloaded
-        // next time the user views it.
+        // Best-effort.
       }
     }
   }
 
-  void _handleUploadResult(PhotoUploadResponse response) {
-    if (response.failureCount == 0) {
+  /// Update list state after all groups have responded. Rebuilds the
+  /// card list by absolute index so half-failed submits keep the user
+  /// in the right place.
+  void _applyUploadResult({
+    required int totalCount,
+    required Set<int> successIndices,
+    required Map<int, String> failureMessagesByAbs,
+  }) {
+    final successCount = successIndices.length;
+    final failureCount = totalCount - successCount;
+
+    if (failureCount == 0) {
       _showSnack('上传成功，请在时间轴内查看吧！');
       setState(() {
         _selectedFiles.clear();
         _pendingTokens.clear();
         _photoDates.clear();
+        _assignedPetIds.clear();
+        _wasAutoAssigned.clear();
+        _isRecognizing.clear();
         _failureMessages = {};
       });
-    } else if (response.successCount > 0) {
-      _showSnack('已成功上传 ${response.successCount} 张，失败 ${response.failureCount} 张');
+      return;
+    }
 
-      final successIndices = response.successes.map((s) => s.index).toSet();
-      final newFiles = <File>[];
-      final newDates = <DateTime>[];
-      final newTokens = <String>[];
-      final newFailures = <int, String>{};
-
-      int newIdx = 0;
-      for (int i = 0; i < _selectedFiles.length; i++) {
-        if (!successIndices.contains(i)) {
-          newFiles.add(_selectedFiles[i]);
-          newDates.add(_photoDates[i]);
-          newTokens.add(
-              i < _pendingTokens.length ? _pendingTokens[i] : '');
-          final failure = response.failures.where((f) => f.index == i).firstOrNull;
-          if (failure != null) {
-            newFailures[newIdx] = failure.message;
-          }
-          newIdx++;
-        }
-      }
-
-      setState(() {
-        _selectedFiles.clear();
-        _selectedFiles.addAll(newFiles);
-        _photoDates.clear();
-        _photoDates.addAll(newDates);
-        _pendingTokens.clear();
-        _pendingTokens.addAll(newTokens);
-        _failureMessages = newFailures;
-      });
+    if (successCount > 0) {
+      _showSnack('已成功上传 $successCount 张，失败 $failureCount 张');
     } else {
       _showSnack('本次未成功上传，请检查失败原因后重试');
-
-      final failures = <int, String>{};
-      for (final f in response.failures) {
-        if (f.index < _selectedFiles.length) {
-          failures[f.index] = f.message;
-        }
-      }
-      setState(() => _failureMessages = failures);
     }
+
+    final newFiles = <File>[];
+    final newDates = <DateTime>[];
+    final newTokens = <String>[];
+    final newAssigned = <int?>[];
+    final newAuto = <bool>[];
+    final newRecog = <bool>[];
+    final newFailures = <int, String>{};
+
+    int newIdx = 0;
+    for (int i = 0; i < _selectedFiles.length; i++) {
+      if (successIndices.contains(i)) continue;
+      newFiles.add(_selectedFiles[i]);
+      newDates.add(_photoDates[i]);
+      newTokens.add(i < _pendingTokens.length ? _pendingTokens[i] : '');
+      newAssigned.add(i < _assignedPetIds.length ? _assignedPetIds[i] : null);
+      newAuto.add(i < _wasAutoAssigned.length ? _wasAutoAssigned[i] : false);
+      newRecog.add(false);
+      final msg = failureMessagesByAbs[i];
+      if (msg != null) newFailures[newIdx] = msg;
+      newIdx++;
+    }
+
+    setState(() {
+      _selectedFiles
+        ..clear()
+        ..addAll(newFiles);
+      _photoDates
+        ..clear()
+        ..addAll(newDates);
+      _pendingTokens
+        ..clear()
+        ..addAll(newTokens);
+      _assignedPetIds
+        ..clear()
+        ..addAll(newAssigned);
+      _wasAutoAssigned
+        ..clear()
+        ..addAll(newAuto);
+      _isRecognizing
+        ..clear()
+        ..addAll(newRecog);
+      _failureMessages = newFailures;
+    });
   }
 
   void _showSnack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating));
+      ..showSnackBar(SnackBar(
+          content: Text(msg), behavior: SnackBarBehavior.floating));
   }
 
   // ------------------ Voice intake ------------------
 
-  /// Called by [VoiceRecordButton] with the finished clip. Does:
-  ///
-  ///   1. POST /voice/intake and branch on `status` (§3.1 / §7).
-  ///   2. For `draft_pending`: show the review sheet; on confirm, fire
-  ///      the corresponding health-list provider invalidate so the new
-  ///      row shows up without needing to leave the page.
-  ///   3. Clean up the local audio file once we've heard back.
+  /// Called by [VoiceRecordButton] with the finished clip. Same as
+  /// Phase 2 Step 2 — we no longer carry a global selectedPet, so the
+  /// voice intake uses the first editable pet as default (if any).
   Future<void> _handleVoiceClipReady(File audioFile) async {
     setState(() => _voiceProcessing = true);
 
     try {
       final service = ref.read(_voiceServiceProvider);
-      final selectedPet = ref.read(selectedPetProvider);
+      final editable = _editableCandidatePets;
+      final defaultPetId = editable.isNotEmpty ? editable.first.id : null;
       final clientReqId = _uuid.v4();
 
       final response = await service.intake(
         audioFile: audioFile,
         clientRequestId: clientReqId,
-        defaultPetId: selectedPet?.id,
+        defaultPetId: defaultPetId,
       );
 
       if (!mounted) return;

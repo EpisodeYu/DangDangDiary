@@ -6,6 +6,7 @@ from app.models.deworming import Deworming, DewormingType
 from app.models.vaccination import Vaccination
 from app.models.routine import Routine, RoutineType
 from app.models.voice_intake import VoiceIntakeLog, VoiceIntakeStatus
+from app.models.pet_photo_embedding import PetPhotoEmbedding, EmbeddingSource
 
 __all__ = [
     "User",
@@ -16,4 +17,5 @@ __all__ = [
     "Vaccination",
     "Routine", "RoutineType",
     "VoiceIntakeLog", "VoiceIntakeStatus",
+    "PetPhotoEmbedding", "EmbeddingSource",
 ]

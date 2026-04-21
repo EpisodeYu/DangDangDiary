@@ -11,6 +11,7 @@ from app.database import Base
 # Import all models so they register with Base.metadata
 from app.models import (  # noqa: F401
     User, Pet, PetMember, PetShareCode, Photo, Weight, Deworming, Vaccination,
+    PetPhotoEmbedding,
 )
 
 config = context.config

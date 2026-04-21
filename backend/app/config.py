@@ -98,6 +98,32 @@ class Settings(BaseSettings):
     VOICE_AUDIO_TTL_HOURS: int = 24
     MINIO_BUCKET_VOICE_INTAKE: str = "voice-intake"
 
+    # --- Phase 2 Step 3: photo auto-assign (DashScope multi-modal embedding) ---
+    #
+    # Runs against the Singapore region of DashScope for the same TLS
+    # handshake reason the STT/LLM paths already use it (see comment
+    # above). The multimodal endpoint only lives at `/api/v1/...`
+    # (the multimodal independent-vector API is NOT available through
+    # the OpenAI compatible endpoint — see
+    # docs/API_docs/多模态向量化,md §168). On the Singapore region the
+    # currently shipping model is `tongyi-embedding-vision-plus`
+    # (fixed 1152-dim); the newer `-2026-03-06` dated variant with the
+    # selectable 1024-dim output is Beijing-only as of 2026-04-21.
+    DASHSCOPE_EMBEDDING_BASE_URL: str = "https://dashscope-intl.aliyuncs.com/api/v1"
+    DASHSCOPE_EMBEDDING_FALLBACK_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
+    DASHSCOPE_EMBEDDING_MODEL: str = "tongyi-embedding-vision-plus"
+    # Exposed so the `.env` override can bump to `-2026-03-06` later if
+    # the Singapore region catches up; kept aligned with the model's
+    # natural output dim.
+    DASHSCOPE_EMBEDDING_DIMENSION: int = 1152
+
+    # Classify decision thresholds (see docs/phase2-step3 §5.2).
+    CLASSIFY_SIM_TOP1_MIN: float = 0.78
+    CLASSIFY_SIM_MARGIN_MIN: float = 0.05
+    CLASSIFY_CACHE_TTL_SECONDS: int = 300
+    CLASSIFY_MAX_FILES: int = 5
+    CLASSIFY_MAX_FILE_BYTES: int = 15 * 1024 * 1024
+
     model_config = {"env_file": ".env"}
 
 

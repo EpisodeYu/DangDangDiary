@@ -20,6 +20,9 @@ alibabacloud-imagerecog20190930>=2.0.0
 dashscope>=1.20.0
 openai>=1.40.0
 
+# Phase 2 Step 3 — photo auto-assign (DashScope multimodal embedding + pgvector)
+pgvector>=0.3.0,<0.4
+
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
