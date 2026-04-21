@@ -54,7 +54,19 @@ class PetPhotoEmbedding(Base):
         BigInteger, ForeignKey("photos.id", ondelete="SET NULL"), nullable=True,
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    # `values_callable` forces SQLAlchemy to persist the enum *values*
+    # (``user_uploaded`` / …) rather than the default *names*
+    # (``USER_UPLOADED``). The Postgres enum type defined in the
+    # step-3 migration only knows the lowercase value form, so without
+    # this override every INSERT fails with
+    # ``InvalidTextRepresentationError: invalid input value for enum
+    # embeddingsource: "USER_UPLOADED"``.
     source: Mapped[EmbeddingSource] = mapped_column(
-        Enum(EmbeddingSource), nullable=False,
+        Enum(
+            EmbeddingSource,
+            name="embeddingsource",
+            values_callable=lambda enum_cls: [e.value for e in enum_cls],
+        ),
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
