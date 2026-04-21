@@ -1,14 +1,21 @@
 """DashScope LLM (qwen-plus) intent extractor.
 
-Talks to DashScope's OpenAI-compatible endpoint. Keeping the HTTP client
-as `openai.AsyncOpenAI` lets us share auth plumbing with future
-multimodal embedding work (phase 2 step 3) that also points at
-`compatible-mode/v1`.
+Talks to DashScope's OpenAI-compatible endpoint. Prefers the **Singapore**
+region (``dashscope-intl.aliyuncs.com``) with an automatic fallback to
+**Beijing** if the SG key isn't configured or the first call errors. See
+``docs/phase2-step2-voice-intake.md §0.5.2`` for the benchmark that
+motivated the region split (Tokyo→BJ TLS handshake ≈ 3.2s, SG ≈ 0.08s;
+qwen-plus p50 drops from 4.38s to 2.32s after the switch).
+
+Keeping the HTTP client as ``openai.AsyncOpenAI`` lets us share auth
+plumbing with future multimodal embedding work (phase 2 step 3) that
+also points at ``compatible-mode/v1``.
 """
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from app.config import settings
@@ -18,6 +25,37 @@ logger = logging.getLogger(__name__)
 
 class LlmUnavailableError(RuntimeError):
     """DashScope LLM 暂不可用（上游 5xx / 网络 / JSON 破损）。"""
+
+
+@dataclass(frozen=True)
+class _Region:
+    label: str
+    api_key: str
+    base_url: str
+
+
+def _regions_in_priority_order() -> list[_Region]:
+    """Return non-empty regions to try, primary first.
+
+    Singapore is preferred (faster handshake from the Tokyo host and
+    identical quality/pricing for ``qwen-plus``). Beijing is the
+    fallback. Missing keys are skipped silently — as long as at least
+    one is configured we can still serve.
+    """
+    out: list[_Region] = []
+    if settings.DASHSCOPE_API_KEY_SAG:
+        out.append(_Region(
+            label="singapore",
+            api_key=settings.DASHSCOPE_API_KEY_SAG,
+            base_url=settings.DASHSCOPE_BASE_URL_SAG,
+        ))
+    if settings.DASHSCOPE_API_KEY:
+        out.append(_Region(
+            label="beijing-fallback",
+            api_key=settings.DASHSCOPE_API_KEY,
+            base_url=settings.DASHSCOPE_BASE_URL,
+        ))
+    return out
 
 
 # Prompt version — stored alongside each log so we can A/B prompts
@@ -95,17 +133,15 @@ async def extract_intent(
     the backend (STT accuracy on pet nicknames is the biggest source
     of missing `pet_id` in the wild).
     """
-    if not settings.DASHSCOPE_API_KEY:
-        raise LlmUnavailableError("DASHSCOPE_API_KEY is not configured")
+    regions = _regions_in_priority_order()
+    if not regions:
+        raise LlmUnavailableError(
+            "neither DASHSCOPE_API_KEY_SAG nor DASHSCOPE_API_KEY is configured"
+        )
 
     # Import lazily so unit tests can patch without requiring the dep
     # installed on every runner.
     from openai import AsyncOpenAI, OpenAIError
-
-    client = AsyncOpenAI(
-        api_key=settings.DASHSCOPE_API_KEY,
-        base_url=settings.DASHSCOPE_BASE_URL,
-    )
 
     user_msg = _build_user_message(
         transcript,
@@ -113,35 +149,53 @@ async def extract_intent(
         default_pet_name=default_pet_name,
     )
 
-    try:
-        resp = await client.chat.completions.create(
-            model=settings.TONGYI_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": user_msg},
-            ],
-            response_format={"type": "json_object"},
-            temperature=0,
-            top_p=1,
-            max_tokens=300,
-            seed=42,
-        )
-    except OpenAIError as e:
-        logger.warning("dashscope llm error: %s", e)
-        raise LlmUnavailableError(str(e)) from e
-    except Exception as e:  # network / SSL / other
-        logger.warning("dashscope llm unexpected error: %s", e)
-        raise LlmUnavailableError(str(e)) from e
+    last_error: LlmUnavailableError | None = None
+    for region in regions:
+        client = AsyncOpenAI(api_key=region.api_key, base_url=region.base_url)
 
-    raw = resp.choices[0].message.content or "{}"
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as e:
-        logger.warning("llm returned non-json: %r", raw[:500])
-        raise LlmUnavailableError("malformed json") from e
+        try:
+            resp = await client.chat.completions.create(
+                model=settings.TONGYI_MODEL,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_msg},
+                ],
+                response_format={"type": "json_object"},
+                temperature=0,
+                top_p=1,
+                max_tokens=300,
+                seed=42,
+            )
+        except OpenAIError as e:
+            logger.warning("dashscope llm error (%s): %s", region.label, e)
+            last_error = LlmUnavailableError(str(e))
+            continue
+        except Exception as e:  # network / SSL / other
+            logger.warning("dashscope llm unexpected error (%s): %s", region.label, e)
+            last_error = LlmUnavailableError(str(e))
+            continue
 
-    if not isinstance(parsed, dict):
-        raise LlmUnavailableError("json is not an object")
-    # Stash raw string so the caller can persist it without re-serialising.
-    parsed["_raw"] = raw
-    return parsed
+        raw = resp.choices[0].message.content or "{}"
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "llm returned non-json (%s): %r", region.label, raw[:500]
+            )
+            last_error = LlmUnavailableError("malformed json")
+            # Don't fall back on bad-json — same prompt on the next region
+            # is unlikely to produce different structure and will just
+            # delay the user. Surface immediately.
+            raise last_error from e
+
+        if not isinstance(parsed, dict):
+            last_error = LlmUnavailableError("json is not an object")
+            raise last_error
+
+        logger.info("llm region=%s model=%s ok", region.label, settings.TONGYI_MODEL)
+        # Stash raw string so the caller can persist it without re-serialising.
+        parsed["_raw"] = raw
+        return parsed
+
+    assert last_error is not None  # loop guarantees at least one attempt
+    raise last_error

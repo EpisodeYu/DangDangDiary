@@ -75,13 +75,21 @@ class Settings(BaseSettings):
     # key since qwen-plus / multimodal-embedding-v1 pricing & quota
     # live there and the OpenAI-compatible endpoint for LLM is less
     # latency-sensitive.
-    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM + embeddings + STT fallback)
-    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (preferred for STT)
+    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM/embedding fallback + STT fallback)
+    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (preferred for STT + LLM)
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    DASHSCOPE_BASE_URL_SAG: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_STT_BASE_URL: str = "https://dashscope-intl.aliyuncs.com/api/v1"
     DASHSCOPE_STT_FALLBACK_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
     DASHSCOPE_STT_MODEL: str = "fun-asr"                # Singapore region
     DASHSCOPE_STT_FALLBACK_MODEL: str = "paraformer-v1"  # Beijing region
+    # LLM: measured 2026-04-21 on the Singapore region — qwen-plus p50
+    # 2.32s / p90 2.51s with zero auth/retry errors and 100% field
+    # accuracy on the voice-intake golden set; Beijing p50 ~4.4s / max
+    # 9.4s for the same model + prompt (TLS handshake Tokyo→BJ ≈ 3.2s,
+    # SG ≈ 0.08s). qwen-flash is 2× faster but has a stable template
+    # bug producing `3_days_ago:3` instead of `N_days_ago:3`; stick
+    # with qwen-plus until that's compensated for server-side.
     TONGYI_MODEL: str = "qwen-plus"
 
     # Voice intake hard limits (front/back both enforce)
