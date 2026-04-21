@@ -406,6 +406,52 @@ def upload_voice_audio(
     return object_key
 
 
+_voice_public_client: Minio | None = None
+
+
+def _get_voice_public_client() -> Minio:
+    """A Minio client pointing at the externally-reachable endpoint.
+
+    Presigned URLs are host-signed, so a URL minted by a client with host
+    `127.0.0.1:9000` is rejected (SignatureDoesNotMatch) when fetched via
+    the external host. Keep a second client bound to the public endpoint
+    whose sole purpose is to mint URLs DashScope can fetch.
+    """
+    global _voice_public_client
+    if _voice_public_client is None:
+        endpoint = settings.MINIO_PUBLIC_ENDPOINT.strip()
+        if not endpoint:
+            # Derive <host>:9000 from PUBLIC_BASE_URL so a vanilla deploy
+            # works without an extra env var.
+            parsed = urlparse(settings.PUBLIC_BASE_URL)
+            host = parsed.hostname or "127.0.0.1"
+            endpoint = f"{host}:9000"
+        _voice_public_client = Minio(
+            endpoint,
+            access_key=settings.MINIO_ACCESS_KEY,
+            secret_key=settings.MINIO_SECRET_KEY,
+            secure=settings.MINIO_SECURE,
+        )
+    return _voice_public_client
+
+
+def voice_audio_presigned_url(
+    object_key: str, expires_seconds: int = 900,
+) -> str:
+    """Mint a presigned GET URL for a voice-intake object.
+
+    The URL must be reachable from DashScope's servers — that's why it
+    is signed by `_get_voice_public_client()` rather than the internal
+    client, and why it returns the raw MinIO URL (port 9000) instead of
+    rewriting through Nginx.
+    """
+    return _get_voice_public_client().presigned_get_object(
+        settings.MINIO_BUCKET_VOICE_INTAKE,
+        object_key,
+        expires=timedelta(seconds=expires_seconds),
+    )
+
+
 def delete_voice_audio(object_key: str | None) -> None:
     if not object_key:
         return

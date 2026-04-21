@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # MinIO (internal access)
     MINIO_ENDPOINT: str = "127.0.0.1:9000"
+    # Externally-reachable host:port for MinIO. Used to mint presigned URLs
+    # that third parties (DashScope STT) can fetch. Leave empty to derive
+    # `<PUBLIC_BASE_URL host>:9000` at call time.
+    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin123"
     MINIO_SECURE: bool = False
@@ -47,11 +51,13 @@ class Settings(BaseSettings):
     ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
     # DashScope (Phase 2 Step 2 voice intake)
-    # 统一用一个北京地域的 DashScope API Key 服务 STT + LLM。新加坡地域
-    # 不提供 paraformer-realtime-v2，申请时务必选北京。
+    # 统一用一个北京地域的 DashScope API Key 服务 STT + LLM。STT 走录音
+    # 文件识别（Transcription.async_call）+ paraformer-v1；实测 3-5s，
+    # 远快于 paraformer-realtime-v2 的文件模式（7-60s+，见
+    # docs/phase2-step2-voice-intake.md §0.5.1）。
     DASHSCOPE_API_KEY: str = ""
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    DASHSCOPE_STT_MODEL: str = "paraformer-realtime-v2"
+    DASHSCOPE_STT_MODEL: str = "paraformer-v1"
     TONGYI_MODEL: str = "qwen-plus"
 
     # Voice intake hard limits (front/back both enforce)

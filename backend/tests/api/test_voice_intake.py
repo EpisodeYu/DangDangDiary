@@ -71,6 +71,9 @@ def _patch_upstream(
     async def _upload(user_id, data, mime, *, request_id):
         return f"{user_id}/test/{request_id}.m4a"
 
+    def _presign(object_key, expires_seconds=900):
+        return f"http://test/media/voice-intake/{object_key}?sig=stub"
+
     async def _delete(_):
         return None
 
@@ -78,6 +81,7 @@ def _patch_upstream(
         patch.object(voice_intake_service, "stt_transcribe", side_effect=_stt),
         patch.object(voice_intake_service, "llm_extract_intent", side_effect=_llm),
         patch.object(storage_mod, "aupload_voice_audio", side_effect=_upload),
+        patch.object(storage_mod, "voice_audio_presigned_url", side_effect=_presign),
         patch.object(storage_mod, "adelete_voice_audio", side_effect=_delete),
     ]
 

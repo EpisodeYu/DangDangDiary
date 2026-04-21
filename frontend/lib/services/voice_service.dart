@@ -29,15 +29,16 @@ class VoiceService {
       'default_pet_id': ?defaultPetId,
     });
 
-    // Voice intake is short (≤ 30s audio) but STT + LLM together can
-    // take 2-4s on cold paths; extend the receive timeout above the
-    // default 30s so network variance doesn't surface as a timeout.
+    // Backend uses DashScope async file-transcription (paraformer-v1),
+    // which settles in ~3-5s for a 30s clip plus a few seconds of LLM
+    // intent extraction. 30s of receive gives plenty of headroom without
+    // letting a stuck upstream hold the UI hostage.
     final resp = await _dio.post(
       '/voice/intake',
       data: form,
       options: Options(
-        sendTimeout: const Duration(seconds: 45),
-        receiveTimeout: const Duration(seconds: 45),
+        sendTimeout: const Duration(seconds: 20),
+        receiveTimeout: const Duration(seconds: 30),
       ),
     );
     return VoiceIntakeResponse.fromJson(resp.data as Map<String, dynamic>);

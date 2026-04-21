@@ -14,11 +14,10 @@ wrappers that tests monkey-patch at the attribute boundary
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import os
 import re
-import tempfile
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -347,144 +346,123 @@ async def intake(
     request_id = uuid.uuid4().hex
     today = date.today()
 
-    # ---------- Write audio to a temp file and upload to MinIO in parallel ----------
-    tmp_path: str | None = None
-    object_key: str | None = None
+    # ---------- Upload to MinIO, then STT via presigned URL ----------
+    # DashScope's async file-transcription API fetches the audio over
+    # HTTP, so we upload once and hand it a presigned URL instead of
+    # streaming the bytes through our process a second time.
     try:
-        fd, tmp_path = tempfile.mkstemp(suffix=_suffix_for_mime(mime))
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-
-        try:
-            object_key = await _storage.aupload_voice_audio(
-                user_id, data, mime, request_id=request_id,
-            )
-        except Exception as e:
-            # MinIO being down is not the user's problem; treat as
-            # upstream unavailability to surface a 503.
-            logger.exception("minio upload failed: %s", e)
-            raise AppException(
-                503, "voice_upstream_unavailable",
-                "音频暂存服务不可用，请稍后再试",
-            )
-
-        # ---------- STT ----------
-        try:
-            transcript = await stt_transcribe(tmp_path, mime)
-        except _stt.SttUnavailableError as e:
-            logger.info("stt failed: %s", e)
-            response = VoiceIntakeResponse(
-                request_id=request_id,
-                status="stt_failed",
-                transcript=None,
-                intent=None,
-                confidence=None,
-                needs_confirm=False,
-                draft=None,
-                missing_fields=[],
-            )
-            await _persist_log(
-                db,
-                user_id=user_id,
-                request_id=request_id,
-                audio_object_key=object_key,
-                transcript=None,
-                llm_raw=None,
-                intent=None,
-                confidence=None,
-                status=VoiceIntakeStatus.STT_FAILED,
-            )
-            await _cache_dedup(dedup_key, response)
-            return response
-
-        # ---------- Fetch the user's full pet list for the LLM ----------
-        # We pass the closed set of pet names so qwen-plus can do
-        # homophone-tolerant matching (STT often mis-hears "咪咪" as
-        # "米米", "小白" as "小柏", etc.). Default pet name is a
-        # tie-breaker when the audio has no name at all.
-        user_pets = await _fetch_user_pets(db, user_id)
-        default_pet_name: str | None = None
-        if default_pet_id is not None:
-            for p in user_pets:
-                if p.id == default_pet_id:
-                    default_pet_name = p.name
-                    break
-
-        # ---------- LLM ----------
-        try:
-            llm_out = await llm_extract_intent(
-                transcript,
-                known_pet_names=[p.name for p in user_pets],
-                default_pet_name=default_pet_name,
-            )
-        except _llm.LlmUnavailableError as e:
-            logger.info("llm failed: %s", e)
-            raise AppException(
-                503, "voice_upstream_unavailable",
-                "语义理解服务暂不可用，请稍后再试",
-            )
-
-        llm_raw = llm_out.pop("_raw", None)
-
-        # ---------- Pet resolution (closed-set lookup) ----------
-        llm_pet_name = llm_out.get("pet_name")
-        if isinstance(llm_pet_name, str):
-            llm_pet_name = llm_pet_name.strip() or None
-        else:
-            llm_pet_name = None
-
-        pet_id, pet_display_name = _resolve_pet_from_closed_set(
-            user_pets,
-            llm_pet_name=llm_pet_name,
-            default_pet_id=default_pet_id,
+        object_key = await _storage.aupload_voice_audio(
+            user_id, data, mime, request_id=request_id,
+        )
+    except Exception as e:
+        # MinIO being down is not the user's problem; treat as
+        # upstream unavailability to surface a 503.
+        logger.exception("minio upload failed: %s", e)
+        raise AppException(
+            503, "voice_upstream_unavailable",
+            "音频暂存服务不可用，请稍后再试",
         )
 
-        # ---------- Normalise ----------
-        draft, intent, confidence, _note = _normalize_draft(
-            llm_out,
-            pet_id=pet_id,
-            pet_display_name=pet_display_name,
-            today=today,
+    try:
+        audio_url = await asyncio.to_thread(
+            _storage.voice_audio_presigned_url, object_key,
+        )
+    except Exception as e:
+        logger.exception("minio presign failed: %s", e)
+        raise AppException(
+            503, "voice_upstream_unavailable",
+            "音频暂存服务不可用，请稍后再试",
         )
 
-        if intent == "unknown":
-            response = VoiceIntakeResponse(
-                request_id=request_id,
-                status="intent_unknown",
-                transcript=transcript,
-                intent="unknown",
-                confidence=confidence,
-                needs_confirm=False,
-                draft=None,
-                missing_fields=[],
-            )
-            await _persist_log(
-                db,
-                user_id=user_id,
-                request_id=request_id,
-                audio_object_key=object_key,
-                transcript=transcript,
-                llm_raw=llm_raw,
-                intent="unknown",
-                confidence=confidence,
-                status=VoiceIntakeStatus.INTENT_UNKNOWN,
-            )
-            await _cache_dedup(dedup_key, response)
-            return response
-
-        # ---------- draft_pending ----------
-        missing = _compute_missing_fields(intent, draft)
-        needs_confirm = bool(missing) or confidence < AUTO_COMMIT_MIN_CONFIDENCE
-
+    # ---------- STT ----------
+    try:
+        transcript = await stt_transcribe(audio_url)
+    except _stt.SttUnavailableError as e:
+        logger.info("stt failed: %s", e)
         response = VoiceIntakeResponse(
             request_id=request_id,
-            status="draft_pending",
+            status="stt_failed",
+            transcript=None,
+            intent=None,
+            confidence=None,
+            needs_confirm=False,
+            draft=None,
+            missing_fields=[],
+        )
+        await _persist_log(
+            db,
+            user_id=user_id,
+            request_id=request_id,
+            audio_object_key=object_key,
+            transcript=None,
+            llm_raw=None,
+            intent=None,
+            confidence=None,
+            status=VoiceIntakeStatus.STT_FAILED,
+        )
+        await _cache_dedup(dedup_key, response)
+        return response
+
+    # ---------- Fetch the user's full pet list for the LLM ----------
+    # We pass the closed set of pet names so qwen-plus can do
+    # homophone-tolerant matching (STT often mis-hears "咪咪" as
+    # "米米", "小白" as "小柏", etc.). Default pet name is a
+    # tie-breaker when the audio has no name at all.
+    user_pets = await _fetch_user_pets(db, user_id)
+    default_pet_name: str | None = None
+    if default_pet_id is not None:
+        for p in user_pets:
+            if p.id == default_pet_id:
+                default_pet_name = p.name
+                break
+
+    # ---------- LLM ----------
+    try:
+        llm_out = await llm_extract_intent(
+            transcript,
+            known_pet_names=[p.name for p in user_pets],
+            default_pet_name=default_pet_name,
+        )
+    except _llm.LlmUnavailableError as e:
+        logger.info("llm failed: %s", e)
+        raise AppException(
+            503, "voice_upstream_unavailable",
+            "语义理解服务暂不可用，请稍后再试",
+        )
+
+    llm_raw = llm_out.pop("_raw", None)
+
+    # ---------- Pet resolution (closed-set lookup) ----------
+    llm_pet_name = llm_out.get("pet_name")
+    if isinstance(llm_pet_name, str):
+        llm_pet_name = llm_pet_name.strip() or None
+    else:
+        llm_pet_name = None
+
+    pet_id, pet_display_name = _resolve_pet_from_closed_set(
+        user_pets,
+        llm_pet_name=llm_pet_name,
+        default_pet_id=default_pet_id,
+    )
+
+    # ---------- Normalise ----------
+    draft, intent, confidence, _note = _normalize_draft(
+        llm_out,
+        pet_id=pet_id,
+        pet_display_name=pet_display_name,
+        today=today,
+    )
+
+    if intent == "unknown":
+        response = VoiceIntakeResponse(
+            request_id=request_id,
+            status="intent_unknown",
             transcript=transcript,
-            intent=intent,  # type: ignore[arg-type]
+            intent="unknown",
             confidence=confidence,
-            needs_confirm=needs_confirm,
-            draft=draft,
-            missing_fields=missing,
+            needs_confirm=False,
+            draft=None,
+            missing_fields=[],
         )
         await _persist_log(
             db,
@@ -493,31 +471,40 @@ async def intake(
             audio_object_key=object_key,
             transcript=transcript,
             llm_raw=llm_raw,
-            intent=intent,
+            intent="unknown",
             confidence=confidence,
-            status=VoiceIntakeStatus.DRAFT_PENDING,
+            status=VoiceIntakeStatus.INTENT_UNKNOWN,
         )
         await _cache_dedup(dedup_key, response)
         return response
 
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
+    # ---------- draft_pending ----------
+    missing = _compute_missing_fields(intent, draft)
+    needs_confirm = bool(missing) or confidence < AUTO_COMMIT_MIN_CONFIDENCE
 
-
-def _suffix_for_mime(mime: str) -> str:
-    if mime in {"audio/m4a", "audio/x-m4a", "audio/mp4"}:
-        return ".m4a"
-    if mime == "audio/aac":
-        return ".aac"
-    if mime in {"audio/mpeg", "audio/mp3"}:
-        return ".mp3"
-    if mime in {"audio/wav", "audio/x-wav"}:
-        return ".wav"
-    return ".bin"
+    response = VoiceIntakeResponse(
+        request_id=request_id,
+        status="draft_pending",
+        transcript=transcript,
+        intent=intent,  # type: ignore[arg-type]
+        confidence=confidence,
+        needs_confirm=needs_confirm,
+        draft=draft,
+        missing_fields=missing,
+    )
+    await _persist_log(
+        db,
+        user_id=user_id,
+        request_id=request_id,
+        audio_object_key=object_key,
+        transcript=transcript,
+        llm_raw=llm_raw,
+        intent=intent,
+        confidence=confidence,
+        status=VoiceIntakeStatus.DRAFT_PENDING,
+    )
+    await _cache_dedup(dedup_key, response)
+    return response
 
 
 async def _cache_dedup(key: str, response: VoiceIntakeResponse) -> None:
@@ -562,8 +549,8 @@ async def _persist_log(
 
 
 # Indirection so tests can monkeypatch without touching openai/dashscope.
-async def stt_transcribe(audio_path: str, mime: str) -> str:
-    return await _stt.transcribe(audio_path, mime)
+async def stt_transcribe(audio_url: str) -> str:
+    return await _stt.transcribe(audio_url)
 
 
 async def llm_extract_intent(
