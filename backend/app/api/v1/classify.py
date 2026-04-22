@@ -78,6 +78,11 @@ async def classify_photos(
             )
         payloads.append((idx, data))
 
+    logger.info(
+        "classify received user=%d count=%d total_bytes=%d",
+        user_id, len(payloads), sum(len(d) for _, d in payloads),
+    )
+
     async def _classify_one(idx: int, data: bytes) -> ClassifyResultItem:
         try:
             vec = await embed_image(data)
