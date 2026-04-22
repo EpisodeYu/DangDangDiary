@@ -60,6 +60,25 @@ class ApiClient {
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
+        // [DEBUG-2026-04-22] dump the fully-merged request descriptor for
+        // classify so we can verify Content-Type / Content-Length / timeouts
+        // actually reach the wire the way we expect. Remove once root cause
+        // is confirmed.
+        if (options.path.contains('/photos/classify')) {
+          final hdrDump = options.headers.entries
+              .map((e) => '${e.key}=${e.value}')
+              .join(' | ');
+          debugPrint(
+            '[ClassifyDbg] onRequest path=${options.path}'
+            ' connectT=${options.connectTimeout}'
+            ' sendT=${options.sendTimeout}'
+            ' receiveT=${options.receiveTimeout}'
+            ' persistent=${options.persistentConnection}'
+            ' contentType=${options.contentType}'
+            ' dataType=${options.data.runtimeType}'
+            '\n  headers: $hdrDump',
+          );
+        }
         handler.next(options);
       },
       onError: (error, handler) async {

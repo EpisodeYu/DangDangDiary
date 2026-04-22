@@ -657,7 +657,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             _wasAutoAssigned[absIdx] = r.petId != null;
           }
         });
-      } catch (_) {
+      } catch (e, st) {
+        // [DEBUG-2026-04-22] do not swallow — we need the full stack to
+        // diagnose the classify timeout. Remove the debugPrint once the
+        // root cause is confirmed.
+        debugPrint(
+          '[ClassifyDbg] _runClassifyAssignment caught'
+          ' err=${e.runtimeType}:$e\n$st',
+        );
         if (!mounted) return;
         // The whole call failed → drop "识别中" and let the user pick.
         setState(() {
