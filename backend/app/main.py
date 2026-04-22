@@ -1,3 +1,6 @@
+import logging
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -7,6 +10,18 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.exceptions import AppException
 from app.api.v1.router import api_v1_router
+
+
+# [DEBUG-2026-04-22] classify timeout investigation.
+# Surface application-level INFO logs (so `logger.info(...)` in
+# app.services.embedding and app.api.v1.classify actually prints) and
+# tag every /photos/classify request with a per-request timer. Keep this
+# until the root cause is confirmed, then consider trimming verbosity.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+_debug_log = logging.getLogger("app.debug.classify")
 
 
 @asynccontextmanager
@@ -29,6 +44,38 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def _classify_timing_middleware(request: Request, call_next):
+    """[DEBUG-2026-04-22] log wall-clock time spent inside FastAPI for the
+    classify endpoint only. Combined with nginx's `$request_time`, this
+    tells us whether a slow classify is (a) the app doing work, (b) nginx
+    buffering the body, or (c) the phone-to-nginx hop."""
+    if "/photos/classify" not in request.url.path:
+        return await call_next(request)
+    rid = uuid.uuid4().hex[:8]
+    client = request.client.host if request.client else "?"
+    cl = request.headers.get("content-length", "?")
+    _debug_log.info(
+        "classify[%s] ENTER client=%s content_length=%s ua=%s",
+        rid, client, cl, request.headers.get("user-agent", "?")[:60],
+    )
+    t0 = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception as e:
+        dt = time.perf_counter() - t0
+        _debug_log.exception(
+            "classify[%s] EXIT-EXC after %.2fs err=%s", rid, dt, e,
+        )
+        raise
+    dt = time.perf_counter() - t0
+    _debug_log.info(
+        "classify[%s] EXIT status=%s elapsed=%.2fs",
+        rid, response.status_code, dt,
+    )
+    return response
 
 
 @app.exception_handler(AppException)

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,25 +84,43 @@ async def classify_photos(
         user_id, len(payloads), sum(len(d) for _, d in payloads),
     )
 
+    # [DEBUG-2026-04-22] per-phase timing while we track the user-visible
+    # 60s timeout. Drop the debug=... fields once the root cause is fixed.
+    t_enter = time.perf_counter()
+
     async def _classify_one(idx: int, data: bytes) -> ClassifyResultItem:
+        t0 = time.perf_counter()
         try:
             vec = await embed_image(data)
         except EmbeddingUnavailableError as e:
             # Soft-fail: let the user pick manually.
             logger.info(
-                "classify idx=%d embedding unavailable: %s", idx, e,
+                "classify idx=%d embedding unavailable after %.2fs: %s",
+                idx, time.perf_counter() - t0, e,
             )
             return ClassifyResultItem(
                 file_index=idx, pet_id=None, confidence=None,
             )
         except Exception as e:
             # Defensive: never leak a 5xx from the embedding path.
-            logger.exception("classify idx=%d unexpected error: %s", idx, e)
+            logger.exception(
+                "classify idx=%d unexpected error after %.2fs: %s",
+                idx, time.perf_counter() - t0, e,
+            )
             return ClassifyResultItem(
                 file_index=idx, pet_id=None, confidence=None,
             )
+        t_embed = time.perf_counter()
 
         result = await centroid_classify(db, user_id, vec)
+        t_cls = time.perf_counter()
+        logger.info(
+            "classify idx=%d bytes=%d embed_ms=%d centroid_ms=%d pet_id=%s",
+            idx, len(data),
+            int((t_embed - t0) * 1000),
+            int((t_cls - t_embed) * 1000),
+            result.pet_id,
+        )
         return ClassifyResultItem(
             file_index=idx,
             pet_id=result.pet_id,
@@ -110,6 +129,10 @@ async def classify_photos(
 
     results = await asyncio.gather(
         *(_classify_one(i, d) for i, d in payloads),
+    )
+    logger.info(
+        "classify done user=%d count=%d total_ms=%d",
+        user_id, len(payloads), int((time.perf_counter() - t_enter) * 1000),
     )
     # Keep the caller's original order so UI can zip directly with the
     # local file list.
