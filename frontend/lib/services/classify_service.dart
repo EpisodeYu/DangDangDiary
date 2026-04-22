@@ -60,10 +60,10 @@ class ClassifyService {
       baseUrl: '${AppConstants.baseUrl}${AppConstants.apiPrefix}',
       connectTimeout: const Duration(seconds: 15),
       sendTimeout: const Duration(seconds: 45),
-      // Server p95 is <1s end-to-end (see backend embed_ms/centroid_ms
-      // logs). 20s is generous headroom for cold DashScope + weak
-      // uplink while still failing fast enough that the "识别中" chip
-      // doesn't hang visibly forever on a dead NAT path.
+      // Server p95 is <1s end-to-end. 20s leaves headroom for a cold
+      // DashScope + weak uplink while still failing fast enough that
+      // the "识别中" chip doesn't hang visibly forever on a dead NAT
+      // path.
       receiveTimeout: const Duration(seconds: 20),
     ));
 
@@ -90,72 +90,52 @@ class ClassifyService {
 
   /// Classify up to [AppConstants] max files in one shot.
   ///
-  /// Files are downsampled to a small thumbnail before upload. The
-  /// backend's embedding service resizes every image to 512 px
-  /// server-side anyway, so sending the full 1920×1080 q90 JPEG over
-  /// a mobile uplink just made nginx hit `client_body_timeout` before
-  /// the request ever reached FastAPI. A 512 px q75 thumbnail lands
-  /// at ~30–80 KB.
+  /// Files are downsampled to a ~512px q75 JPEG thumbnail before upload
+  /// (a 1440×1080 q90 original from a phone picker is ~400 KB; the
+  /// thumbnail lands at ~30–80 KB). The embedding service resizes to
+  /// 512 px server-side regardless, so the extra bytes only pay for
+  /// mobile-uplink time.
   Future<List<ClassifyResult>> classify(List<File> files) async {
     if (files.isEmpty) return const <ClassifyResult>[];
 
-    // [DEBUG-2026-04-22] remove once the new fresh-connection path is
-    // confirmed stable in the wild.
-    final overallSw = Stopwatch()..start();
-    debugPrint('[ClassifyDbg] classify START files=${files.length}');
-
     // Pre-compress all thumbnails once; the retry reuses the same
-    // bytes to avoid re-running flutter_image_compress on retry.
+    // bytes to avoid re-running flutter_image_compress.
     final parts = <_Part>[];
-    int totalBytes = 0;
-    int fallbackCount = 0;
     for (int i = 0; i < files.length; i++) {
       final src = files[i];
       final filename = src.path.split('/').last;
-      final origLen = await src.length().catchError((_) => -1);
-      final thumb = await _compressForClassify(src, i);
+      final thumb = await _compressForClassify(src);
       if (thumb != null) {
-        totalBytes += thumb.length;
-        debugPrint(
-          '[ClassifyDbg] file[$i] orig=${origLen}B thumb=${thumb.length}B'
-          ' ratio=${(origLen > 0 ? thumb.length / origLen : -1).toStringAsFixed(3)}',
-        );
         parts.add(_Part.bytes(thumb, filename));
       } else {
-        fallbackCount++;
-        totalBytes += origLen >= 0 ? origLen : 0;
-        debugPrint(
-          '[ClassifyDbg] file[$i] COMPRESS FAILED falling back to orig=${origLen}B',
-        );
+        // flutter_image_compress very rarely returns null on HEIC or
+        // zero-byte inputs; falling back to the original keeps the
+        // feature working even if the thumbnail step misbehaves.
         parts.add(_Part.file(src.path, filename));
       }
     }
-    debugPrint(
-      '[ClassifyDbg] body built totalBytes=$totalBytes fallback=$fallbackCount'
-      ' prepMs=${overallSw.elapsedMilliseconds}',
-    );
 
     try {
-      return await _postOnce(parts, attempt: 1);
+      return await _postOnce(parts);
     } on DioException catch (e) {
       if (!_isRetryable(e)) rethrow;
-      debugPrint(
-        '[ClassifyDbg] retry-after-${e.type} — opening fresh connection',
-      );
-      return await _postOnce(parts, attempt: 2);
+      // One retry on any transport-level failure. The dedicated
+      // HttpClient guarantees the second attempt uses a fresh TCP
+      // connection (the first one has already been torn down by
+      // `Connection: close` + idleTimeout=0), which is specifically
+      // what rescues the NAT-stale-pool scenario this service was
+      // built for.
+      debugPrint('[classify] retry after ${e.type}');
+      return await _postOnce(parts);
     }
   }
 
-  Future<List<ClassifyResult>> _postOnce(
-    List<_Part> parts, {
-    required int attempt,
-  }) async {
+  Future<List<ClassifyResult>> _postOnce(List<_Part> parts) async {
     final fd = FormData();
     for (final p in parts) {
       fd.files.add(MapEntry('files', p.build()));
     }
 
-    final postSw = Stopwatch()..start();
     try {
       final resp = await _dio.post(
         '/photos/classify',
@@ -167,19 +147,14 @@ class ClassifyService {
           persistentConnection: false,
         ),
       );
-      debugPrint(
-        '[ClassifyDbg] POST ok attempt=$attempt postMs=${postSw.elapsedMilliseconds}'
-        ' status=${resp.statusCode}',
-      );
       final list = (resp.data['results'] as List).cast<Map<String, dynamic>>();
       return list.map(ClassifyResult.fromJson).toList();
-    } on DioException catch (e, st) {
+    } on DioException catch (e) {
+      // Keep a one-line failure log so we can still diagnose if the
+      // hazard comes back in a new guise.
       debugPrint(
-        '[ClassifyDbg] POST FAIL attempt=$attempt postMs=${postSw.elapsedMilliseconds}'
-        ' type=${e.type} msg=${e.message}'
-        ' respCode=${e.response?.statusCode}'
-        ' innerErr=${e.error?.runtimeType}:${e.error}'
-        '\n$st',
+        '[classify] POST fail type=${e.type} status=${e.response?.statusCode}'
+        ' inner=${e.error?.runtimeType} msg=${e.message}',
       );
       rethrow;
     }
@@ -197,12 +172,11 @@ class ClassifyService {
     }
   }
 
-  Future<Uint8List?> _compressForClassify(File src, int index) async {
-    final sw = Stopwatch()..start();
+  Future<Uint8List?> _compressForClassify(File src) async {
     try {
       final dir = await getTemporaryDirectory();
       final outPath =
-          '${dir.path}/classify_${DateTime.now().millisecondsSinceEpoch}_$index.jpg';
+          '${dir.path}/classify_${DateTime.now().microsecondsSinceEpoch}.jpg';
       final result = await FlutterImageCompress.compressAndGetFile(
         src.path,
         outPath,
@@ -211,26 +185,13 @@ class ClassifyService {
         format: CompressFormat.jpeg,
         quality: 75,
       );
-      if (result == null) {
-        debugPrint(
-          '[ClassifyDbg] compress[$index] returned null ms=${sw.elapsedMilliseconds}',
-        );
-        return null;
-      }
+      if (result == null) return null;
       final bytes = await File(result.path).readAsBytes();
-      debugPrint(
-        '[ClassifyDbg] compress[$index] ok ms=${sw.elapsedMilliseconds}'
-        ' out=${bytes.length}B',
-      );
       try {
         await File(result.path).delete();
       } catch (_) {}
       return bytes;
-    } catch (e, st) {
-      debugPrint(
-        '[ClassifyDbg] compress[$index] THREW ms=${sw.elapsedMilliseconds}'
-        ' err=${e.runtimeType}:$e\n$st',
-      );
+    } catch (_) {
       return null;
     }
   }

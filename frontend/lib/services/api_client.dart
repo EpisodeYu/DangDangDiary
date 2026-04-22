@@ -61,25 +61,6 @@ class ApiClient {
         if (token != null) {
           options.headers['Authorization'] = 'Bearer $token';
         }
-        // [DEBUG-2026-04-22] dump the fully-merged request descriptor for
-        // classify so we can verify Content-Type / Content-Length / timeouts
-        // actually reach the wire the way we expect. Remove once root cause
-        // is confirmed.
-        if (options.path.contains('/photos/classify')) {
-          final hdrDump = options.headers.entries
-              .map((e) => '${e.key}=${e.value}')
-              .join(' | ');
-          debugPrint(
-            '[ClassifyDbg] onRequest path=${options.path}'
-            ' connectT=${options.connectTimeout}'
-            ' sendT=${options.sendTimeout}'
-            ' receiveT=${options.receiveTimeout}'
-            ' persistent=${options.persistentConnection}'
-            ' contentType=${options.contentType}'
-            ' dataType=${options.data.runtimeType}'
-            '\n  headers: $hdrDump',
-          );
-        }
         handler.next(options);
       },
       onError: (error, handler) async {
@@ -191,11 +172,21 @@ class ApiClient {
   /// lifecycle-level hedge: call it from `didChangeAppLifecycleState`
   /// on resumed so every endpoint — not just `/photos/classify` —
   /// gets a clean pool.
+  ///
+  /// We pass `force: false` to [HttpClientAdapter.close] so that any
+  /// request that was still in flight when the app went to the
+  /// background (e.g. a `/pets/*/deworming-status` GET fired
+  /// immediately before the user opened the gallery picker) is
+  /// allowed to finish on the old pool rather than being torn down
+  /// with a `HttpException: Connection closed before full header was
+  /// received`. Only idle pooled sockets get dropped, which is all we
+  /// needed anyway — live sockets by definition aren't the ones whose
+  /// NAT mapping expired during the pause.
   void resetConnectionPool() {
     final old = dio.httpClientAdapter;
     dio.httpClientAdapter = IOHttpClientAdapter();
     try {
-      old.close(force: true);
+      old.close(force: false);
     } catch (_) {}
   }
 

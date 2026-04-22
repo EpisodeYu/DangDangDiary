@@ -37,3 +37,16 @@ async def get_db():
         except Exception:
             await session.rollback()
             raise
+
+
+def get_session_maker():
+    """FastAPI dependency that hands out the session factory itself.
+
+    Use this (instead of `Depends(get_db)`) in endpoints that fan out
+    with `asyncio.gather` and need one fresh [AsyncSession] per task —
+    sharing a single session across concurrent coroutines is unsafe
+    and surfaces as ``IllegalStateChangeError``. Tests can override
+    it via `app.dependency_overrides[get_session_maker]` the same way
+    they override [get_db].
+    """
+    return async_session_maker

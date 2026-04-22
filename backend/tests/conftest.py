@@ -4,7 +4,7 @@ from unittest.mock import patch, AsyncMock
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.database import Base, get_db
+from app.database import Base, get_db, get_session_maker
 from tests._sqlite_compat import apply_sqlite_compat
 
 
@@ -44,6 +44,11 @@ async def client(test_engine):
                 raise
 
     app.dependency_overrides[get_db] = _override_get_db
+    # Endpoints that fan out with `asyncio.gather` (e.g. classify) take
+    # the session factory itself and open one session per task. Point
+    # them at the test `session_maker` so they see the in-memory SQLite
+    # schema instead of the production Postgres defined in settings.
+    app.dependency_overrides[get_session_maker] = lambda: session_maker
 
     store: dict[str, str] = {}
 
