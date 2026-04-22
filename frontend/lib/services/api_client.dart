@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -174,6 +175,28 @@ class ApiClient {
     } catch (e, st) {
       debugPrint('[API] onForceLogout handler threw: $e\n$st');
     }
+  }
+
+  /// Drop any TCP connections currently pooled inside the main [dio]'s
+  /// [IOHttpClientAdapter] so the next request opens a brand-new
+  /// socket.
+  ///
+  /// Observed 2026-04-22: after the app is paused (e.g. the image
+  /// picker takes the foreground) and resumed, the carrier's NAT has
+  /// silently dropped the 4-tuple for every keep-alive connection
+  /// parked in dart:io's pool, but dart:io still hands them out on the
+  /// next `openUrl`. The first request using that stale socket writes
+  /// into a black hole and eventually surfaces as a `receiveTimeout`
+  /// after the full [BaseOptions.receiveTimeout]. This method is the
+  /// lifecycle-level hedge: call it from `didChangeAppLifecycleState`
+  /// on resumed so every endpoint — not just `/photos/classify` —
+  /// gets a clean pool.
+  void resetConnectionPool() {
+    final old = dio.httpClientAdapter;
+    dio.httpClientAdapter = IOHttpClientAdapter();
+    try {
+      old.close(force: true);
+    } catch (_) {}
   }
 
   /// For tests only. Resets mutable state that leaks across tests when the

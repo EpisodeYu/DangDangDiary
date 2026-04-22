@@ -7,6 +7,7 @@ import 'config/theme.dart';
 import 'providers/auth_provider.dart';
 import 'providers/notification_provider.dart';
 import 'providers/pet_provider.dart';
+import 'services/api_client.dart';
 import 'services/notification_service.dart';
 
 class DangDangDiaryApp extends ConsumerWidget {
@@ -72,6 +73,14 @@ class _AppLifecycleHostState extends ConsumerState<_AppLifecycleHost>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      // Drop any keep-alive TCP sockets dart:io was still holding
+      // while we were backgrounded — the carrier's NAT almost
+      // certainly expired their 4-tuple by now, and reusing one of
+      // them silently wedges the first request after resume (observed
+      // on `/photos/classify` but the hazard applies to any POST
+      // returning to the foreground). See
+      // `ApiClient.resetConnectionPool` for the full writeup.
+      ApiClient().resetConnectionPool();
       _maybeRefreshReminders();
       _tryHandlePendingPayload();
     }
