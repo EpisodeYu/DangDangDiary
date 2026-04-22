@@ -9,7 +9,9 @@ import '../models/pet.dart';
 /// pet the caller can write to (owner/editor).
 ///
 /// States:
-///   * [isRecognizing] = true  → spinner + 「识别中」 (non-interactive)
+///   * [isRecognizing] = true  → spinner + 「识别中」, still tappable so
+///                               the user can override before the
+///                               classify response comes back
 ///   * [selected]      = null  → grey 「选择宠物」 pill
 ///   * [selected]      != null → avatar + name + caret
 ///
@@ -36,8 +38,9 @@ class PetChipDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final Widget body;
     if (isRecognizing) {
-      return _wrap(
+      body = _wrap(
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: const [
@@ -51,40 +54,46 @@ class PetChipDropdown extends StatelessWidget {
               '识别中',
               style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
+            SizedBox(width: 2),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: AppTheme.textSecondary,
+            ),
+          ],
+        ),
+      );
+    } else {
+      body = _wrap(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (selected != null) ...[
+              _buildAvatar(selected!, 18),
+              const SizedBox(width: 6),
+              Text(
+                selected!.name,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+            ] else
+              const Text(
+                '选择宠物',
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+              ),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: AppTheme.textSecondary,
+            ),
           ],
         ),
       );
     }
-
-    final body = _wrap(
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (selected != null) ...[
-            _buildAvatar(selected!, 18),
-            const SizedBox(width: 6),
-            Text(
-              selected!.name,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: AppTheme.textPrimary,
-              ),
-            ),
-          ] else
-            const Text(
-              '选择宠物',
-              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-            ),
-          const SizedBox(width: 2),
-          const Icon(
-            Icons.arrow_drop_down,
-            size: 18,
-            color: AppTheme.textSecondary,
-          ),
-        ],
-      ),
-    );
 
     if (!enabled || pets.isEmpty) {
       return Opacity(opacity: enabled ? 1 : 0.6, child: body);

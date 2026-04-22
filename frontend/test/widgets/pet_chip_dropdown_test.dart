@@ -29,20 +29,40 @@ Widget _host(Widget child) => MaterialApp(
     );
 
 void main() {
-  testWidgets('isRecognizing shows spinner and 识别中 label', (tester) async {
+  testWidgets(
+      'isRecognizing shows spinner and 识别中 label but remains tappable',
+      (tester) async {
+    final pets = [_pet(1, '咪咪'), _pet(2, '橘子')];
+    Pet? chosen;
+
     await tester.pumpWidget(_host(PetChipDropdown(
-      pets: [_pet(1, '咪咪')],
+      pets: pets,
       selected: null,
       isRecognizing: true,
       wasAutoAssigned: true,
-      onChanged: (_) {},
+      onChanged: (p) => chosen = p,
     )));
 
     expect(find.text('识别中'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    // PopupMenuButton must NOT render while recognising (chip is a
-    // plain container with the spinner).
-    expect(find.byType(PopupMenuButton<int>), findsNothing);
+    // While recognising the chip must still expose a PopupMenuButton
+    // so the user can override the model's pick mid-flight.
+    expect(find.byType(PopupMenuButton<int>), findsOneWidget);
+
+    await tester.tap(find.byType(PopupMenuButton<int>));
+    // The chip keeps a spinning CircularProgressIndicator, so
+    // `pumpAndSettle` would never settle — step the frame pump
+    // manually to let the popup finish its open animation.
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('咪咪'), findsOneWidget);
+    expect(find.text('橘子'), findsOneWidget);
+
+    await tester.tap(find.text('橘子').last);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(chosen, isNotNull);
+    expect(chosen!.id, 2);
   });
 
   testWidgets('no selection renders 选择宠物 and caret, tapping opens menu',

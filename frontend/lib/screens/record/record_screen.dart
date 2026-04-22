@@ -51,6 +51,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   final List<int?> _assignedPetIds = [];
   final List<bool> _wasAutoAssigned = [];
   final List<bool> _isRecognizing = [];
+  // True once the user has manually picked a pet for this photo. Once
+  // flipped, the pending classify response for the photo is ignored so
+  // that a slow model can't overwrite the user's explicit choice.
+  final List<bool> _userPicked = [];
 
   bool _isUploading = false;
   final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
@@ -301,6 +305,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       if (selectedPet == null) {
         _assignedPetIds[index] = null;
         _wasAutoAssigned[index] = false;
+        _userPicked[index] = false;
       }
     }
 
@@ -405,6 +410,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                     setState(() {
                       _assignedPetIds[index] = pet.id;
                       _wasAutoAssigned[index] = false;
+                      // User has overridden — stop the spinner and
+                      // pin this choice so the in-flight classify
+                      // response can't clobber it when it arrives.
+                      _isRecognizing[index] = false;
+                      _userPicked[index] = true;
                     });
                   },
                 ),
@@ -571,14 +581,24 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       return;
     }
 
+    // When the caller only has a single writable pet profile (owned
+    // or shared with editor rights), there is nothing to classify —
+    // skip the server round-trip and bind every photo to that pet.
+    final editable = _editableCandidatePets;
+    final onlyPetId =
+        editable.length == 1 ? editable.first.id : null;
+
     final baseIdx = _selectedFiles.length;
     setState(() {
       _selectedFiles.addAll(files);
       _photoDates.addAll(dates);
       _pendingTokens.addAll(tokens);
-      _assignedPetIds.addAll(List<int?>.filled(files.length, null));
+      _assignedPetIds
+          .addAll(List<int?>.filled(files.length, onlyPetId));
       _wasAutoAssigned.addAll(List<bool>.filled(files.length, true));
-      _isRecognizing.addAll(List<bool>.filled(files.length, true));
+      _isRecognizing
+          .addAll(List<bool>.filled(files.length, onlyPetId == null));
+      _userPicked.addAll(List<bool>.filled(files.length, false));
       _failureMessages = {};
     });
 
@@ -586,7 +606,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _showSnack('已跳过 $rejected 张未识别到猫狗的图片');
     }
 
-    _runClassifyAssignment(baseIdx: baseIdx, files: files);
+    if (onlyPetId == null) {
+      _runClassifyAssignment(baseIdx: baseIdx, files: files);
+    }
   }
 
   Future<void> _takePhoto() async {
@@ -610,18 +632,27 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final converted = await _ensureJpeg(xfile);
 
     final token = await _cachePending(converted);
+
+    // Single-profile fast path — mirror the gallery flow.
+    final editable = _editableCandidatePets;
+    final onlyPetId =
+        editable.length == 1 ? editable.first.id : null;
+
     final baseIdx = _selectedFiles.length;
     setState(() {
       _selectedFiles.add(converted);
       _pendingTokens.add(token);
       _photoDates.add(DateTime.now());
-      _assignedPetIds.add(null);
+      _assignedPetIds.add(onlyPetId);
       _wasAutoAssigned.add(true);
-      _isRecognizing.add(true);
+      _isRecognizing.add(onlyPetId == null);
+      _userPicked.add(false);
       _failureMessages = {};
     });
 
-    _runClassifyAssignment(baseIdx: baseIdx, files: [converted]);
+    if (onlyPetId == null) {
+      _runClassifyAssignment(baseIdx: baseIdx, files: [converted]);
+    }
   }
 
   /// Fire off a classify request for the just-added photos and patch
@@ -643,16 +674,19 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         setState(() {
           // Clear "识别中" for every file in the batch first — partial
           // responses from the server will overwrite with specifics.
+          // Skip photos the user has already hand-picked; their chip
+          // is already resolved and must not be disturbed.
           for (int i = 0; i < files.length; i++) {
             final absIdx = baseIdx + i;
-            if (absIdx < _isRecognizing.length) {
-              _isRecognizing[absIdx] = false;
-            }
+            if (absIdx >= _isRecognizing.length) continue;
+            if (absIdx < _userPicked.length && _userPicked[absIdx]) continue;
+            _isRecognizing[absIdx] = false;
           }
 
           for (final r in results) {
             final absIdx = baseIdx + r.fileIndex;
             if (absIdx < 0 || absIdx >= _assignedPetIds.length) continue;
+            if (absIdx < _userPicked.length && _userPicked[absIdx]) continue;
             _assignedPetIds[absIdx] = r.petId;
             _wasAutoAssigned[absIdx] = r.petId != null;
           }
@@ -666,10 +700,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         setState(() {
           for (int i = 0; i < files.length; i++) {
             final absIdx = baseIdx + i;
-            if (absIdx < _isRecognizing.length) {
-              _isRecognizing[absIdx] = false;
-              _wasAutoAssigned[absIdx] = false;
-            }
+            if (absIdx >= _isRecognizing.length) continue;
+            if (absIdx < _userPicked.length && _userPicked[absIdx]) continue;
+            _isRecognizing[absIdx] = false;
+            _wasAutoAssigned[absIdx] = false;
           }
         });
       }
@@ -744,6 +778,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       if (index < _assignedPetIds.length) _assignedPetIds.removeAt(index);
       if (index < _wasAutoAssigned.length) _wasAutoAssigned.removeAt(index);
       if (index < _isRecognizing.length) _isRecognizing.removeAt(index);
+      if (index < _userPicked.length) _userPicked.removeAt(index);
       _failureMessages = {};
     });
   }
@@ -984,6 +1019,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         _assignedPetIds.clear();
         _wasAutoAssigned.clear();
         _isRecognizing.clear();
+        _userPicked.clear();
         _failureMessages = {};
       });
       return;
@@ -1001,6 +1037,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final newAssigned = <int?>[];
     final newAuto = <bool>[];
     final newRecog = <bool>[];
+    final newPicked = <bool>[];
     final newFailures = <int, String>{};
 
     int newIdx = 0;
@@ -1012,6 +1049,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       newAssigned.add(i < _assignedPetIds.length ? _assignedPetIds[i] : null);
       newAuto.add(i < _wasAutoAssigned.length ? _wasAutoAssigned[i] : false);
       newRecog.add(false);
+      newPicked.add(i < _userPicked.length ? _userPicked[i] : false);
       final msg = failureMessagesByAbs[i];
       if (msg != null) newFailures[newIdx] = msg;
       newIdx++;
@@ -1036,6 +1074,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _isRecognizing
         ..clear()
         ..addAll(newRecog);
+      _userPicked
+        ..clear()
+        ..addAll(newPicked);
       _failureMessages = newFailures;
     });
   }
