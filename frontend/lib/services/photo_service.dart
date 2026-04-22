@@ -21,6 +21,15 @@ class PhotoService {
     /// compatibility with pre-Step-3 callers — the backend treats a
     /// missing field as all-auto.
     List<String>? classifySources,
+    /// Phase 2 Step 3 Option A: per-file pet id the classify endpoint
+    /// originally suggested. Used together with ``classifySources =
+    /// "corrected"`` entries so the server can log (from → to) pairs
+    /// for future threshold tuning. Pass ``null`` in the list for
+    /// files where the model gave no suggestion.
+    List<int?>? previousPetIds,
+    /// Top-1 cosine similarity reported alongside ``previousPetIds``.
+    /// Diagnostic only. Pass ``null`` where unknown.
+    List<double?>? previousTop1Similarities,
     ProgressCallback? onSendProgress,
   }) async {
     final formData = FormData();
@@ -34,6 +43,33 @@ class PhotoService {
       );
       for (final s in classifySources) {
         formData.fields.add(MapEntry('classify_source', s));
+      }
+    }
+    if (previousPetIds != null) {
+      assert(
+        previousPetIds.length == files.length,
+        'previousPetIds length must match files length',
+      );
+      for (final id in previousPetIds) {
+        // Empty string is the documented "no prior suggestion" sentinel;
+        // both backend parsers accept it transparently.
+        formData.fields.add(
+          MapEntry('previous_pet_id', id == null ? '' : id.toString()),
+        );
+      }
+    }
+    if (previousTop1Similarities != null) {
+      assert(
+        previousTop1Similarities.length == files.length,
+        'previousTop1Similarities length must match files length',
+      );
+      for (final s in previousTop1Similarities) {
+        formData.fields.add(
+          MapEntry(
+            'previous_top1_similarity',
+            s == null ? '' : s.toString(),
+          ),
+        );
       }
     }
     for (final f in files) {

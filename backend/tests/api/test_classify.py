@@ -570,6 +570,135 @@ async def test_upload_rejects_mismatched_classify_source_count(client):
     assert resp.json()["code"] == "CLASSIFY_SOURCE_MISMATCH"
 
 
+async def test_upload_corrected_writes_classify_feedback(client, test_engine):
+    """Every ``classify_source=corrected`` row must leave a feedback
+    log entry with (user_id, from_pet_id, to_pet_id, top1_similarity)
+    filled in exactly as the frontend reported."""
+    c, _ = client
+    token = await _login(c, "13800150090")
+    headers = {"Authorization": f"Bearer {token}"}
+    pet_a = await _create_pet(c, headers, name="咪咪")
+    pet_b = await _create_pet(c, headers, name="橘子")
+
+    vec = _unit_vec(7)
+    data = {
+        "taken_at": ["2024-05-15"],
+        "classify_source": ["corrected"],
+        "previous_pet_id": [str(pet_a)],
+        "previous_top1_similarity": ["0.812"],
+    }
+
+    test_sm = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _fake_maker():
+        async with test_sm() as s:
+            yield s
+
+    async def _fake_embed(_):
+        return vec
+
+    with _EmbedPatch(_fake_embed), patch(
+        "app.services.storage.upload_photo", side_effect=_upload_stub(),
+    ), patch(
+        "app.api.v1.photos.async_session_maker", _fake_maker,
+    ):
+        # Upload the corrected photo under pet_b (the "to" side).
+        resp = await c.post(
+            f"/pets/{pet_b}/photos",
+            files=_upload_files(1),
+            data=data,
+            headers=headers,
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["success_count"] == 1
+
+    # Feedback row should be there: from_pet=a, to_pet=b, sim=0.812.
+    from app.models.classify_feedback import ClassifyFeedback
+    sm = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    async with sm() as s:
+        rows = (
+            await s.execute(select(ClassifyFeedback))
+        ).scalars().all()
+    assert len(rows) == 1
+    fb = rows[0]
+    assert fb.from_pet_id == pet_a
+    assert fb.to_pet_id == pet_b
+    assert fb.photo_id is not None
+    assert fb.top1_similarity is not None
+    assert abs(fb.top1_similarity - 0.812) < 1e-6
+
+
+async def test_upload_auto_does_not_write_feedback(client, test_engine):
+    c, _ = client
+    token = await _login(c, "13800150091")
+    headers = {"Authorization": f"Bearer {token}"}
+    pet_id = await _create_pet(c, headers)
+
+    vec = _unit_vec(8)
+    data = {"taken_at": ["2024-05-16"], "classify_source": ["auto"]}
+
+    test_sm = async_sessionmaker(
+        test_engine, class_=AsyncSession, expire_on_commit=False,
+    )
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _fake_maker():
+        async with test_sm() as s:
+            yield s
+
+    async def _fake_embed(_):
+        return vec
+
+    with _EmbedPatch(_fake_embed), patch(
+        "app.services.storage.upload_photo", side_effect=_upload_stub(),
+    ), patch(
+        "app.api.v1.photos.async_session_maker", _fake_maker,
+    ):
+        resp = await c.post(
+            f"/pets/{pet_id}/photos",
+            files=_upload_files(1),
+            data=data,
+            headers=headers,
+        )
+    assert resp.status_code == 200
+
+    from app.models.classify_feedback import ClassifyFeedback
+    sm = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    async with sm() as s:
+        rows = (
+            await s.execute(select(ClassifyFeedback))
+        ).scalars().all()
+    assert rows == []
+
+
+async def test_upload_rejects_mismatched_previous_pet_id_count(client):
+    c, _ = client
+    token = await _login(c, "13800150092")
+    headers = {"Authorization": f"Bearer {token}"}
+    pet_id = await _create_pet(c, headers)
+
+    data = {
+        "taken_at": ["2024-05-17", "2024-05-18"],
+        "classify_source": ["corrected", "corrected"],
+        "previous_pet_id": [str(pet_id)],
+    }
+
+    with patch("app.services.storage.upload_photo", side_effect=_upload_stub()):
+        resp = await c.post(
+            f"/pets/{pet_id}/photos",
+            files=_upload_files(2),
+            data=data,
+            headers=headers,
+        )
+    assert resp.status_code == 400
+    assert resp.json()["code"] == "PREVIOUS_PET_ID_MISMATCH"
+
+
 async def test_upload_embedding_failure_does_not_break_upload(client, test_engine):
     """DashScope outage during backfill must leave the upload 200-OK."""
     c, _ = client

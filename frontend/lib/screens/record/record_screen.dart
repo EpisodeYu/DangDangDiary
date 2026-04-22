@@ -55,6 +55,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   // flipped, the pending classify response for the photo is ignored so
   // that a slow model can't overwrite the user's explicit choice.
   final List<bool> _userPicked = [];
+  // Option A feedback plumbing: remember what the classify endpoint
+  // *originally* suggested so the upload call can forward it to the
+  // server when the user overrode the chip. Parallel to
+  // [_assignedPetIds] but never mutated after the classify response
+  // lands. ``null`` = model offered no suggestion / request failed.
+  final List<int?> _originalAssignedPetIds = [];
+  final List<double?> _originalConfidences = [];
 
   bool _isUploading = false;
   final ValueNotifier<double> _uploadProgress = ValueNotifier(0);
@@ -599,6 +606,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _isRecognizing
           .addAll(List<bool>.filled(files.length, onlyPetId == null));
       _userPicked.addAll(List<bool>.filled(files.length, false));
+      _originalAssignedPetIds
+          .addAll(List<int?>.filled(files.length, null));
+      _originalConfidences
+          .addAll(List<double?>.filled(files.length, null));
       _failureMessages = {};
     });
 
@@ -647,6 +658,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _wasAutoAssigned.add(true);
       _isRecognizing.add(onlyPetId == null);
       _userPicked.add(false);
+      _originalAssignedPetIds.add(null);
+      _originalConfidences.add(null);
       _failureMessages = {};
     });
 
@@ -686,6 +699,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           for (final r in results) {
             final absIdx = baseIdx + r.fileIndex;
             if (absIdx < 0 || absIdx >= _assignedPetIds.length) continue;
+            // Always record the model's original suggestion, even if
+            // the user has already hand-picked — the feedback path
+            // wants to know what the model said regardless of whether
+            // the user waited for it.
+            if (absIdx < _originalAssignedPetIds.length) {
+              _originalAssignedPetIds[absIdx] = r.petId;
+              _originalConfidences[absIdx] = r.confidence;
+            }
             if (absIdx < _userPicked.length && _userPicked[absIdx]) continue;
             _assignedPetIds[absIdx] = r.petId;
             _wasAutoAssigned[absIdx] = r.petId != null;
@@ -777,6 +798,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _photoDates.removeAt(index);
       if (index < _assignedPetIds.length) _assignedPetIds.removeAt(index);
       if (index < _wasAutoAssigned.length) _wasAutoAssigned.removeAt(index);
+      if (index < _originalAssignedPetIds.length) {
+        _originalAssignedPetIds.removeAt(index);
+      }
+      if (index < _originalConfidences.length) {
+        _originalConfidences.removeAt(index);
+      }
       if (index < _isRecognizing.length) _isRecognizing.removeAt(index);
       if (index < _userPicked.length) _userPicked.removeAt(index);
       _failureMessages = {};
@@ -848,12 +875,31 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         final sources = [
           for (final i in indices) _wasAutoAssigned[i] ? 'auto' : 'corrected'
         ];
+        // Option A feedback plumbing: send the model's original guess
+        // and its confidence alongside every file so the server can
+        // log structured correction events. Safe to send for "auto"
+        // rows too — the backend only writes a feedback row when the
+        // row's classify_source is "corrected".
+        final prevPetIds = [
+          for (final i in indices)
+            i < _originalAssignedPetIds.length
+                ? _originalAssignedPetIds[i]
+                : null,
+        ];
+        final prevConfidences = [
+          for (final i in indices)
+            i < _originalConfidences.length
+                ? _originalConfidences[i]
+                : null,
+        ];
 
         final response = await service.uploadPhotos(
           petId: petId,
           files: files,
           takenAtDates: dates,
           classifySources: sources,
+          previousPetIds: prevPetIds,
+          previousTop1Similarities: prevConfidences,
           onSendProgress: (sent, total) {
             if (total <= 0) return;
             // Fraction within this group, rescaled by (group_files / total_files).
@@ -1020,6 +1066,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         _wasAutoAssigned.clear();
         _isRecognizing.clear();
         _userPicked.clear();
+        _originalAssignedPetIds.clear();
+        _originalConfidences.clear();
         _failureMessages = {};
       });
       return;
@@ -1038,6 +1086,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final newAuto = <bool>[];
     final newRecog = <bool>[];
     final newPicked = <bool>[];
+    final newOriginalAssigned = <int?>[];
+    final newOriginalConfidence = <double?>[];
     final newFailures = <int, String>{};
 
     int newIdx = 0;
@@ -1050,6 +1100,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       newAuto.add(i < _wasAutoAssigned.length ? _wasAutoAssigned[i] : false);
       newRecog.add(false);
       newPicked.add(i < _userPicked.length ? _userPicked[i] : false);
+      newOriginalAssigned.add(
+        i < _originalAssignedPetIds.length
+            ? _originalAssignedPetIds[i]
+            : null,
+      );
+      newOriginalConfidence.add(
+        i < _originalConfidences.length ? _originalConfidences[i] : null,
+      );
       final msg = failureMessagesByAbs[i];
       if (msg != null) newFailures[newIdx] = msg;
       newIdx++;
@@ -1077,6 +1135,12 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _userPicked
         ..clear()
         ..addAll(newPicked);
+      _originalAssignedPetIds
+        ..clear()
+        ..addAll(newOriginalAssigned);
+      _originalConfidences
+        ..clear()
+        ..addAll(newOriginalConfidence);
       _failureMessages = newFailures;
     });
   }

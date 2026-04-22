@@ -124,6 +124,27 @@ class Settings(BaseSettings):
     CLASSIFY_MAX_FILES: int = 5
     CLASSIFY_MAX_FILE_BYTES: int = 15 * 1024 * 1024
 
+    # --- Phase 2 Step 3 "Option A": source-aware ranking + dedup ---
+    #
+    # Additive bonus applied to a ``user_corrected`` embedding's cosine
+    # similarity before the per-pet max / Top-1 / margin rule runs. The
+    # bonus is intentionally small (≈ half a typical margin threshold)
+    # so it only tips decisions the raw pool was already ambiguous on
+    # — never manufactures a hit from an otherwise-unrelated photo.
+    # Confidence reported back to the client is still clamped to [0, 1].
+    CLASSIFY_CORRECTED_BOOST: float = 0.02
+    # Cosine-similarity threshold at or above which an incoming
+    # embedding is considered a near-duplicate of an existing row for
+    # the same pet and the DB insert is skipped. 0.98 keeps visually
+    # distinct photos (different pose / lighting) separate while
+    # collapsing "same image uploaded twice" and bursts of 10 near-
+    # identical frames from a single petting session.
+    CLASSIFY_DEDUP_SIMILARITY: float = 0.98
+    # How far back to scan for potential near-duplicates. Older samples
+    # are kept as-is so the pool retains long-tail coverage (kitten →
+    # adult); the window is there to keep the scan cheap on Postgres.
+    CLASSIFY_DEDUP_WINDOW_DAYS: int = 30
+
     model_config = {"env_file": ".env"}
 
 

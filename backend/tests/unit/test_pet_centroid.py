@@ -348,3 +348,221 @@ async def test_add_embedding_round_trip(session):
     assert row.pet_id == pet_id
     assert row.source == EmbeddingSource.USER_UPLOADED
     assert len(row.embedding) == dim
+
+
+# -------------------------------------- Option A: source-aware boost
+
+
+async def test_classify_boost_tips_ambiguous_decision(session, monkeypatch):
+    """A corrected sample should be able to flip an otherwise-null result.
+
+    Set up two pets: pet_a with a ``USER_UPLOADED`` ref at sim ≈ 0.80,
+    pet_b with a ``USER_CORRECTED`` ref at sim ≈ 0.79. Without the
+    boost the top-1/top-2 margin is 0.01 < 0.05 and the rule returns
+    null. With the default boost of 0.02 pet_b jumps to 0.81 and wins
+    the margin.
+    """
+    s = session
+    user_id, pet_a = await _make_user_and_pet(
+        s, phone="13800000090", pet_name="a",
+    )
+    _, pet_b = await _make_user_and_pet(
+        s, phone="13800000091", pet_name="b",
+    )
+    s.add(PetMember(pet_id=pet_b, user_id=user_id, role=MemberRole.EDITOR))
+    await s.commit()
+
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    base = _unit_vec(0, dim)
+    other = _unit_vec(1, dim)
+    # Query vector: mostly `base` with a sliver of `other` — sim to
+    # anything constructed from the same base is high but below 1.0.
+    query = _blend(base, other, 0.2)
+    # pet_a sample: slightly closer to query than pet_b's sample.
+    a_sample = _blend(base, other, 0.21)
+    # pet_b sample: slightly further.
+    b_sample = _blend(base, other, 0.22)
+
+    await pet_centroid.add_embedding(
+        s, pet_id=pet_a, photo_id=None,
+        vector=a_sample, source=EmbeddingSource.USER_UPLOADED,
+    )
+    await pet_centroid.add_embedding(
+        s, pet_id=pet_b, photo_id=None,
+        vector=b_sample, source=EmbeddingSource.USER_CORRECTED,
+    )
+
+    # Temporarily widen the boost well above the margin threshold so
+    # the assertion is robust against tiny cosine-arithmetic jitter.
+    monkeypatch.setattr(settings, "CLASSIFY_CORRECTED_BOOST", 0.10)
+    result = await pet_centroid.classify(s, user_id, query)
+    assert result.pet_id == pet_b
+    assert result.confidence is not None
+
+
+async def test_classify_confidence_clamped_to_one(session, monkeypatch):
+    """Boost pushes an already-max similarity above 1.0 — the reported
+    confidence must stay in the [0, 1] range."""
+    s = session
+    user_id, pet_id = await _make_user_and_pet(
+        s, phone="13800000092", pet_name="clamp",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    sample = _unit_vec(5, dim)
+    await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=sample, source=EmbeddingSource.USER_CORRECTED,
+    )
+    monkeypatch.setattr(settings, "CLASSIFY_CORRECTED_BOOST", 0.05)
+    result = await pet_centroid.classify(s, user_id, sample)
+    assert result.pet_id == pet_id
+    assert result.confidence is not None
+    assert 0.0 <= result.confidence <= 1.0
+
+
+async def test_classify_boost_does_not_manufacture_hit_below_threshold(session, monkeypatch):
+    """A weak raw similarity + boost must not fabricate a hit if the
+    boosted value is still below ``CLASSIFY_SIM_TOP1_MIN``."""
+    s = session
+    user_id, pet_id = await _make_user_and_pet(
+        s, phone="13800000093", pet_name="weak",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    base = _unit_vec(0, dim)
+    other = _unit_vec(1, dim)
+    # ~0.707 similarity — a 0.02 boost lifts it to 0.727, still below
+    # the default 0.78 threshold.
+    half = _blend(base, other, 0.5)
+    await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=half, source=EmbeddingSource.USER_CORRECTED,
+    )
+    monkeypatch.setattr(settings, "CLASSIFY_CORRECTED_BOOST", 0.02)
+    result = await pet_centroid.classify(s, user_id, base)
+    assert result.pet_id is None
+
+
+# ---------------------------- Option A: near-duplicate dedup
+
+
+async def test_add_embedding_dedup_skips_identical(session):
+    """Uploading the same vector twice must leave only one row."""
+    s = session
+    _, pet_id = await _make_user_and_pet(
+        s, phone="13800000094", pet_name="dup",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    vec = _unit_vec(11, dim)
+
+    first = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+    second = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+
+    # Same row returned (or at least: the DB has only one row).
+    assert first.id == second.id
+    from sqlalchemy import select as _select
+    count = (await s.execute(
+        _select(PetPhotoEmbedding).where(PetPhotoEmbedding.pet_id == pet_id)
+    )).scalars().all()
+    assert len(count) == 1
+
+
+async def test_add_embedding_dedup_upgrades_source(session):
+    """A ``USER_CORRECTED`` write against a matching older
+    ``USER_UPLOADED`` row must upgrade the existing row in-place."""
+    s = session
+    _, pet_id = await _make_user_and_pet(
+        s, phone="13800000095", pet_name="upgrade",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    vec = _unit_vec(13, dim)
+
+    first = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+    assert first.source == EmbeddingSource.USER_UPLOADED
+
+    second = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=42,
+        vector=vec, source=EmbeddingSource.USER_CORRECTED,
+    )
+    # Same row, upgraded source + filled-in photo_id.
+    assert second.id == first.id
+    assert second.source == EmbeddingSource.USER_CORRECTED
+    assert second.photo_id == 42
+
+
+async def test_add_embedding_dedup_does_not_downgrade_source(session):
+    """A ``USER_UPLOADED`` write against an existing ``USER_CORRECTED``
+    row must leave the stronger source intact."""
+    s = session
+    _, pet_id = await _make_user_and_pet(
+        s, phone="13800000096", pet_name="no_downgrade",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    vec = _unit_vec(14, dim)
+
+    first = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_CORRECTED,
+    )
+    second = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+
+    assert second.id == first.id
+    assert second.source == EmbeddingSource.USER_CORRECTED
+
+
+async def test_add_embedding_dedup_is_per_pet(session):
+    """Same vector for a different pet must NOT collapse — it's a
+    perfectly legitimate identity-ambiguity signal the caller may use
+    later to spot confused pet pairs."""
+    s = session
+    _, pet_a = await _make_user_and_pet(
+        s, phone="13800000097", pet_name="a",
+    )
+    _, pet_b = await _make_user_and_pet(
+        s, phone="13800000098", pet_name="b",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    vec = _unit_vec(15, dim)
+
+    row_a = await pet_centroid.add_embedding(
+        s, pet_id=pet_a, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+    row_b = await pet_centroid.add_embedding(
+        s, pet_id=pet_b, photo_id=None,
+        vector=vec, source=EmbeddingSource.USER_UPLOADED,
+    )
+    assert row_a.id != row_b.id
+
+
+async def test_add_embedding_inserts_new_when_below_dedup_threshold(session):
+    """Two sufficiently different vectors for the same pet must both
+    be inserted — dedup must not collapse distinct samples."""
+    s = session
+    _, pet_id = await _make_user_and_pet(
+        s, phone="13800000099", pet_name="distinct",
+    )
+    dim = settings.DASHSCOPE_EMBEDDING_DIMENSION
+    v1 = _unit_vec(0, dim)
+    v2 = _unit_vec(1, dim)  # orthogonal to v1 → sim = 0
+
+    row1 = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=v1, source=EmbeddingSource.USER_UPLOADED,
+    )
+    row2 = await pet_centroid.add_embedding(
+        s, pet_id=pet_id, photo_id=None,
+        vector=v2, source=EmbeddingSource.USER_UPLOADED,
+    )
+    assert row1.id != row2.id

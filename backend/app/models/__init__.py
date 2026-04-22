@@ -7,6 +7,7 @@ from app.models.vaccination import Vaccination
 from app.models.routine import Routine, RoutineType
 from app.models.voice_intake import VoiceIntakeLog, VoiceIntakeStatus
 from app.models.pet_photo_embedding import PetPhotoEmbedding, EmbeddingSource
+from app.models.classify_feedback import ClassifyFeedback
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "Routine", "RoutineType",
     "VoiceIntakeLog", "VoiceIntakeStatus",
     "PetPhotoEmbedding", "EmbeddingSource",
+    "ClassifyFeedback",
 ]

@@ -30,6 +30,7 @@ from app.services.embedding import EmbeddingUnavailableError, embed_image
 from app.services.image_recognition import recognize_pet
 from app.services.pet import get_pet_membership
 from app.services.pet_centroid import add_embedding
+from app.services.classify_feedback import record_correction
 from app.utils.time import utcnow
 from app.services.storage import (
     adelete_photo_objects,
@@ -58,6 +59,72 @@ MAX_FILES_PER_UPLOAD = 5
 # "corrected" means the user overrode the model's guess, which we
 # promote to a stronger bootstrap signal when backfilling embeddings.
 _ALLOWED_CLASSIFY_SOURCES = {"auto", "corrected"}
+
+
+def _parse_previous_pet_ids(
+    raw: list[str] | None, file_count: int,
+) -> list[int | None]:
+    """Parse the optional per-file ``previous_pet_id`` Form field.
+
+    Each entry records *what the classify endpoint originally suggested*
+    for that file — ``None`` if the model gave no suggestion, or an
+    integer pet id otherwise. Accepts "", "null" or a missing list as
+    "no suggestion". Old clients that don't send the field at all get
+    an all-``None`` list, which makes feedback rows still insertable
+    (they'll just carry no ``from_pet_id``).
+    """
+    if not raw:
+        return [None] * file_count
+    if len(raw) != file_count:
+        raise AppException(
+            400, "PREVIOUS_PET_ID_MISMATCH",
+            "previous_pet_id 数量必须与照片数量一致",
+        )
+    out: list[int | None] = []
+    for v in raw:
+        v_norm = (v or "").strip().lower()
+        if v_norm in ("", "null", "none"):
+            out.append(None)
+            continue
+        try:
+            out.append(int(v_norm))
+        except ValueError:
+            raise AppException(
+                400, "PREVIOUS_PET_ID_INVALID",
+                f"无效的 previous_pet_id：{v!r}",
+            )
+    return out
+
+
+def _parse_previous_similarities(
+    raw: list[str] | None, file_count: int,
+) -> list[float | None]:
+    """Parse the optional per-file ``previous_top1_similarity`` field.
+
+    Mirrors ``_parse_previous_pet_ids`` — empty / "null" ⇒ unknown.
+    Any non-parseable float is rejected to surface client bugs early.
+    """
+    if not raw:
+        return [None] * file_count
+    if len(raw) != file_count:
+        raise AppException(
+            400, "PREVIOUS_SIMILARITY_MISMATCH",
+            "previous_top1_similarity 数量必须与照片数量一致",
+        )
+    out: list[float | None] = []
+    for v in raw:
+        v_norm = (v or "").strip().lower()
+        if v_norm in ("", "null", "none"):
+            out.append(None)
+            continue
+        try:
+            out.append(float(v_norm))
+        except ValueError:
+            raise AppException(
+                400, "PREVIOUS_SIMILARITY_INVALID",
+                f"无效的 previous_top1_similarity：{v!r}",
+            )
+    return out
 
 
 def _parse_classify_sources(
@@ -169,6 +236,15 @@ async def upload_photos(
     # correction ("corrected"). Defaults to "auto" for pre-Step-3
     # clients. Used only to tag the backfilled embedding.
     classify_source: list[str] = Form(default_factory=list),
+    # Phase 2 Step 3 Option A: per-file feedback metadata. When the chip
+    # was corrected by the user, the frontend passes what the classify
+    # endpoint had *originally* suggested so we can log the (from → to)
+    # pair. ``""`` / ``"null"`` mean "model gave no suggestion".
+    previous_pet_id: list[str] = Form(default_factory=list),
+    # Top-1 similarity the classify endpoint reported for
+    # ``previous_pet_id`` at suggestion time — purely diagnostic, used
+    # for future threshold re-tuning. Missing / "null" allowed.
+    previous_top1_similarity: list[str] = Form(default_factory=list),
     db: AsyncSession = Depends(get_db),
     user_id: int = Depends(get_current_user_id),
 ):
@@ -184,6 +260,10 @@ async def upload_photos(
         raise AppException(400, "TAKEN_AT_MISMATCH", "拍摄日期数量必须与照片数量一致")
 
     embedding_sources = _parse_classify_sources(classify_source, len(files))
+    previous_pet_ids = _parse_previous_pet_ids(previous_pet_id, len(files))
+    previous_similarities = _parse_previous_similarities(
+        previous_top1_similarity, len(files),
+    )
 
     parsed_dates: list[date] = []
     for ta in taken_at:
@@ -311,6 +391,29 @@ async def upload_photos(
             data_by_idx[result.idx],
             embedding_sources[result.idx],
         ))
+
+        # Option A: structured feedback log on every user correction.
+        # We only write a row when the chip was explicitly corrected —
+        # "auto" means the user didn't override the model, so there's
+        # no (from, to) pair worth recording. ``from_pet_id`` may still
+        # be NULL if the model offered no suggestion to begin with.
+        if embedding_sources[result.idx] == EmbeddingSource.USER_CORRECTED:
+            try:
+                await record_correction(
+                    db,
+                    user_id=user_id,
+                    from_pet_id=previous_pet_ids[result.idx],
+                    to_pet_id=pet_id,
+                    photo_id=photo.id,
+                    top1_similarity=previous_similarities[result.idx],
+                )
+            except Exception as e:
+                # Feedback logging is best-effort — a failure here must
+                # not reject the user's photo. Log and continue.
+                logger.warning(
+                    "classify feedback insert failed photo=%s: %s",
+                    photo.id, e,
+                )
 
     if successes:
         await db.commit()
