@@ -49,6 +49,33 @@ class EmbeddingUnavailableError(RuntimeError):
     """DashScope embedding upstream is unreachable / over-quota / malformed."""
 
 
+# Global concurrency gate on the DashScope SDK call path. The SDK is
+# blocking and is dispatched via ``asyncio.to_thread``; without this
+# gate a 5-photo classify burst + 5-photo upload backfill can pin up
+# to 10 threads at once, starving everything else in the process
+# (see 2026-04-22 root-cause: upload progress bar crawling while
+# classify runs in parallel).
+#
+# Created lazily because ``asyncio.Semaphore`` binds to the running
+# event loop at construction time — building it at module import would
+# attach it to whatever loop FastAPI happened to have around (often a
+# loop that gets replaced during test setup, surfacing as the
+# ``got Future <Future pending> attached to a different loop`` error).
+# Lazy construction per loop sidesteps that entirely.
+_dashscope_semaphores: dict[int, asyncio.Semaphore] = {}
+
+
+def _get_dashscope_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_event_loop()
+    key = id(loop)
+    sem = _dashscope_semaphores.get(key)
+    if sem is None:
+        limit = max(1, int(settings.DASHSCOPE_EMBEDDING_CONCURRENCY))
+        sem = asyncio.Semaphore(limit)
+        _dashscope_semaphores[key] = sem
+    return sem
+
+
 # Long-side compression target. Singapore-region
 # `tongyi-embedding-vision-plus` accepts images up to 3 MB; 512 px JPEG-85
 # lands at ~70 KB and empirically preserves the features that separate
@@ -183,25 +210,35 @@ async def embed_image(image_bytes: bytes) -> list[float]:
     data_uri = await asyncio.to_thread(_compress_to_data_uri, image_bytes)
 
     last_err: EmbeddingUnavailableError | None = None
+    sem = _get_dashscope_semaphore()
     for region in regions:
-        t0 = time.perf_counter()
-        try:
-            vec = await asyncio.to_thread(_call_dashscope_sync, data_uri, region)
-        except EmbeddingUnavailableError as e:
+        # Wait time inside the semaphore is tracked separately so slow
+        # p99 calls don't silently bloat the "elapsed" metric the
+        # caller monitors for upstream health. Useful when diagnosing
+        # "is DashScope slow or are we just queued?".
+        t_wait = time.perf_counter()
+        async with sem:
+            wait_s = time.perf_counter() - t_wait
+            t0 = time.perf_counter()
+            try:
+                vec = await asyncio.to_thread(
+                    _call_dashscope_sync, data_uri, region,
+                )
+            except EmbeddingUnavailableError as e:
+                dt = time.perf_counter() - t0
+                logger.info(
+                    "embedding region=%s wait=%.2fs elapsed=%.2fs failed: %s",
+                    region.label, wait_s, dt, e,
+                )
+                last_err = e
+                continue
+
             dt = time.perf_counter() - t0
             logger.info(
-                "embedding region=%s elapsed=%.2fs failed: %s",
-                region.label, dt, e,
+                "embedding region=%s wait=%.2fs elapsed=%.2fs ok dim=%d",
+                region.label, wait_s, dt, len(vec),
             )
-            last_err = e
-            continue
-
-        dt = time.perf_counter() - t0
-        logger.info(
-            "embedding region=%s elapsed=%.2fs ok dim=%d",
-            region.label, dt, len(vec),
-        )
-        return vec
+            return vec
 
     assert last_err is not None  # loop guarantees at least one attempt
     raise last_err

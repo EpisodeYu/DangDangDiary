@@ -129,6 +129,7 @@ The phone client **only** talks to Nginx. Internal service addresses (`minio:900
 | `docs/phase2-step2-voice-intake.md` | Phase 2: long-press voice → STT + Tongyi LLM intent extract → record drafts |
 | `docs/phase2-step3-photo-auto-assign.md` | Phase 2: auto-classify uploaded photos to a pet via DashScope multimodal embedding + pgvector |
 | `docs/phase2-step4-logo-splash.md` | Phase 2: brand Logo assets, Splash screen animation, AppBar / loading brand reuse |
+| `docs/future-async-task-queue.md` | Future optimization: offload `_backfill_embedding` (and other slow work) to an async task queue (arq/Celery). Not scheduled. |
 | `docs/API_docs/` | Third-party API reference (Aliyun SMS, scene recognition) |
 
 If a step doc conflicts with `00-global-rules.md`, the step doc takes precedence only when it is more specific and does not contradict a global rule.

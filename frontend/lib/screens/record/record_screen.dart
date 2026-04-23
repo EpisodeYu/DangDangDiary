@@ -68,6 +68,13 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   final ValueNotifier<bool> _isServerProcessing = ValueNotifier(false);
   Map<int, String> _failureMessages = {};
 
+  // Token for the in-flight `/photos/classify` request, if any. We
+  // cancel it when the user hits "记录完成" so the pending soft-guess
+  // stops competing with the upload for server-side DashScope + thread
+  // pool capacity (see root-cause analysis 2026-04-22). ``null`` when
+  // no classify is running.
+  CancelToken? _classifyCancelToken;
+
   // Phase 2 Step 2 — voice intake.
   bool _voiceProcessing = false;
 
@@ -77,6 +84,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   @override
   void dispose() {
+    // Abort any still-in-flight classify so we don't leak a pending
+    // DashScope call after the screen is gone.
+    _classifyCancelToken?.cancel('record_screen disposed');
+    _classifyCancelToken = null;
     _uploadProgress.dispose();
     _isServerProcessing.dispose();
     super.dispose();
@@ -674,14 +685,24 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   /// Run "unawaited" so the picker UI doesn't sit blocking on the
   /// network; all state updates re-check [mounted] because users can
   /// leave the page mid-flight.
+  ///
+  /// Registers a fresh [CancelToken] in [_classifyCancelToken]. If a
+  /// previous classify is still in flight (user added another batch
+  /// before the first one responded) we cancel it first so the two
+  /// don't stack on the server. [_submit] also cancels via the same
+  /// handle right before the upload starts.
   void _runClassifyAssignment({
     required int baseIdx,
     required List<File> files,
   }) {
+    _classifyCancelToken?.cancel('superseded by newer classify');
+    final token = CancelToken();
+    _classifyCancelToken = token;
+
     unawaited(() async {
       try {
         final service = ref.read(_classifyServiceProvider);
-        final results = await service.classify(files);
+        final results = await service.classify(files, cancelToken: token);
         if (!mounted) return;
 
         setState(() {
@@ -712,11 +733,29 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             _wasAutoAssigned[absIdx] = r.petId != null;
           }
         });
+      } on DioException catch (e) {
+        // Cancellation is an expected outcome — either _submit() ran
+        // or a newer classify replaced us. Keep the UI quiet; the
+        // "识别中" flag is cleared below on any exit path so the chip
+        // never spins forever.
+        if (e.type != DioExceptionType.cancel) {
+          // ClassifyService already printed a one-liner summary for
+          // real transport faults, so nothing more to say here.
+        }
+        if (!mounted) return;
+        setState(() {
+          for (int i = 0; i < files.length; i++) {
+            final absIdx = baseIdx + i;
+            if (absIdx >= _isRecognizing.length) continue;
+            if (absIdx < _userPicked.length && _userPicked[absIdx]) continue;
+            _isRecognizing[absIdx] = false;
+            if (e.type != DioExceptionType.cancel) {
+              _wasAutoAssigned[absIdx] = false;
+            }
+          }
+        });
       } catch (_) {
-        // ClassifyService already emits a one-line DioException summary
-        // (`[classify] POST fail …`) before rethrowing, so here we just
-        // restore UI state. The call is best-effort: when it fails the
-        // chip drops back to "点击选择" and the user picks manually.
+        // Defensive: any non-Dio error still has to settle the UI.
         if (!mounted) return;
         setState(() {
           for (int i = 0; i < files.length; i++) {
@@ -727,6 +766,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             _wasAutoAssigned[absIdx] = false;
           }
         });
+      } finally {
+        // Only clear the field if nobody else has replaced it already.
+        if (identical(_classifyCancelToken, token)) {
+          _classifyCancelToken = null;
+        }
       }
     }());
   }
@@ -844,9 +888,24 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       groups.putIfAbsent(pid, () => []).add(i);
     }
 
+    // Abort any still-running classify *before* the upload starts.
+    // Each classify request occupies one DashScope thread per file on
+    // the server; leaving 5 of them in flight while the upload POST
+    // is trying to land caused the "progress bar crawls / 上传完停顿"
+    // symptoms we debugged on 2026-04-22. The user has already chosen
+    // a pet per photo by this point, so the pending soft-guess has
+    // no remaining value.
+    _classifyCancelToken?.cancel('upload starts');
+    _classifyCancelToken = null;
+
     setState(() {
       _isUploading = true;
       _failureMessages = {};
+      // Clear any leftover "识别中" spinner rows so the upload dialog
+      // isn't rendered behind a stale chip spinner.
+      for (int i = 0; i < _isRecognizing.length; i++) {
+        _isRecognizing[i] = false;
+      }
     });
     _uploadProgress.value = 0;
     _isServerProcessing.value = false;

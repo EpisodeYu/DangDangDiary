@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dangdang_diary/app.dart';
 import 'package:dangdang_diary/config/router.dart';
+import 'package:dangdang_diary/providers/auth_provider.dart';
 import 'package:dangdang_diary/widgets/main_scaffold.dart';
 
 /// Minimal router used in tests to bypass the production auth-guarded
@@ -51,6 +52,10 @@ void main() {
       ProviderScope(
         overrides: [
           routerProvider.overrideWith((ref) => _buildTestRouter()),
+          // Keep auth in AuthStatus.unknown so _AppLifecycleHost never fires
+          // the lifecycle side-effects (notification scheduling / cancel)
+          // that require a real FlutterLocalNotifications plugin.
+          authProvider.overrideWith((ref) => AuthNotifier(autoCheck: false)),
         ],
         child: const DangDangDiaryApp(),
       ),

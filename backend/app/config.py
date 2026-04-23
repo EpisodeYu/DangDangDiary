@@ -98,6 +98,25 @@ class Settings(BaseSettings):
     VOICE_AUDIO_TTL_HOURS: int = 24
     MINIO_BUCKET_VOICE_INTAKE: str = "voice-intake"
 
+    # --- Shared concurrency guards ---
+    #
+    # Default cap on simultaneous DashScope multi-modal embedding calls
+    # in-flight on the backend. Set to ~3× expected p50 latency ratio
+    # (DashScope p50 ≈ 0.8s, upload response expected ≈ 2s) so a 5-photo
+    # classify batch doesn't starve the rest of the request path by
+    # occupying 5 threadpool threads at once. Tunable per deployment
+    # via `.env` — raise it on bigger boxes, lower it under DashScope
+    # rate-limiting.
+    DASHSCOPE_EMBEDDING_CONCURRENCY: int = 3
+
+    # Explicit cap on the default asyncio thread pool used by
+    # `asyncio.to_thread(...)`. Python's default is
+    # `min(32, cpu_count + 4)`, which on a 2-core VPS is only 6 — one
+    # 5-photo classify burst plus a concurrent 5-photo backfill already
+    # saturates it. Setting this at startup keeps thread availability
+    # decoupled from the host's CPU count.
+    THREAD_POOL_SIZE: int = 32
+
     # --- Phase 2 Step 3: photo auto-assign (DashScope multi-modal embedding) ---
     #
     # Runs against the Singapore region of DashScope for the same TLS

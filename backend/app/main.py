@@ -1,4 +1,6 @@
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -28,6 +30,24 @@ async def lifespan(app: FastAPI):
     from app.utils.production_check import assert_production_safe
 
     assert_production_safe(settings)
+
+    # Explicitly size the default asyncio thread pool. Python's default
+    # is `min(32, os.cpu_count() + 4)` which on a 2-core VPS is 6 — a
+    # single 5-photo classify burst plus a concurrent 5-photo upload
+    # backfill already saturates it, which manifests to the phone as
+    # the upload progress bar crawling (see 2026-04-22 root-cause).
+    # Every `asyncio.to_thread(...)` call in the codebase (DashScope,
+    # MinIO, PIL, aliyun-sdk) shares this pool.
+    loop = asyncio.get_running_loop()
+    pool_size = max(1, int(settings.THREAD_POOL_SIZE))
+    loop.set_default_executor(ThreadPoolExecutor(
+        max_workers=pool_size,
+        thread_name_prefix="dd-io",
+    ))
+    logging.getLogger(__name__).info(
+        "thread pool initialized size=%d", pool_size,
+    )
+
     await init_redis()
     # Pre-create MinIO buckets once at startup so request-time paths can
     # skip `_ensure_bucket` entirely. (Step 8 §1.2 storage P1 / Chunk B-5)

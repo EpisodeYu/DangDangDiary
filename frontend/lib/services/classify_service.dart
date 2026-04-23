@@ -95,7 +95,17 @@ class ClassifyService {
   /// thumbnail lands at ~30–80 KB). The embedding service resizes to
   /// 512 px server-side regardless, so the extra bytes only pay for
   /// mobile-uplink time.
-  Future<List<ClassifyResult>> classify(List<File> files) async {
+  ///
+  /// Pass [cancelToken] to abort an in-flight request — the record
+  /// screen does this on "记录完成" so the pending classify never
+  /// competes with the actual upload for DashScope + thread-pool
+  /// capacity on the server. Cancellation surfaces as a
+  /// [DioException] with ``type == DioExceptionType.cancel`` which the
+  /// caller is expected to swallow silently.
+  Future<List<ClassifyResult>> classify(
+    List<File> files, {
+    CancelToken? cancelToken,
+  }) async {
     if (files.isEmpty) return const <ClassifyResult>[];
 
     // Pre-compress all thumbnails once; the retry reuses the same
@@ -116,9 +126,12 @@ class ClassifyService {
     }
 
     try {
-      return await _postOnce(parts);
+      return await _postOnce(parts, cancelToken: cancelToken);
     } on DioException catch (e) {
       if (!_isRetryable(e)) rethrow;
+      // Cancellation must never be retried — the whole point is to
+      // stop paying for a request the user no longer needs.
+      if (e.type == DioExceptionType.cancel) rethrow;
       // One retry on any transport-level failure. The dedicated
       // HttpClient guarantees the second attempt uses a fresh TCP
       // connection (the first one has already been torn down by
@@ -126,11 +139,14 @@ class ClassifyService {
       // what rescues the NAT-stale-pool scenario this service was
       // built for.
       debugPrint('[classify] retry after ${e.type}');
-      return await _postOnce(parts);
+      return await _postOnce(parts, cancelToken: cancelToken);
     }
   }
 
-  Future<List<ClassifyResult>> _postOnce(List<_Part> parts) async {
+  Future<List<ClassifyResult>> _postOnce(
+    List<_Part> parts, {
+    CancelToken? cancelToken,
+  }) async {
     final fd = FormData();
     for (final p in parts) {
       fd.files.add(MapEntry('files', p.build()));
@@ -140,6 +156,7 @@ class ClassifyService {
       final resp = await _dio.post(
         '/photos/classify',
         data: fd,
+        cancelToken: cancelToken,
         options: Options(
           // `Connection: close` tells dart:io to tear the socket down
           // after the response finishes. Belt-and-suspenders with the
@@ -150,6 +167,10 @@ class ClassifyService {
       final list = (resp.data['results'] as List).cast<Map<String, dynamic>>();
       return list.map(ClassifyResult.fromJson).toList();
     } on DioException catch (e) {
+      // Cancellation is an expected outcome (user hit "记录完成" before
+      // the soft-guess came back), not a failure mode worth logging as
+      // noisily as a real network fault.
+      if (e.type == DioExceptionType.cancel) rethrow;
       // Keep a one-line failure log so we can still diagnose if the
       // hazard comes back in a new guise.
       debugPrint(
