@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../models/health.dart';
 import '../providers/auth_provider.dart';
+import '../screens/splash/splash_screen.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/record/record_screen.dart';
 import '../screens/health/health_screen.dart';
@@ -34,21 +35,30 @@ final routerProvider = Provider<GoRouter>((ref) {
 
   return GoRouter(
     navigatorKey: _rootNavigatorKey,
-    initialLocation: '/record',
-    refreshListenable: notifier,
-    redirect: (context, state) {
-      final auth = ref.read(authProvider);
-      final isLoggedIn = auth.status == AuthStatus.authenticated;
-      final isLoading = auth.status == AuthStatus.unknown;
-      final onLogin = state.matchedLocation == '/login';
+  initialLocation: '/splash',
+  refreshListenable: notifier,
+  redirect: (context, state) {
+    final auth = ref.read(authProvider);
+    final isLoggedIn = auth.status == AuthStatus.authenticated;
+    final isLoading = auth.status == AuthStatus.unknown;
+    final loc = state.matchedLocation;
+    final onSplash = loc == '/splash';
+    final onLogin = loc == '/login';
 
-      if (isLoading) return onLogin ? null : '/login';
-      if (!isLoggedIn && !onLogin) return '/login';
-      if (isLoggedIn && onLogin) return '/record';
-      return null;
-    },
-    routes: [
-      GoRoute(
+    if (onSplash) return null;
+
+    if (isLoading) return '/splash';
+    if (!isLoggedIn && !onLogin) return '/login';
+    if (isLoggedIn && onLogin) return '/record';
+    return null;
+  },
+  routes: [
+    GoRoute(
+      path: '/splash',
+      parentNavigatorKey: _rootNavigatorKey,
+      builder: (context, state) => const SplashScreen(),
+    ),
+    GoRoute(
         path: '/login',
         builder: (context, state) => const LoginScreen(),
       ),
