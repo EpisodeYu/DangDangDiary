@@ -10,6 +10,7 @@ import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
 import '../../services/original_photo_cache.dart';
 import '../../services/photo_service.dart';
+import '../../widgets/brand_mark.dart';
 import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/photo_grid_tile.dart';
@@ -448,8 +449,12 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     TimelineViewMode viewMode,
   ) {
     return AppBar(
-      titleSpacing: 16,
+      titleSpacing: 0,
       centerTitle: false,
+      leading: const Padding(
+        padding: EdgeInsets.only(left: 16),
+        child: Center(child: BrandMark(size: 22)),
+      ),
       title: Row(
         children: [
           PetSelector(

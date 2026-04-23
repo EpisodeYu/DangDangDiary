@@ -23,6 +23,8 @@ import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
 import '../../services/voice_service.dart';
 import '../../utils/exif_helper.dart';
+import '../../widgets/brand_mark.dart';
+import '../../widgets/brand_pulse.dart';
 import '../../widgets/pet_chip_dropdown.dart';
 import '../../widgets/voice_intake_sheet.dart';
 import '../../widgets/voice_record_button.dart';
@@ -118,6 +120,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       appBar: AppBar(
         titleSpacing: 16,
         centerTitle: true,
+        leading: const Padding(
+          padding: EdgeInsets.only(left: 16),
+          child: Center(child: BrandMark(size: 22)),
+        ),
         title: const Text(
           '记录',
           style: TextStyle(
@@ -785,11 +791,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           content: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              BrandPulse(size: 24),
               SizedBox(width: 12),
               Text('正在识别照片...'),
             ],
