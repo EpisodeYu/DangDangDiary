@@ -23,7 +23,6 @@ import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
 import '../../services/voice_service.dart';
 import '../../utils/exif_helper.dart';
-import '../../widgets/brand_mark.dart';
 import '../../widgets/brand_pulse.dart';
 import '../../widgets/pet_chip_dropdown.dart';
 import '../../widgets/voice_intake_sheet.dart';
@@ -120,10 +119,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       appBar: AppBar(
         titleSpacing: 16,
         centerTitle: true,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 16),
-          child: Center(child: BrandMark(size: 22)),
-        ),
+        automaticallyImplyLeading: false,
         title: const Text(
           '记录',
           style: TextStyle(

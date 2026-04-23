@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
 import '../../providers/pet_provider.dart';
-import '../../widgets/brand_mark.dart';
 import '../../widgets/pet_selector.dart';
 import 'deworming_tab.dart';
 import 'routine_tab.dart';
@@ -53,12 +52,9 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
 
     return Scaffold(
       appBar: AppBar(
-        titleSpacing: 0,
+        titleSpacing: 16,
         centerTitle: false,
-        leading: const Padding(
-          padding: EdgeInsets.only(left: 16),
-          child: Center(child: BrandMark(size: 22)),
-        ),
+        automaticallyImplyLeading: false,
         title: Row(
           children: [
             PetSelector(
