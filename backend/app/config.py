@@ -69,20 +69,18 @@ class Settings(BaseSettings):
     #
     # Root cause: TLS handshake Tokyo→dashscope.aliyuncs.com ≈ 3.2s
     # vs Tokyo→dashscope-intl.aliyuncs.com ≈ 0.08s (40× difference).
-    # STT therefore uses the Singapore region + fun-asr by default,
-    # falling back to the Beijing key + paraformer-v1 if the SG key is
-    # not configured. LLM and embedding still default to the Beijing
-    # key since qwen-plus / multimodal-embedding-v1 pricing & quota
-    # live there and the OpenAI-compatible endpoint for LLM is less
-    # latency-sensitive.
-    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM/embedding fallback + STT fallback)
-    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (preferred for STT + LLM)
+    # STT therefore prefers the Singapore region (WebSocket streaming
+    # with fun-asr-realtime — see `app/services/stt.py` for the 2026-
+    # 04-23 re-benchmark that motivated dropping the async `fun-asr`
+    # path). LLM and embedding still default to the Beijing key since
+    # qwen-plus / multimodal-embedding-v1 pricing & quota live there.
+    # STT endpoints / model names are hard-coded in stt.py because the
+    # primary path is WebSocket-only (ws://...) while the fallback is
+    # HTTP-only (https://...) — not interchangeable via a single knob.
+    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM fallback + embedding + STT fallback)
+    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (STT primary + LLM primary)
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_BASE_URL_SAG: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    DASHSCOPE_STT_BASE_URL: str = "https://dashscope-intl.aliyuncs.com/api/v1"
-    DASHSCOPE_STT_FALLBACK_BASE_URL: str = "https://dashscope.aliyuncs.com/api/v1"
-    DASHSCOPE_STT_MODEL: str = "fun-asr"                # Singapore region
-    DASHSCOPE_STT_FALLBACK_MODEL: str = "paraformer-v1"  # Beijing region
     # LLM: measured 2026-04-21 on the Singapore region — qwen-plus p50
     # 2.32s / p90 2.51s with zero auth/retry errors and 100% field
     # accuracy on the voice-intake golden set; Beijing p50 ~4.4s / max

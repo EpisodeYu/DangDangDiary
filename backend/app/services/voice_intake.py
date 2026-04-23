@@ -391,8 +391,16 @@ async def intake(
         )
 
     # ---------- STT ----------
+    # Primary path (SG fun-asr-realtime WebSocket) streams the raw
+    # audio bytes; fallback (BJ paraformer-v1 async-file) reaches for
+    # the MinIO presigned URL. Keep both handy so `stt.transcribe` can
+    # pick whichever path works without bouncing back up here.
     try:
-        transcript = await stt_transcribe(audio_url)
+        transcript = await stt_transcribe(
+            audio_bytes=data,
+            mime=mime,
+            audio_url=audio_url,
+        )
     except _stt.SttUnavailableError as e:
         logger.info("stt failed: %s", e)
         response = VoiceIntakeResponse(
@@ -566,8 +574,17 @@ async def _persist_log(
 
 
 # Indirection so tests can monkeypatch without touching openai/dashscope.
-async def stt_transcribe(audio_url: str) -> str:
-    return await _stt.transcribe(audio_url)
+async def stt_transcribe(
+    *,
+    audio_bytes: bytes,
+    mime: str,
+    audio_url: str,
+) -> str:
+    return await _stt.transcribe(
+        audio_bytes=audio_bytes,
+        mime=mime,
+        audio_url=audio_url,
+    )
 
 
 async def llm_extract_intent(

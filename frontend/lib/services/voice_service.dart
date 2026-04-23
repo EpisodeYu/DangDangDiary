@@ -21,18 +21,21 @@ class VoiceService {
       'audio_file': await MultipartFile.fromFile(
         audioFile.path,
         filename: 'clip.wav',
-        // We record 16kHz mono PCM wav because DashScope paraformer-
-        // realtime-v2 does not accept the m4a/mp4 container.
+        // We record 16kHz mono PCM wav because the server's primary
+        // STT path (DashScope `fun-asr-realtime` over WebSocket) expects
+        // the raw bytes to be parseable as 16-bit mono PCM — other
+        // formats silently fall through to the slower async-file
+        // fallback. See `backend/app/services/stt.py`.
         contentType: _wavMediaType(),
       ),
       'client_request_id': clientRequestId,
       'default_pet_id': ?defaultPetId,
     });
 
-    // Backend uses DashScope async file-transcription (paraformer-v1),
-    // which settles in ~3-5s for a 30s clip plus a few seconds of LLM
-    // intent extraction. 30s of receive gives plenty of headroom without
-    // letting a stuck upstream hold the UI hostage.
+    // Backend benchmark on 2026-04-23 (3.1s clip × N=10) shows the
+    // realtime WS path at p50 1.3s / p90 1.6s, plus ~2.5s LLM intent
+    // extraction. 30s of receive still leaves plenty of headroom for
+    // the async-file fallback (~5-12s) if SG WS is unreachable.
     final resp = await _dio.post(
       '/voice/intake',
       data: form,
