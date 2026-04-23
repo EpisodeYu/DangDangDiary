@@ -148,8 +148,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
     return Column(
       children: [
-        Expanded(child: body),
-        _buildVoiceBar(),
+        Expanded(flex: 4, child: body),
+        Expanded(flex: 1, child: _buildVoiceBar()),
       ],
     );
   }
@@ -159,6 +159,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     // requests fighting over the progress HUD + cache bookkeeping.
     final disabled = _isUploading || _voiceProcessing;
     return Container(
+      width: double.infinity,
       padding: EdgeInsets.fromLTRB(
           16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
       decoration: BoxDecoration(
@@ -171,22 +172,32 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           ),
         ],
       ),
-      child: Stack(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          VoiceRecordButton(
-            enabled: !disabled,
-            onRecordComplete: _handleVoiceClipReady,
-          ),
-          if (_voiceProcessing)
-            const Positioned.fill(
-              child: Center(
-                child: SizedBox(
-                  width: 22,
-                  height: 22,
+          Stack(
+            alignment: Alignment.center,
+            children: [
+              VoiceRecordButton(
+                enabled: !disabled,
+                onRecordComplete: _handleVoiceClipReady,
+              ),
+              if (_voiceProcessing)
+                const SizedBox(
+                  width: 28,
+                  height: 28,
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 ),
-              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '试试按住说话记录宠物动态吧！',
+            style: TextStyle(
+              fontSize: 13,
+              color: AppTheme.textSecondary,
             ),
+          ),
         ],
       ),
     );

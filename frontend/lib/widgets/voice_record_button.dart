@@ -98,45 +98,42 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
     final color = _recording
         ? (_willCancel ? AppTheme.errorColor : AppTheme.primaryColor)
         : (disabled ? Colors.grey.shade300 : AppTheme.primaryColor);
-    final label = _recording
-        ? (_willCancel ? '松开取消' : '松开发送')
-        : '按住说话';
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 120),
-      width: double.infinity,
-      height: 56,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: _recording
-            ? [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.35),
-                  blurRadius: 18,
-                  spreadRadius: 2,
-                ),
-              ]
-            : null,
-      ),
-      alignment: Alignment.center,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            _recording ? Icons.mic : Icons.mic_none,
-            color: Colors.white,
-            size: 22,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
+    const double diameter = 88;
+    return Semantics(
+      button: true,
+      enabled: !disabled,
+      label: _recording
+          ? (_willCancel ? '松开取消录音' : '松开发送录音')
+          : '按住说话',
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        width: diameter,
+        height: diameter,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          boxShadow: _recording
+              ? [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.35),
+                    blurRadius: 22,
+                    spreadRadius: 3,
+                  ),
+                ]
+              : [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.18),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+        ),
+        alignment: Alignment.center,
+        child: Icon(
+          _recording ? Icons.mic : Icons.mic_none,
+          color: Colors.white,
+          size: 36,
+        ),
       ),
     );
   }
