@@ -37,13 +37,18 @@ class SttUnavailableError(RuntimeError):
     """DashScope STT 暂不可用（上游 5xx / 网络 / SDK 异常 / 空文本）。"""
 
 
-# Per-clip hard cap. DashScope's async transcription normally settles in
-# a few seconds on the Singapore region (p90 ~4.3s) but can queue;
-# beyond this we'd rather fail fast and let the user retry than sit on
-# the socket. Bumped slightly for the Beijing fallback path, which is
-# the one with the long tail.
-_SG_WAIT_TIMEOUT_SECONDS = 15
-_BJ_WAIT_TIMEOUT_SECONDS = 25
+# Per-clip hard cap, enforced on OUR side via `asyncio.wait_for`. The
+# DashScope SDK's `Transcription.wait` signature accepts **kwargs but
+# *ignores* any `timeout` we pass — internally it polls
+# `task_status` with a 1→5s exponential backoff until the task hits a
+# terminal state, with no upper bound. Benchmark on 2026-04-21 put SG
+# p90 at 4.3s, but a production incident on 2026-04-23 observed a
+# single clip blocked for 148s on a DashScope queue hiccup while we
+# held the client socket open. Budgets here must fit comfortably under
+# the Flutter client's 30s `receiveTimeout` even in the worst case
+# (SG timeout → BJ timeout → return 503).
+_SG_WAIT_TIMEOUT_SECONDS = 12
+_BJ_WAIT_TIMEOUT_SECONDS = 12
 
 
 @dataclass(frozen=True)
@@ -122,7 +127,10 @@ def _submit_and_wait(file_url: str, region: _Region) -> dict:
         raise SttUnavailableError("no task_id in submit response")
 
     try:
-        result = Transcription.wait(task=task_id, timeout=region.wait_timeout)
+        # NOTE: `Transcription.wait` does NOT accept a timeout — any
+        # kwarg passed here is dropped. Deadline enforcement happens
+        # in the async caller via `asyncio.wait_for`.
+        result = Transcription.wait(task=task_id)
     except Exception as e:
         logger.warning("dashscope stt wait exception (%s): %s", region.label, e)
         raise SttUnavailableError(str(e)) from e
@@ -214,7 +222,22 @@ async def transcribe(file_url: str) -> str:
     for region in regions:
         t0 = time.perf_counter()
         try:
-            text = await asyncio.to_thread(_transcribe_sync, file_url, region)
+            text = await asyncio.wait_for(
+                asyncio.to_thread(_transcribe_sync, file_url, region),
+                timeout=region.wait_timeout,
+            )
+        except asyncio.TimeoutError:
+            dt = time.perf_counter() - t0
+            # The worker thread keeps polling DashScope in the
+            # background — we can't cancel `asyncio.to_thread`. It
+            # exits on its own once the task settles; no resource we
+            # care about is leaked beyond that one thread slot.
+            logger.info(
+                "stt region=%s model=%s elapsed=%.2fs timed out",
+                region.label, region.model, dt,
+            )
+            last_error = SttUnavailableError(f"wait timeout after {region.wait_timeout}s")
+            continue
         except SttUnavailableError as e:
             dt = time.perf_counter() - t0
             logger.info(
