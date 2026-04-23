@@ -37,8 +37,8 @@
 
 | 文件 | 用途 | 规格 |
 |---|---|---|
-| `logo.svg` | Splash / 登录页主 Logo | 单文件矢量，宽高比 1:1，viewBox 512×512；色彩使用 `#FF8B6A`（主）+ `#3D3D3D`（暗部对比）+ 可选 `#FFC3A0`（辅） |
-| `logo_mono.svg` | AppBar / 加载态小 Logo | 单色（`currentColor` 填充，允许代码覆盖颜色），viewBox 同上 |
+| `logo.svg` | Splash / 登录页主 Logo | 单文件矢量，宽高比 1:1，viewBox 1024×1024； |
+| `logo_mono.svg` | AppBar / 加载态小 Logo | 单色（`currentColor` 填充，允许代码覆盖颜色），viewBox 1024×1024 |
 | `logo_1024.png` | 分享图 / App 市场 | 1024×1024 PNG 带透明通道，用于将来发布 |
 | `logo_512.png` | Android adaptive icon 前景 | 512×512 带透明 |
 | `logo_192.png` | 低端 Android 兼容 | 192×192 |
