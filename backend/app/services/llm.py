@@ -1,15 +1,17 @@
-"""DashScope LLM (qwen-plus) intent extractor.
+"""DashScope LLM (``qwen-flash`` by default) intent extractor.
 
 Talks to DashScope's OpenAI-compatible endpoint. Prefers the **Singapore**
 region (``dashscope-intl.aliyuncs.com``) with an automatic fallback to
 **Beijing** if the SG key isn't configured or the first call errors. See
-``docs/phase2-step2-voice-intake.md §0.5.2`` for the benchmark that
-motivated the region split (Tokyo→BJ TLS handshake ≈ 3.2s, SG ≈ 0.08s;
-qwen-plus p50 drops from 4.38s to 2.32s after the switch).
+``docs/phase2-step2-voice-intake.md §0.5.2`` for the benchmarks that
+motivated (a) the region split — Tokyo→BJ TLS handshake ≈ 3.2s, SG
+≈ 0.08s — and (b) the 2026-04-23 model switch from ``qwen-plus`` (p50
+2.30s) to ``qwen-flash`` (p50 1.07s) with 100% field accuracy retained.
 
-Keeping the HTTP client as ``openai.AsyncOpenAI`` lets us share auth
-plumbing with future multimodal embedding work (phase 2 step 3) that
-also points at ``compatible-mode/v1``.
+``AsyncOpenAI`` clients are lazy-cached per region (see ``_get_client``)
+so the cross-border TLS handshake only happens on the first request
+after a process restart — re-instantiating per request wastes 200-400ms
+on every voice intake.
 """
 from __future__ import annotations
 
@@ -33,6 +35,34 @@ class _Region:
     label: str
     api_key: str
     base_url: str
+
+
+# Lazy-cached `AsyncOpenAI` clients, keyed by `(api_key, base_url)`.
+#
+# The OpenAI SDK wraps `httpx.AsyncClient`, which in turn maintains a
+# persistent HTTP/2 connection pool. Re-instantiating per request
+# forces a fresh TCP + TLS handshake to `dashscope-intl.aliyuncs.com`
+# each time — measured at ~200-400ms from the Tokyo host, on the
+# critical path for every voice intake. Keeping one client per region
+# alive across requests amortises that cost down to effectively zero
+# once the pool is warm.
+#
+# Safe to share across coroutines: `AsyncOpenAI` / `httpx.AsyncClient`
+# are designed for concurrent use from a single asyncio event loop,
+# and the client is stateless beyond the connection pool. We never
+# tear it down explicitly (process exit drops the sockets).
+_client_cache: dict[tuple[str, str], Any] = {}
+
+
+def _get_client(region: _Region):  # type: ignore[no-untyped-def]
+    from openai import AsyncOpenAI
+
+    key = (region.api_key, region.base_url)
+    client = _client_cache.get(key)
+    if client is None:
+        client = AsyncOpenAI(api_key=region.api_key, base_url=region.base_url)
+        _client_cache[key] = client
+    return client
 
 
 def _regions_in_priority_order() -> list[_Region]:
@@ -151,7 +181,8 @@ async def extract_intent(
     default_pet_name: str | None = None,
     today: date | None = None,
 ) -> dict[str, Any]:
-    """Call qwen-plus in JSON mode and return the parsed dict.
+    """Call the configured LLM (default ``qwen-flash``) in JSON mode and
+    return the parsed dict.
 
     Raises `LlmUnavailableError` on network, non-200, or malformed JSON.
     The caller persists both the raw string (in voice_intake_logs.llm_raw)
@@ -171,7 +202,7 @@ async def extract_intent(
 
     # Import lazily so unit tests can patch without requiring the dep
     # installed on every runner.
-    from openai import AsyncOpenAI, OpenAIError
+    from openai import OpenAIError
 
     user_msg = _build_user_message(
         transcript,
@@ -182,7 +213,7 @@ async def extract_intent(
 
     last_error: LlmUnavailableError | None = None
     for region in regions:
-        client = AsyncOpenAI(api_key=region.api_key, base_url=region.base_url)
+        client = _get_client(region)
 
         try:
             resp = await client.chat.completions.create(

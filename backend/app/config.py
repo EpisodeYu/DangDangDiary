@@ -81,14 +81,17 @@ class Settings(BaseSettings):
     DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (STT primary + LLM primary)
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_BASE_URL_SAG: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    # LLM: measured 2026-04-21 on the Singapore region — qwen-plus p50
-    # 2.32s / p90 2.51s with zero auth/retry errors and 100% field
-    # accuracy on the voice-intake golden set; Beijing p50 ~4.4s / max
-    # 9.4s for the same model + prompt (TLS handshake Tokyo→BJ ≈ 3.2s,
-    # SG ≈ 0.08s). qwen-flash is 2× faster but has a stable template
-    # bug producing `3_days_ago:3` instead of `N_days_ago:3`; stick
-    # with qwen-plus until that's compensated for server-side.
-    TONGYI_MODEL: str = "qwen-plus"
+    # LLM: measured 2026-04-23 on the Singapore region via
+    # `backend/scripts/llm_bench.py` (N=3 × 6 golden cases):
+    #   - qwen-flash:  p50 1.07s / p90 1.86s / avg 1.48s — FIELD 100%*
+    #   - qwen-plus:   p50 2.30s / p90 2.56s / avg 2.34s — FIELD 100%
+    # (* qwen-flash's only benchmark "miss" is emitting absolute dates
+    # `2026-04-20` instead of `N_days_ago:3` — both normalise to the
+    # same `date` via `_parse_date`. The 2026-04-21 `3_days_ago:3`
+    # template bug is no longer reproducible on the current flash
+    # snapshot.) qwen-flash is therefore the new default; swap back to
+    # qwen-plus in `.env` if field accuracy regresses.
+    TONGYI_MODEL: str = "qwen-flash"
 
     # Voice intake hard limits (front/back both enforce)
     VOICE_INTAKE_MAX_SECONDS: int = 30

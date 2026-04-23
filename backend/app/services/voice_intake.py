@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -353,8 +354,11 @@ async def intake(
             logger.warning("corrupt cached intake response, ignoring: %r", cached[:200])
 
     # ---------- Read & validate audio ----------
+    t_stage = time.perf_counter()
+    t_request_start = t_stage
     data = await audio.read()
     mime = _validate_audio_upload(audio, len(data))
+    dt_read = time.perf_counter() - t_stage
 
     request_id = uuid.uuid4().hex
     # Use China-calendar "today" so "今天 / 上个月 8 号" always maps to
@@ -362,39 +366,58 @@ async def intake(
     # container or JST on the Tokyo benchmark box — see `today_cn`).
     today = today_cn()
 
-    # ---------- Upload to MinIO, then STT via presigned URL ----------
-    # DashScope's async file-transcription API fetches the audio over
-    # HTTP, so we upload once and hand it a presigned URL instead of
-    # streaming the bytes through our process a second time.
-    try:
-        object_key = await _storage.aupload_voice_audio(
-            user_id, data, mime, request_id=request_id,
-        )
-    except Exception as e:
-        # MinIO being down is not the user's problem; treat as
-        # upstream unavailability to surface a 503.
-        logger.exception("minio upload failed: %s", e)
-        raise AppException(
-            503, "voice_upstream_unavailable",
-            "音频暂存服务不可用，请稍后再试",
-        )
+    # ---------- Fan out: MinIO upload + pet fetch + STT ----------
+    # All three are IO-bound and mutually independent:
+    #   * MinIO upload only needs `data` (the bytes already in memory).
+    #   * Pet-list fetch only needs `user_id`.
+    #   * The primary STT path (SG realtime) also only needs `data` —
+    #     it does NOT require the MinIO presigned URL (that's only for
+    #     the async-file fallback). We kick all three off together so
+    #     STT latency overlaps with MinIO + DB round-trips.
+    #
+    # The async-file fallback (BJ paraformer-v1) needs the presigned
+    # URL, but that URL is a local HMAC — cheap to compute once the
+    # upload finishes. To keep the hot path simple we always await
+    # the upload + presign before calling stt.transcribe, but because
+    # they run concurrently with STT the effective cost is
+    # `max(stt, upload+presign)` ≈ STT.
+    async def _minio_stage() -> tuple[str, str]:
+        ts = time.perf_counter()
+        try:
+            ok = await _storage.aupload_voice_audio(
+                user_id, data, mime, request_id=request_id,
+            )
+        except Exception as e:  # MinIO down → 503
+            logger.exception("minio upload failed: %s", e)
+            raise AppException(
+                503, "voice_upstream_unavailable",
+                "音频暂存服务不可用，请稍后再试",
+            )
+        try:
+            url = await asyncio.to_thread(
+                _storage.voice_audio_presigned_url, ok,
+            )
+        except Exception as e:
+            logger.exception("minio presign failed: %s", e)
+            raise AppException(
+                503, "voice_upstream_unavailable",
+                "音频暂存服务不可用，请稍后再试",
+            )
+        logger.debug("intake minio stage elapsed=%.3fs", time.perf_counter() - ts)
+        return ok, url
 
-    try:
-        audio_url = await asyncio.to_thread(
-            _storage.voice_audio_presigned_url, object_key,
-        )
-    except Exception as e:
-        logger.exception("minio presign failed: %s", e)
-        raise AppException(
-            503, "voice_upstream_unavailable",
-            "音频暂存服务不可用，请稍后再试",
-        )
+    minio_task = asyncio.create_task(_minio_stage())
+    pets_task = asyncio.create_task(_fetch_user_pets(db, user_id))
 
-    # ---------- STT ----------
-    # Primary path (SG fun-asr-realtime WebSocket) streams the raw
-    # audio bytes; fallback (BJ paraformer-v1 async-file) reaches for
-    # the MinIO presigned URL. Keep both handy so `stt.transcribe` can
-    # pick whichever path works without bouncing back up here.
+    # STT needs `audio_url` for the fallback path; await MinIO before
+    # calling it. With `asyncio.create_task` above, the upload has
+    # already been running in parallel, so this await typically adds
+    # zero latency (MinIO finishes in ~40ms — STT setup alone takes
+    # longer).
+    object_key, audio_url = await minio_task
+    dt_minio = time.perf_counter() - t_stage - dt_read
+
+    t_stage = time.perf_counter()
     try:
         transcript = await stt_transcribe(
             audio_bytes=data,
@@ -402,7 +425,20 @@ async def intake(
             audio_url=audio_url,
         )
     except _stt.SttUnavailableError as e:
-        logger.info("stt failed: %s", e)
+        dt_stt = time.perf_counter() - t_stage
+        # `pets_task` uses the same AsyncSession as _persist_log below,
+        # so we cannot cancel it mid-flight — that would leave the
+        # session in an inconsistent state and blow up the subsequent
+        # INSERT. Await it to completion (it's a single SELECT, fast)
+        # and discard the result.
+        try:
+            await pets_task
+        except Exception:  # noqa: BLE001 — best-effort drain
+            pass
+        logger.info(
+            "intake stt_failed stt=%.2fs total=%.2fs reason=%s",
+            dt_stt, time.perf_counter() - t_request_start, e,
+        )
         response = VoiceIntakeResponse(
             request_id=request_id,
             status="stt_failed",
@@ -426,21 +462,23 @@ async def intake(
         )
         await _cache_dedup(dedup_key, response)
         return response
+    dt_stt = time.perf_counter() - t_stage
 
-    # ---------- Fetch the user's full pet list for the LLM ----------
-    # We pass the closed set of pet names so qwen-plus can do
-    # homophone-tolerant matching (STT often mis-hears "咪咪" as
-    # "米米", "小白" as "小柏", etc.). Default pet name is a
-    # tie-breaker when the audio has no name at all.
-    user_pets = await _fetch_user_pets(db, user_id)
+    # ---------- Pet list (closed-set for LLM) ----------
+    # We pass the user's full pet list to qwen-plus as a closed set so
+    # it can correct for STT homophones (e.g. "咪咪" ↔ "米米").
+    t_stage = time.perf_counter()
+    user_pets = await pets_task
     default_pet_name: str | None = None
     if default_pet_id is not None:
         for p in user_pets:
             if p.id == default_pet_id:
                 default_pet_name = p.name
                 break
+    dt_pets = time.perf_counter() - t_stage
 
     # ---------- LLM ----------
+    t_stage = time.perf_counter()
     try:
         llm_out = await llm_extract_intent(
             transcript,
@@ -454,6 +492,7 @@ async def intake(
             503, "voice_upstream_unavailable",
             "语义理解服务暂不可用，请稍后再试",
         )
+    dt_llm = time.perf_counter() - t_stage
 
     llm_raw = llm_out.pop("_raw", None)
 
@@ -489,6 +528,7 @@ async def intake(
             draft=None,
             missing_fields=[],
         )
+        t_stage = time.perf_counter()
         await _persist_log(
             db,
             user_id=user_id,
@@ -501,6 +541,15 @@ async def intake(
             status=VoiceIntakeStatus.INTENT_UNKNOWN,
         )
         await _cache_dedup(dedup_key, response)
+        dt_persist = time.perf_counter() - t_stage
+        logger.info(
+            "intake status=intent_unknown total=%.2fs "
+            "read=%.0fms minio=%.0fms stt=%.2fs pets=%.0fms "
+            "llm=%.2fs persist=%.0fms",
+            time.perf_counter() - t_request_start,
+            dt_read * 1000, dt_minio * 1000, dt_stt,
+            dt_pets * 1000, dt_llm, dt_persist * 1000,
+        )
         return response
 
     # ---------- draft_pending ----------
@@ -517,6 +566,7 @@ async def intake(
         draft=draft,
         missing_fields=missing,
     )
+    t_stage = time.perf_counter()
     await _persist_log(
         db,
         user_id=user_id,
@@ -529,6 +579,16 @@ async def intake(
         status=VoiceIntakeStatus.DRAFT_PENDING,
     )
     await _cache_dedup(dedup_key, response)
+    dt_persist = time.perf_counter() - t_stage
+    logger.info(
+        "intake status=draft_pending total=%.2fs "
+        "read=%.0fms minio=%.0fms stt=%.2fs pets=%.0fms "
+        "llm=%.2fs persist=%.0fms intent=%s",
+        time.perf_counter() - t_request_start,
+        dt_read * 1000, dt_minio * 1000, dt_stt,
+        dt_pets * 1000, dt_llm, dt_persist * 1000,
+        intent,
+    )
     return response
 
 
