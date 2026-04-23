@@ -158,10 +158,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     // Disabled during photo upload to avoid overlapping multipart
     // requests fighting over the progress HUD + cache bookkeeping.
     final disabled = _isUploading || _voiceProcessing;
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return Container(
       width: double.infinity,
-      padding: EdgeInsets.fromLTRB(
-          16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
       decoration: BoxDecoration(
         color: Colors.white,
         boxShadow: [
@@ -172,33 +171,57 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           ),
         ],
       ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              VoiceRecordButton(
-                enabled: !disabled,
-                onRecordComplete: _handleVoiceClipReady,
-              ),
-              if (_voiceProcessing)
-                const SizedBox(
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(strokeWidth: 2.5),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Split the voice bar into three bands: vertical padding,
+          // the circular button itself, a small gap, and the hint
+          // text. Compute button diameter from whatever height is
+          // left so the column never overflows the 1/5 slot on small
+          // screens.
+          const double vPad = 12;
+          const double gap = 10;
+          const double hintReserve = 22;
+          final double available =
+              constraints.maxHeight - vPad * 2 - bottomInset - gap - hintReserve;
+          final double diameter = available.clamp(48.0, 88.0);
+          final double progressSize = (diameter * 0.32).clamp(18.0, 28.0);
+          return Padding(
+            padding: EdgeInsets.fromLTRB(16, vPad, 16, vPad + bottomInset),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    VoiceRecordButton(
+                      enabled: !disabled,
+                      diameter: diameter,
+                      onRecordComplete: _handleVoiceClipReady,
+                    ),
+                    if (_voiceProcessing)
+                      SizedBox(
+                        width: progressSize,
+                        height: progressSize,
+                        child: const CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                  ],
                 ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            '试试按住说话记录宠物动态吧！',
-            style: TextStyle(
-              fontSize: 13,
-              color: AppTheme.textSecondary,
+                const SizedBox(height: gap),
+                const Text(
+                  '试试按住说话记录宠物动态吧！',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.2,
+                    color: AppTheme.textSecondary,
+                  ),
+                ),
+              ],
             ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

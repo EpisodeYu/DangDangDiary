@@ -33,12 +33,18 @@ class VoiceRecordButton extends StatefulWidget {
   /// Show/hide the button without unmounting it.
   final bool enabled;
 
+  /// Diameter of the circular button in logical pixels. Caller should
+  /// clamp this to the container height to avoid overflow in small
+  /// voice-bar slots (e.g. on compact screens).
+  final double diameter;
+
   const VoiceRecordButton({
     super.key,
     required this.onRecordComplete,
     this.onRecordStart,
     this.onRecordCancel,
     this.enabled = true,
+    this.diameter = 88,
   });
 
   @override
@@ -98,7 +104,8 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
     final color = _recording
         ? (_willCancel ? AppTheme.errorColor : AppTheme.primaryColor)
         : (disabled ? Colors.grey.shade300 : AppTheme.primaryColor);
-    const double diameter = 88;
+    final diameter = widget.diameter;
+    final iconSize = (diameter * 0.42).clamp(20.0, 40.0);
     return Semantics(
       button: true,
       enabled: !disabled,
@@ -132,7 +139,7 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
         child: Icon(
           _recording ? Icons.mic : Icons.mic_none,
           color: Colors.white,
-          size: 36,
+          size: iconSize,
         ),
       ),
     );
