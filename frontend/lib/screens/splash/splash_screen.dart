@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -76,25 +75,46 @@ class _SplashScreenState extends ConsumerState<SplashScreen>
     _startFlow();
   }
 
+  // Minimum total time the splash stays on screen from cold start. Auth
+  // resolution (`_checkAuthStatus` in [AuthNotifier]) happens concurrently
+  // while the user watches the animation, so this also acts as a "don't
+  // route until the home screen is ready to paint stably" window. Fixes
+  // the flash where /record would mount and then immediately redirect to
+  // /login because auth finished resolving a few hundred ms too late.
+  static const Duration _minimumVisible = Duration(milliseconds: 3000);
+
   Future<void> _startFlow() async {
+    final splashStartedAt = DateTime.now();
     await _intro.forward();
     _idle.repeat();
 
-    // Minimum display time
-    final earliest = Future.delayed(const Duration(milliseconds: 600));
-    await earliest;
-
+    // Wait until BOTH conditions are satisfied before routing:
+    //   1. The minimum 3-second splash window has elapsed.
+    //   2. Auth status is no longer `unknown` (i.e. _checkAuthStatus has
+    //      either confirmed the session or decided we need /login).
     while (mounted && !_routed) {
+      final elapsed = DateTime.now().difference(splashStartedAt);
+      final remaining = _minimumVisible - elapsed;
       final auth = ref.read(authProvider);
-      if (auth.status != AuthStatus.unknown) {
+      final authReady = auth.status != AuthStatus.unknown;
+
+      if (authReady && remaining <= Duration.zero) {
         _routed = true;
         if (!mounted) return;
         final isLoggedIn = auth.status == AuthStatus.authenticated;
         context.go(isLoggedIn ? '/record' : '/login');
         return;
       }
-      // Wait a bit before checking again
-      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Sleep just long enough to reach whichever gate is still closed,
+      // clamped to 100ms so we keep polling auth in case it resolves
+      // slightly after the minimum window.
+      final wait = remaining > Duration.zero
+          ? (remaining < const Duration(milliseconds: 100)
+              ? remaining
+              : const Duration(milliseconds: 100))
+          : const Duration(milliseconds: 100);
+      await Future.delayed(wait);
     }
   }
 

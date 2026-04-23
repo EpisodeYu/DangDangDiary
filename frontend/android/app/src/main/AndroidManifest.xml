@@ -7,16 +7,19 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
     <!-- Phase 2 Step 2: voice intake -->
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Keep-alive foreground service when the user minimises the app. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <application
-        android:label="dangdang_diary"
+        android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
+        android:largeHeap="true"
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -34,6 +37,13 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- Short-lived foreground service that keeps the Flutter process
+             alive for a few minutes after the user presses Home, so returning
+             to the app restores state instantly instead of cold-starting. -->
+        <service
+            android:name=".BackgroundKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Launcher label shown under the app icon on the home screen. -->
+    <string name="app_name">当当日记</string>
+    <!-- Foreground service notification shown when we keep the process
+         alive for a few minutes after the user minimises the app. -->
+    <string name="keep_alive_channel_name">后台保活</string>
+    <string name="keep_alive_channel_description">当当日记最小化时短暂保活，便于您快速返回</string>
+    <string name="keep_alive_notification_title">当当日记运行中</string>
+    <string name="keep_alive_notification_text">最小化期间保持数据就绪，便于快速返回</string>
+</resources>
