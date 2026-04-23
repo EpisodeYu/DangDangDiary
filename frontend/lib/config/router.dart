@@ -14,7 +14,6 @@ import '../screens/health/routine_record_screen.dart';
 import '../screens/health/routine_cycle_screen.dart';
 import '../screens/health/vaccination_record_screen.dart';
 import '../screens/timeline/timeline_screen.dart';
-import '../screens/ai/ai_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../screens/profile/pet_manage_screen.dart';
 import '../screens/profile/pet_edit_screen.dart';
@@ -220,12 +219,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             GoRoute(
               path: '/timeline',
               builder: (context, state) => const TimelineScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/ai',
-              builder: (context, state) => const AiScreen(),
             ),
           ]),
           StatefulShellBranch(routes: [

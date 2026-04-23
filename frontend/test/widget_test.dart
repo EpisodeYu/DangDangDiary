@@ -30,9 +30,6 @@ GoRouter _buildTestRouter() {
             GoRoute(path: '/timeline', builder: (_, __) => const Placeholder()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/ai', builder: (_, __) => const Placeholder()),
-          ]),
-          StatefulShellBranch(routes: [
             GoRoute(path: '/profile', builder: (_, __) => const Placeholder()),
           ]),
         ],
@@ -65,7 +62,6 @@ void main() {
     expect(find.text('记录'), findsOneWidget);
     expect(find.text('健康'), findsOneWidget);
     expect(find.text('时间轴'), findsOneWidget);
-    expect(find.text('AI'), findsOneWidget);
     expect(find.text('我的'), findsOneWidget);
   });
 }
