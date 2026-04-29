@@ -34,3 +34,7 @@ Thumbs.db
 postgres_data/
 redis_data/
 minio_data/
+
+# Database dumps / backups (contain real user data)
+backend/backups/
+*.sql

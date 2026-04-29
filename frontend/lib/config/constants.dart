@@ -1,10 +1,11 @@
 class AppConstants {
   AppConstants._();
 
-  /// Base URL for API calls — point to Nginx unified entry
+  /// Base URL for API calls — point to Nginx unified entry.
+  /// Inject the real address at build time via `--dart-define=BASE_URL=...`.
   static const String baseUrl = String.fromEnvironment(
     'BASE_URL',
-    defaultValue: 'http://REDACTED_IP', // Android emulator → host machine
+    defaultValue: 'http://127.0.0.1',
   );
 
   static const String apiPrefix = '/api/v1';
