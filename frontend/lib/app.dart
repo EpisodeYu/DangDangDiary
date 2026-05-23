@@ -83,6 +83,14 @@ class _AppLifecycleHostState extends ConsumerState<_AppLifecycleHost>
       ApiClient().resetConnectionPool();
       _maybeRefreshReminders();
       _tryHandlePendingPayload();
+      // Opt Step 4: another device / owner may have changed our role
+      // or pet meta while we were backgrounded. silentRefresh fetches
+      // the latest pet list and only swaps state when there's a real
+      // diff, so no loading flicker hits the UI.
+      final auth = ref.read(authProvider);
+      if (auth.status == AuthStatus.authenticated) {
+        ref.read(petListProvider.notifier).silentRefresh();
+      }
     }
   }
 

@@ -7,11 +7,28 @@ import '../../config/theme.dart';
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
 
-class PetManageScreen extends ConsumerWidget {
+class PetManageScreen extends ConsumerStatefulWidget {
   const PetManageScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PetManageScreen> createState() => _PetManageScreenState();
+}
+
+class _PetManageScreenState extends ConsumerState<PetManageScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Opt Step 4: Pull a fresh pet list silently every time the user
+    // lands on the manage screen so role badges / share_code_active
+    // pills reflect the latest server state without a loading flash.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      ref.read(petListProvider.notifier).silentRefresh();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final petListAsync = ref.watch(petListProvider);
 
     return Scaffold(
