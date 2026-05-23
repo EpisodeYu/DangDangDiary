@@ -6,9 +6,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 
 import '../../config/theme.dart';
+import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
 import '../../services/original_photo_cache.dart';
+import '../../services/photo_saver.dart';
 import '../../services/photo_service.dart';
+import '../../utils/api_error.dart';
 import '../../widgets/photo_info_dialog.dart';
 
 /// How many neighbors on either side of the current page to prefetch.
@@ -85,6 +88,11 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
               onTap: () => Navigator.pop(ctx, 'info'),
             ),
             ListTile(
+              leading: const Icon(Icons.download_outlined),
+              title: const Text('保存到相册'),
+              onTap: () => Navigator.pop(ctx, 'save'),
+            ),
+            ListTile(
               leading:
                   const Icon(Icons.delete_outline, color: AppTheme.errorColor),
               title: const Text(
@@ -106,6 +114,15 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
     switch (action) {
       case 'info':
         await showPhotoInfoDialog(context, photo);
+        break;
+      case 'save':
+        _showSnack('正在保存...');
+        final result =
+            await savePhotoToGallery(photo.id, takenAt: photo.takenAt);
+        if (!mounted) return;
+        _showSnack(
+          result.success ? '已保存到相册' : (result.errorMessage ?? '保存失败'),
+        );
         break;
       case 'delete':
         final confirmed = await _confirmDelete();
@@ -149,21 +166,22 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
       }
     } on DioException catch (e) {
       if (!mounted) return;
-      _showSnack(_deleteErrorMessage(e));
+      if (isPermissionError(e)) {
+        // Opt Step 4: pull the fresh role silently before next attempt.
+        ref.read(petListProvider.notifier).silentRefresh();
+        _showSnack('权限已更新，请重试');
+      } else {
+        _showSnack(_deleteErrorMessage(e));
+      }
     } catch (_) {
       if (!mounted) return;
       _showSnack('删除失败，请稍后重试');
     }
   }
 
-  bool _isPermissionError(DioException e) {
-    final data = e.response?.data;
-    if (data is Map && data['code'] == 'PET_EDITOR_REQUIRED') return true;
-    return e.response?.statusCode == 403;
-  }
-
   String _deleteErrorMessage(DioException e) {
-    if (_isPermissionError(e)) return '无删除权限';
+    // Permission errors are handled before this is called; this only
+    // formats non-permission failures.
     final data = e.response?.data;
     if (data is Map<String, dynamic>) {
       return (data['message'] as String?) ?? '删除失败，请稍后重试';
