@@ -274,7 +274,7 @@ DangDangDiary/
 - `POST /api/v1/pets/{id}/leave` - 主动退出共享档案 (Phase 2)
 
 ### 照片模块
-- `POST /api/v1/pets/{id}/photos` - 上传照片(最多5张, 单张<=15MB)
+- `POST /api/v1/pets/{id}/photos` - 上传照片(最多9张, 单张<=15MB)
 - `GET /api/v1/photos/timeline` - 获取时间轴照片(支持分页、多档案筛选)
 
 ### 健康模块

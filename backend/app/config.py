@@ -141,7 +141,13 @@ class Settings(BaseSettings):
     CLASSIFY_SIM_TOP1_MIN: float = 0.78
     CLASSIFY_SIM_MARGIN_MIN: float = 0.05
     CLASSIFY_CACHE_TTL_SECONDS: int = 300
-    CLASSIFY_MAX_FILES: int = 5
+    # Kept aligned with MAX_FILES_PER_UPLOAD (api/v1/photos.py). Bumped
+    # 5 → 9 in the 2026-05-23 batch-1 follow-up so a 3×3 photo grid
+    # can be classified in a single round-trip. DashScope concurrency
+    # is still capped by DASHSCOPE_EMBEDDING_CONCURRENCY (default 3),
+    # so 9 files run as 3 waves of 3 and total latency stays around
+    # ~1s p50 (up from ~600ms for 5 files).
+    CLASSIFY_MAX_FILES: int = 9
     CLASSIFY_MAX_FILE_BYTES: int = 15 * 1024 * 1024
 
     # --- Phase 2 Step 3 "Option A": source-aware ranking + dedup ---

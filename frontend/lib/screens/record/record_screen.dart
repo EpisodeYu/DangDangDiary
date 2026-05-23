@@ -39,6 +39,12 @@ class RecordScreen extends ConsumerStatefulWidget {
   ConsumerState<RecordScreen> createState() => _RecordScreenState();
 }
 
+/// Max photos accepted in a single "记录完成" submit. Mirrors
+/// `MAX_FILES_PER_UPLOAD` / `CLASSIFY_MAX_FILES` on the backend
+/// (bumped 5 → 9 in the 2026-05-23 batch-1 follow-up so a 3×3 grid
+/// fits in one go). If you change this, change both ends.
+const int _maxPhotosPerUpload = 9;
+
 class _RecordScreenState extends ConsumerState<RecordScreen> {
   // --- Per-photo parallel lists. All of these MUST stay in lockstep;
   // any add/remove path updates every one of them at the same index.
@@ -308,7 +314,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
               ),
               const SizedBox(height: 6),
               Text(
-                '选完照片将自动识别归属的宠物，最多 5 张',
+                '选完照片将自动识别归属的宠物，最多 9 张',
                 style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
               ),
             ],
@@ -325,7 +331,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
             itemCount: _selectedFiles.length +
-                (_selectedFiles.length < 5 && !_isUploading ? 1 : 0),
+                (_selectedFiles.length < _maxPhotosPerUpload && !_isUploading
+                    ? 1
+                    : 0),
             itemBuilder: (context, index) {
               if (index < _selectedFiles.length) {
                 return _buildPhotoCard(index);
@@ -542,7 +550,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
   // --- Actions ---
 
   void _showAddPhotoOptions() {
-    final remaining = 5 - _selectedFiles.length;
+    final remaining = _maxPhotosPerUpload - _selectedFiles.length;
     if (remaining <= 0) return;
 
     showModalBottomSheet(
@@ -595,7 +603,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final overflowed = picked.length > remaining;
     final toProcess = overflowed ? picked.take(remaining).toList() : picked;
     if (overflowed) {
-      _showSnack('每次最多上传5张哦！');
+      _showSnack('每次最多上传 $_maxPhotosPerUpload 张哦！');
     }
 
     // NOTE(opt-step1): 不再做"必须是猫狗"的本地识别——用户经常上传
@@ -652,7 +660,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     final xfile = await _picker.pickImage(source: ImageSource.camera);
     if (xfile == null) return;
 
-    if (_selectedFiles.length >= 5) return;
+    if (_selectedFiles.length >= _maxPhotosPerUpload) return;
 
     // NOTE(opt-step1): 不再做猫狗识别，相机拍完直接进入压缩 + 上传准备。
     final converted = await _ensureJpeg(xfile);

@@ -2,7 +2,8 @@
 
 Covers:
   * Single / 3 / 5 file upload happy path (MinIO + recognition mocked)
-  * 6 files → 400 TOO_MANY_FILES
+  * 10 files → 400 TOO_MANY_FILES (cap bumped 5 → 9 in 2026-05-23
+    batch-1 follow-up; this test now drives one over the new cap)
   * Oversize (> 15 MB) → per-file FILE_TOO_LARGE failure + mixed partial success
   * Unsupported content-type → per-file UNSUPPORTED_IMAGE_TYPE failure
   * ENABLE_SERVER_PET_RECOGNITION=True + recognize_pet says not a pet → PET_NOT_DETECTED failure
@@ -114,8 +115,12 @@ async def test_upload_too_many_files(client):
     headers = {"Authorization": f"Bearer {token}"}
     pet_id = await _create_pet(c, headers)
 
-    files = _build_files_payload(6)
-    data = {"taken_at": ["2024-01-15"] * 6}
+    # MAX_FILES_PER_UPLOAD = 9 (bumped from 5 in the 2026-05-23 batch-1
+    # follow-up so a 3×3 photo grid can be submitted in one go). Drive
+    # the test to MAX+1 = 10 to keep the assertion on the over-cap
+    # branch rather than the new happy-path band.
+    files = _build_files_payload(10)
+    data = {"taken_at": ["2024-01-15"] * 10}
 
     resp = await c.post(
         f"/pets/{pet_id}/photos", files=files, data=data, headers=headers,

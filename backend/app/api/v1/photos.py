@@ -51,7 +51,11 @@ router = APIRouter(tags=["photos"])
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
-MAX_FILES_PER_UPLOAD = 5
+# Bumped from 5 → 9 (2026-05-23 batch-1 follow-up) so users can submit
+# a full 3×3 photo grid in one go. Kept in lock-step with
+# `settings.CLASSIFY_MAX_FILES` so the auto-assign endpoint still
+# accepts everything the upload endpoint accepts.
+MAX_FILES_PER_UPLOAD = 9
 
 # Valid values for the per-file `classify_source` form field added for
 # Phase 2 Step 3. "auto" means "user accepted the model's chip as-is"
