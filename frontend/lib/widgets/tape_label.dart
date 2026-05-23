@@ -7,14 +7,16 @@ import '../config/theme.dart';
 ///
 ///   * a slightly translucent brand-tinted rectangle
 ///   * thin angled white "tear" stripes on each end to suggest tape
-///   * a hair of rotation for hand-stuck feel
 ///
 /// All drawing is done in CustomPaint, so no extra assets are needed.
+///
+/// The label sits horizontally — we initially tried a 1.2° rotation
+/// for hand-stuck feel, but real-device testing showed it just reads
+/// as "misaligned" against the otherwise-strict grid, so it's off.
 class TapeLabel extends StatelessWidget {
   final String text;
   final String? trailing;
   final Color? color;
-  final double rotationDegrees;
   final EdgeInsetsGeometry padding;
 
   const TapeLabel({
@@ -22,43 +24,39 @@ class TapeLabel extends StatelessWidget {
     required this.text,
     this.trailing,
     this.color,
-    this.rotationDegrees = -1.2,
     this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
   });
 
   @override
   Widget build(BuildContext context) {
     final c = color ?? AppTheme.primaryColor;
-    return Transform.rotate(
-      angle: rotationDegrees * 3.1415926 / 180,
-      child: CustomPaint(
-        painter: _TapePainter(color: c),
-        child: Padding(
-          padding: padding,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+    return CustomPaint(
+      painter: _TapePainter(color: c),
+      child: Padding(
+        padding: padding,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: _onTape(c),
+                letterSpacing: 0.5,
+              ),
+            ),
+            if (trailing != null) ...[
+              const SizedBox(width: 6),
               Text(
-                text,
+                trailing!,
                 style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: _onTape(c),
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  color: _onTape(c).withValues(alpha: 0.7),
                 ),
               ),
-              if (trailing != null) ...[
-                const SizedBox(width: 6),
-                Text(
-                  trailing!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: _onTape(c).withValues(alpha: 0.7),
-                  ),
-                ),
-              ],
             ],
-          ),
+          ],
         ),
       ),
     );
