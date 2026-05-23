@@ -13,6 +13,7 @@
 | [`step3-share-qr-code.md`](./step3-share-qr-code.md) | 档案分享码生成 QR、保存图片到相册；新增宠物档案页支持扫码/相册图片识别加入档案 | 较大（新依赖 + 新 UI + 自定义合成图） | 否，新增功能 | ✅ 已落地（实机权限弹窗需人测） |
 | [`step4-pet-role-silent-sync.md`](./step4-pet-role-silent-sync.md) | 修复「拥有者赋权后被分享用户感知不到」的 bug：silent refresh + diff 后再替换 state，零页面闪动 | 中等（pet_provider 重写 + 多入口触发 + 403 兜底） | 否，纯客户端 | ✅ 已落地（health 模块 403 文案统一推迟） |
 | [`step5-save-photo-to-gallery.md`](./step5-save-photo-to-gallery.md) | 时间轴 / 大图查看器长按 sheet 新增「保存原图到相册」（与删除按钮平级） | 小（新依赖 + 两处 sheet 接入 + 权限文案） | 否，新增功能 | ✅ 已落地 |
+| [`step6-ui-polish.md`](./step6-ui-polish.md) | 前端质感提升（无美工方案）：圆润图标、双层柔阴影、列表入场动画、骨架屏、底栏自绘 + haptic、时间轴胶带日期标签 | 较大（30+ 文件 + 4 个新 widget + 2 个新依赖） | 否，纯客户端视觉层 | 🟡 第一轮已落地，§5 放大方案待取用 |
 
 ## 推荐实施顺序
 
@@ -43,6 +44,7 @@
 - Step 3 取舍：QR 协议采用 **HTTPS URL** (`https://dangdangdiary.app/s/<code>`)，便于未来加 Web 落地页同时兼容只装了 App 的用户；保存的 QR 图卡片包含 Logo + DangDangDiary 字样 + 宠物名 + 过期时间 + 一句邀请文案。
 - Step 4 取舍：**Silent refresh + 差异比对**——`silentRefresh()` 后台 fetch，比对 (id, role, share_code_active, name, breed, birthday, avatar_url, owner_id) 后只在变化时 `state = AsyncData(new)`；触发点 = 进入编辑页 + App 回到前台 + 写操作收到 403。**绝不**触发 `AsyncLoading`。
 - Step 5 取舍：仅支持**单张保存**（时间轴长按 sheet 与大图查看器长按 sheet 都加），与「删除」按钮平级；不在多选模式扩展批量保存（避免操作面板过载）。
+- Step 6 取舍：放弃了 `phosphor_flutter`（在 Flutter 3.44 下 `extends IconData` 编译失败、无维护中 fork），回退到 Material `*_rounded` 变体；放弃中文字体 / AI 生图 / 文案温度化（不在"无美工"严格约束内，单独走新 step doc）。第一轮自评见 §2.1 ——"60% 的代码量贡献了 <10% 的感官变化"，二轮放大方案（§5）单独评审实施。
 
 ## 完成报告
 
