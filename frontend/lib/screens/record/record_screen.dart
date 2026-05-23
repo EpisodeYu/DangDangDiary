@@ -19,11 +19,10 @@ import '../../providers/health_provider.dart';
 import '../../providers/pet_provider.dart';
 import '../../services/classify_service.dart';
 import '../../services/original_photo_cache.dart';
-import '../../services/pet_classifier.dart';
 import '../../services/photo_service.dart';
 import '../../services/voice_service.dart';
+import '../../utils/api_error.dart';
 import '../../utils/exif_helper.dart';
-import '../../widgets/brand_pulse.dart';
 import '../../widgets/pet_chip_dropdown.dart';
 import '../../widgets/voice_intake_sheet.dart';
 import '../../widgets/voice_record_button.dart';
@@ -599,23 +598,15 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _showSnack('每次最多上传5张哦！');
     }
 
-    _showRecognizingDialog();
-
-    // Read EXIF from the original file before _ensureJpeg compresses it —
-    // FlutterImageCompress strips EXIF metadata, so the compressed copy has no DateTimeOriginal.
+    // NOTE(opt-step1): 不再做"必须是猫狗"的本地识别——用户经常上传
+    // 强相关但不直接是猫狗的图片（合影 / 食盆 / 医院单据），白名单
+    // 拦截误伤严重。EXIF 必须在压缩前读取，FlutterImageCompress
+    // 会丢失 metadata。
     final files = <File>[];
     final dates = <DateTime>[];
     final tokens = <String>[];
-    var rejected = 0;
     for (final xfile in toProcess) {
       final exifDate = await ExifHelper.extractDate(File(xfile.path));
-      // Classify on the original file — FlutterImageCompress's re-encode
-      // roughly halves cat/dog softmax on marginal inputs.
-      final result = await PetClassifier.instance.classify(File(xfile.path));
-      if (!result.isPet && !result.skipped) {
-        rejected++;
-        continue;
-      }
       final converted = await _ensureJpeg(xfile);
       final token = await _cachePending(converted);
       files.add(converted);
@@ -624,16 +615,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
 
     if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
 
-    if (files.isEmpty) {
-      if (rejected > 0) {
-        _showSnack(rejected == toProcess.length
-            ? '未识别到猫狗，请换一张图片试试吧！'
-            : '已跳过 $rejected 张未识别到猫狗的图片');
-      }
-      return;
-    }
+    if (files.isEmpty) return;
 
     // When the caller only has a single writable pet profile (owned
     // or shared with editor rights), there is nothing to classify —
@@ -660,10 +643,6 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       _failureMessages = {};
     });
 
-    if (rejected > 0) {
-      _showSnack('已跳过 $rejected 张未识别到猫狗的图片');
-    }
-
     if (onlyPetId == null) {
       _runClassifyAssignment(baseIdx: baseIdx, files: files);
     }
@@ -675,18 +654,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     if (_selectedFiles.length >= 5) return;
 
-    _showRecognizingDialog();
-
-    final result = await PetClassifier.instance.classify(File(xfile.path));
-
-    if (!mounted) return;
-    Navigator.of(context, rootNavigator: true).pop();
-
-    if (!result.isPet && !result.skipped) {
-      _showSnack('未识别到猫狗，请换一张图片试试吧！');
-      return;
-    }
-
+    // NOTE(opt-step1): 不再做猫狗识别，相机拍完直接进入压缩 + 上传准备。
     final converted = await _ensureJpeg(xfile);
 
     final token = await _cachePending(converted);
@@ -809,26 +777,6 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         }
       }
     }());
-  }
-
-  void _showRecognizingDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              BrandPulse(size: 24),
-              SizedBox(width: 12),
-              Text('正在识别照片...'),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   /// Copy the compressed JPEG into the persistent cache so that once the
@@ -1032,12 +980,18 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
 
-      final data = e.response?.data;
-      String message = '上传失败，请稍后重试';
-      if (data is Map<String, dynamic>) {
-        message = (data['message'] as String?) ?? message;
+      if (isPermissionError(e)) {
+        // Opt Step 4: owner revoked our editor role mid-session.
+        ref.read(petListProvider.notifier).silentRefresh();
+        _showSnack('权限已更新，请重试');
+      } else {
+        final data = e.response?.data;
+        String message = '上传失败，请稍后重试';
+        if (data is Map<String, dynamic>) {
+          message = (data['message'] as String?) ?? message;
+        }
+        _showSnack(message);
       }
-      _showSnack(message);
     } catch (_) {
       if (!mounted) return;
       Navigator.of(context, rootNavigator: true).pop();
@@ -1064,14 +1018,14 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('正在识别照片...',
+                    const Text('正在处理上传...',
                         style: TextStyle(
                             fontSize: 16, fontWeight: FontWeight.w600)),
                     const SizedBox(height: 16),
                     const LinearProgressIndicator(),
                     const SizedBox(height: 8),
                     Text(
-                      '共 $fileCount 张，正在检测宠物内容',
+                      '共 $fileCount 张，服务器正在保存',
                       style: const TextStyle(
                           fontSize: 12, color: AppTheme.textSecondary),
                     ),
