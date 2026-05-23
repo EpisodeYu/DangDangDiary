@@ -261,22 +261,46 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     return role == PetRole.owner || role == PetRole.editor;
   }
 
+  /// True when at least one pet visible in the user's timeline is
+  /// owner/editor. Controls the visibility of the "多选" entry: even
+  /// when the long-pressed photo itself is on a viewer-only pet, the
+  /// user may want to bulk-delete photos that live on a different
+  /// (editable) pet, so the entry should still be reachable as long
+  /// as *some* pet is editable somewhere in the timeline.
+  bool get _hasAnyEditablePet {
+    final pets =
+        ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+    for (final p in pets) {
+      if (p.role == PetRole.owner || p.role == PetRole.editor) return true;
+    }
+    return false;
+  }
+
   Future<void> _onLongPressCalendar(TimelinePhoto photo) async {
     if (_selectionMode) return;
-    final canMutate = _canEditPet(photo.petId);
+    final canDeleteThis = _canEditPet(photo.petId);
     final action = await _showPhotoActionSheet(
-      allowMultiSelect: canMutate,
-      allowDelete: canMutate,
+      // Multi-select is a *session*, not a per-photo action. As long
+      // as anything in the timeline is editable we let the user enter
+      // it — even if the photo they long-pressed happens to be on a
+      // viewer pet. Mixed selections delete only the photos the
+      // server accepts (see _deleteSelected) so this is safe.
+      allowMultiSelect: _hasAnyEditablePet,
+      // "删除" only acts on this one photo, so it stays per-photo.
+      allowDelete: canDeleteThis,
     );
     if (!mounted) return;
     await _handlePhotoSheetAction(photo, action);
   }
 
   Future<void> _onLongPressImmersive(TimelinePhoto photo) async {
-    final canMutate = _canEditPet(photo.petId);
+    final canDeleteThis = _canEditPet(photo.petId);
     final action = await _showPhotoActionSheet(
+      // Immersive view doesn't expose multi-select at all (it's a
+      // single-photo browsing mode), so this stays false regardless
+      // of the global editable-pet check.
       allowMultiSelect: false,
-      allowDelete: canMutate,
+      allowDelete: canDeleteThis,
     );
     if (!mounted) return;
     await _handlePhotoSheetAction(photo, action);
