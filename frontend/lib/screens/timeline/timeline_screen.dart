@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
@@ -16,6 +17,8 @@ import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/photo_grid_tile.dart';
 import '../../widgets/photo_info_dialog.dart';
+import '../../widgets/skeleton.dart';
+import '../../widgets/tape_label.dart';
 import '../../widgets/timeline_scrollbar.dart';
 import 'photo_viewer_screen.dart';
 
@@ -317,18 +320,18 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.info_outline),
+              leading: Icon(Icons.info_outline_rounded),
               title: const Text('详细信息'),
               onTap: () => Navigator.pop(ctx, 'info'),
             ),
             if (allowMultiSelect)
               ListTile(
-                leading: const Icon(Icons.check_box_outlined),
+                leading: Icon(Icons.check_box_outlined),
                 title: const Text('多选'),
                 onTap: () => Navigator.pop(ctx, 'multi'),
               ),
             ListTile(
-              leading: const Icon(Icons.download_outlined),
+              leading: Icon(Icons.download_rounded),
               title: const Text('保存到相册'),
               onTap: () => Navigator.pop(ctx, 'save'),
             ),
@@ -337,8 +340,8 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             // "权限已更新，请重试" felt broken to real users.
             if (allowDelete)
               ListTile(
-                leading: const Icon(
-                  Icons.delete_outline,
+                leading: Icon(
+                  Icons.delete_rounded,
                   color: AppTheme.errorColor,
                 ),
                 title: const Text(
@@ -348,7 +351,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                 onTap: () => Navigator.pop(ctx, 'delete'),
               ),
             ListTile(
-              leading: const Icon(Icons.close),
+              leading: Icon(Icons.close_rounded),
               title: const Text('取消'),
               onTap: () => Navigator.pop(ctx),
             ),
@@ -608,7 +611,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   PreferredSizeWidget _buildSelectionAppBar() {
     return AppBar(
       leading: IconButton(
-        icon: const Icon(Icons.close),
+        icon: Icon(Icons.close_rounded),
         tooltip: '取消',
         onPressed: _exitSelection,
       ),
@@ -634,7 +637,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           children: [
             TextButton.icon(
               onPressed: enabled ? _deleteSelected : null,
-              icon: const Icon(Icons.delete_outline),
+              icon: Icon(Icons.delete_rounded),
               label: Text(enabled ? '删除 ($count)' : '删除'),
               style: TextButton.styleFrom(
                 foregroundColor: AppTheme.errorColor,
@@ -655,7 +658,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     TimelineViewMode viewMode,
   ) {
     if (state.isInitialLoading && state.orderedPhotoIds.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
+      // Skeleton matches the active view so the placeholder layout
+      // doesn't pop on first paint.
+      return viewMode == TimelineViewMode.calendar
+          ? const SkeletonPhotoGrid()
+          : const SkeletonImmersiveList();
     }
 
     if (state.isEmpty) {
@@ -881,35 +888,16 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       SliverToBoxAdapter(
         key: _dayKeys[group.date],
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
-          child: Row(
-            children: [
-              Container(
-                width: 4,
-                height: 16,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                group.label,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textPrimary,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                '(${group.photos.length})',
-                style: const TextStyle(
-                  fontSize: 12,
-                  color: AppTheme.textSecondary,
-                ),
-              ),
-            ],
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+          // Day group header styled as a washi-tape label so the
+          // timeline feels like a hand-pasted diary instead of a
+          // generic list section.
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TapeLabel(
+              text: group.label,
+              trailing: '${group.photos.length} 张',
+            ),
           ),
         ),
       ),
@@ -936,7 +924,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                   context, flatPhotos, globalIdx + 1,
                 );
               }
-              return PhotoGridTile(
+              final tile = PhotoGridTile(
                 photo: photo,
                 showPetLabel: false,
                 selectionMode: _selectionMode,
@@ -944,6 +932,25 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                 onTap: () => _onTapPhoto(photo),
                 onLongPress: () => _onLongPressCalendar(photo),
               );
+              // Stagger only the first row or two within each group so
+              // a freshly-rendered day fades in instead of popping in.
+              // Skip animation for tiles beyond index 7 — long lists
+              // shouldn't run a thousand simultaneous tweens.
+              if (i > 7) return tile;
+              return tile
+                  .animate()
+                  .fadeIn(
+                    duration: 240.ms,
+                    delay: (i * 24).ms,
+                    curve: Curves.easeOut,
+                  )
+                  .slideY(
+                    begin: 0.06,
+                    end: 0,
+                    duration: 280.ms,
+                    delay: (i * 24).ms,
+                    curve: Curves.easeOutCubic,
+                  );
             },
             childCount: group.photos.length,
           ),
@@ -975,7 +982,7 @@ class _ViewModeSwitcher extends StatelessWidget {
         ),
         const SizedBox(width: 4),
         _ModeIconButton(
-          icon: Icons.view_agenda_outlined,
+          icon: Icons.view_agenda_rounded,
           selected: current == TimelineViewMode.immersive,
           tooltip: '沉浸模式',
           onTap: () => onChanged(TimelineViewMode.immersive),
@@ -1038,8 +1045,8 @@ class _EmptyView extends StatelessWidget {
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           SizedBox(height: MediaQuery.of(context).size.height * 0.25),
-          const Icon(
-            Icons.photo_library_outlined,
+          Icon(
+            Icons.photo_library_rounded,
             size: 64,
             color: AppTheme.textSecondary,
           ),

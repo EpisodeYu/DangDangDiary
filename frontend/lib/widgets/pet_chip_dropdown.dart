@@ -43,21 +43,21 @@ class PetChipDropdown extends StatelessWidget {
       body = _wrap(
         child: Row(
           mainAxisSize: MainAxisSize.min,
-          children: const [
-            SizedBox(
+          children: [
+            const SizedBox(
               width: 12,
               height: 12,
               child: CircularProgressIndicator(strokeWidth: 1.5),
             ),
-            SizedBox(width: 6),
-            Text(
+            const SizedBox(width: 6),
+            const Text(
               '识别中',
               style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
-            SizedBox(width: 2),
+            const SizedBox(width: 2),
             Icon(
-              Icons.arrow_drop_down,
-              size: 18,
+              Icons.arrow_drop_down_rounded,
+              size: 14,
               color: AppTheme.textSecondary,
             ),
           ],
@@ -85,9 +85,9 @@ class PetChipDropdown extends StatelessWidget {
                 style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
             const SizedBox(width: 2),
-            const Icon(
-              Icons.arrow_drop_down,
-              size: 18,
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              size: 14,
               color: AppTheme.textSecondary,
             ),
           ],
@@ -118,10 +118,10 @@ class PetChipDropdown extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(p.name),
                   if (selected?.id == p.id)
-                    const Padding(
-                      padding: EdgeInsets.only(left: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
                       child: Icon(
-                        Icons.check,
+                        Icons.check_rounded,
                         size: 16,
                         color: AppTheme.primaryColor,
                       ),

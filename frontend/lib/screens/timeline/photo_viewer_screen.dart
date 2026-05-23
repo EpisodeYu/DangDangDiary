@@ -98,12 +98,12 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.info_outline),
+              leading: Icon(Icons.info_outline_rounded),
               title: const Text('详细信息'),
               onTap: () => Navigator.pop(ctx, 'info'),
             ),
             ListTile(
-              leading: const Icon(Icons.download_outlined),
+              leading: Icon(Icons.download_rounded),
               title: const Text('保存到相册'),
               onTap: () => Navigator.pop(ctx, 'save'),
             ),
@@ -112,8 +112,8 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
             // "权限已更新，请重试" SnackBar).
             if (canDelete)
               ListTile(
-                leading: const Icon(
-                  Icons.delete_outline,
+                leading: Icon(
+                  Icons.delete_rounded,
                   color: AppTheme.errorColor,
                 ),
                 title: const Text(
@@ -123,7 +123,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
                 onTap: () => Navigator.pop(ctx, 'delete'),
               ),
             ListTile(
-              leading: const Icon(Icons.close),
+              leading: Icon(Icons.close_rounded),
               title: const Text('取消'),
               onTap: () => Navigator.pop(ctx),
             ),
@@ -234,7 +234,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
         backgroundColor: Colors.black,
         body: Center(
           child: IconButton(
-            icon: const Icon(Icons.close, color: Colors.white),
+            icon: Icon(Icons.close_rounded, color: Colors.white),
             onPressed: () => Navigator.of(context).pop(),
           ),
         ),
@@ -302,7 +302,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
               if (snap.hasError || snap.data == null) {
                 return const Center(
                   child: Icon(
-                    Icons.broken_image_outlined,
+                    Icons.broken_image_rounded,
                     color: Colors.white70,
                     size: 48,
                   ),

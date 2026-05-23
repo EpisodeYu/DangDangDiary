@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../../config/theme.dart';
 import '../../../models/pet.dart';
 import '../../../providers/pet_provider.dart';
+import '../../../widgets/app_card.dart';
+import '../../../widgets/skeleton.dart';
 
 class PetShareListScreen extends ConsumerWidget {
   const PetShareListScreen({super.key});
@@ -17,7 +19,7 @@ class PetShareListScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('宠物档案分享')),
       body: petListAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const SkeletonGenericList(rows: 4),
         error: (err, _) => Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -34,20 +36,21 @@ class PetShareListScreen extends ConsumerWidget {
         data: (result) {
           final ownedPets = result.pets.where((p) => p.isOwner).toList();
           if (ownedPets.isEmpty) {
-            return const Center(
+            return Center(
               child: Padding(
-                padding: EdgeInsets.symmetric(horizontal: 32),
+                padding: const EdgeInsets.symmetric(horizontal: 32),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.ios_share, size: 64, color: AppTheme.textSecondary),
-                    SizedBox(height: 16),
-                    Text(
+                    Icon(Icons.ios_share_rounded,
+                        size: 64, color: AppTheme.textSecondary),
+                    const SizedBox(height: 16),
+                    const Text(
                       '还没有自己创建的宠物档案',
                       style: TextStyle(color: AppTheme.textSecondary, fontSize: 15),
                     ),
-                    SizedBox(height: 8),
-                    Text(
+                    const SizedBox(height: 8),
+                    const Text(
                       '分享功能仅对您拥有的宠物可用',
                       style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
                     ),
@@ -71,46 +74,41 @@ class PetShareListScreen extends ConsumerWidget {
   }
 
   Widget _buildPetCard(BuildContext context, Pet pet) {
-    return Card(
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => context.push('/profile/pets/${pet.id}/share'),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              _buildAvatar(pet),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      pet.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    if (pet.shareCodeActive) ...[
-                      const SizedBox(height: 4),
-                      const Text(
-                        '当前有有效分享码',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppTheme.primaryColor,
-                        ),
-                      ),
-                    ],
-                  ],
+      padding: const EdgeInsets.all(16),
+      onTap: () => context.push('/profile/pets/${pet.id}/share'),
+      child: Row(
+        children: [
+          _buildAvatar(pet),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  pet.name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
-            ],
+                if (pet.shareCodeActive) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    '当前有有效分享码',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.primaryColor,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-        ),
+          Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+        ],
       ),
     );
   }

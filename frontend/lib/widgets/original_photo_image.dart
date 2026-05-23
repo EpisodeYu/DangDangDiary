@@ -130,7 +130,7 @@ class _OriginalPhotoImageState extends State<OriginalPhotoImage> {
                 color: const Color(0xFFEFE5DD),
                 alignment: Alignment.center,
                 child: const Icon(
-                  Icons.broken_image_outlined,
+                  Icons.broken_image_rounded,
                   size: 24,
                   color: Colors.black45,
                 ),

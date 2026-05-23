@@ -79,7 +79,7 @@ void main() {
     )));
 
     expect(find.text('选择宠物'), findsOneWidget);
-    expect(find.byIcon(Icons.arrow_drop_down), findsOneWidget);
+    expect(find.byIcon(Icons.arrow_drop_down_rounded), findsOneWidget);
 
     await tester.tap(find.byType(PopupMenuButton<int>));
     await tester.pumpAndSettle();

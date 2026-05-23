@@ -8,6 +8,7 @@ import '../../config/theme.dart';
 import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
+import '../../widgets/skeleton.dart';
 
 class VaccinationTab extends ConsumerWidget {
   final Pet pet;
@@ -19,7 +20,7 @@ class VaccinationTab extends ConsumerWidget {
     final asyncList = ref.watch(vaccinationListProvider(pet.id));
 
     return asyncList.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const SkeletonGenericList(rows: 5),
       error: (err, _) => _buildError(context, ref, err),
       data: (data) => _buildContent(context, ref, data),
     );
@@ -30,7 +31,7 @@ class VaccinationTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 48, color: Colors.grey.shade400),
+          Icon(Icons.error_outline_rounded, size: 48, color: Colors.grey.shade400),
           const SizedBox(height: 12),
           Text('加载失败：${_friendlyError(err)}',
               style: const TextStyle(color: AppTheme.textSecondary)),
@@ -53,11 +54,11 @@ class VaccinationTab extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.access_time, size: 16, color: AppTheme.textSecondary),
-              SizedBox(width: 6),
-              Text('疫苗记录',
+              Icon(Icons.schedule_rounded, size: 16, color: AppTheme.textSecondary),
+              const SizedBox(width: 6),
+              const Text('疫苗记录',
                   style: TextStyle(
                     fontSize: 14,
                     color: AppTheme.textSecondary,
@@ -80,7 +81,7 @@ class VaccinationTab extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Column(
         children: [
-          Icon(Icons.vaccines_outlined, size: 48, color: Colors.grey.shade400),
+          Icon(Icons.vaccines_rounded, size: 48, color: Colors.grey.shade400),
           const SizedBox(height: 8),
           const Text('还没有疫苗记录',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
@@ -104,7 +105,7 @@ class VaccinationTab extends ConsumerWidget {
               onPressed: (_) => _edit(context, ref, v),
               backgroundColor: Colors.blue.shade400,
               foregroundColor: Colors.white,
-              icon: Icons.edit,
+              icon: Icons.edit_rounded,
               label: '编辑',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -112,7 +113,7 @@ class VaccinationTab extends ConsumerWidget {
               onPressed: (_) => _confirmDelete(context, ref, v),
               backgroundColor: AppTheme.errorColor,
               foregroundColor: Colors.white,
-              icon: Icons.delete,
+              icon: Icons.delete_rounded,
               label: '删除',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -126,7 +127,7 @@ class VaccinationTab extends ConsumerWidget {
           ),
           child: Row(
             children: [
-              const Icon(Icons.calendar_today, size: 16, color: AppTheme.textSecondary),
+              Icon(Icons.calendar_today_rounded, size: 16, color: AppTheme.textSecondary),
               const SizedBox(width: 8),
               Text(v.vaccinatedAt,
                   style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),

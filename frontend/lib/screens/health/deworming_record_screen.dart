@@ -108,7 +108,7 @@ class _DewormingRecordScreenState extends ConsumerState<DewormingRecordScreen> {
                       Text(_dateFormat.format(_selectedDate),
                           style: const TextStyle(fontSize: 15)),
                       const Spacer(),
-                      const Icon(Icons.calendar_today, size: 18, color: AppTheme.textSecondary),
+                      Icon(Icons.calendar_today_rounded, size: 18, color: AppTheme.textSecondary),
                     ],
                   ),
                 ),

@@ -132,7 +132,7 @@ class _ShareQrPreviewScreenState extends State<ShareQrPreviewScreen> {
               height: 48,
               child: ElevatedButton.icon(
                 onPressed: _saving ? null : _save,
-                icon: const Icon(Icons.save_alt),
+                icon: Icon(Icons.download_rounded),
                 label: Text(_saving ? '保存中...' : '保存到相册'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,

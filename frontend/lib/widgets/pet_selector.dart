@@ -52,7 +52,7 @@ class PetSelector extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(child: Text(pet.name)),
               if (isSelected)
-                const Icon(Icons.check, size: 18, color: AppTheme.primaryColor),
+                Icon(Icons.check_rounded, size: 18, color: AppTheme.primaryColor),
             ],
           ),
         );
@@ -73,7 +73,7 @@ class PetSelector extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 4),
-          const Icon(Icons.arrow_drop_down, color: AppTheme.textSecondary),
+          Icon(Icons.arrow_drop_down_rounded, size: 18, color: AppTheme.textSecondary),
         ],
       ),
     );
@@ -114,7 +114,7 @@ class PetSelector extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 4),
-            const Icon(Icons.arrow_drop_down, color: AppTheme.textSecondary),
+            Icon(Icons.arrow_drop_down_rounded, size: 18, color: AppTheme.textSecondary),
           ],
         ),
       ),
@@ -260,7 +260,7 @@ class PetSelector extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              checked ? Icons.check_box : Icons.check_box_outline_blank,
+              checked ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
               size: 22,
               color: checked ? AppTheme.primaryColor : AppTheme.textSecondary,
             ),

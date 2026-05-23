@@ -60,6 +60,12 @@ dependencies:
   # Optimization Step 3: live camera scan + analyse-from-image for share
   # QR codes. Uses MLKit on Android and Apple Vision on iOS.
   mobile_scanner: ^7.2.0
+  # UI polish pass: declarative micro-animations (list stagger, button press
+  # scale, page transition). API surface is `.animate().fadeIn().slideY()`.
+  flutter_animate: ^4.5.2
+  # UI polish pass: shimmer skeleton placeholders for list / detail loading
+  # states. Drop-in replacement for CircularProgressIndicator on lists.
+  shimmer: ^3.0.0
 
 dev_dependencies:
   flutter_test:

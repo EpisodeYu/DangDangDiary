@@ -10,6 +10,7 @@ import '../../../models/share.dart';
 import '../../../providers/pet_provider.dart';
 import '../../../providers/share_provider.dart';
 import '../../../services/share_service.dart';
+import '../../../widgets/skeleton.dart';
 import 'share_qr_preview_screen.dart';
 
 class PetShareDetailScreen extends ConsumerStatefulWidget {
@@ -91,10 +92,35 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: async.when(
-          loading: () => const Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: CircularProgressIndicator(),
+          loading: () => SkeletonShimmer(
+            child: Column(
+              children: [
+                Container(
+                  width: 200,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1ECE7),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  width: 140,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1ECE7),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1ECE7),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+              ],
             ),
           ),
           error: (e, _) => Column(
@@ -119,7 +145,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
   Widget _buildEmptyCode(BuildContext context) {
     return Column(
       children: [
-        const Icon(Icons.qr_code_2, size: 48, color: AppTheme.textSecondary),
+        Icon(Icons.qr_code_rounded, size: 48, color: AppTheme.textSecondary),
         const SizedBox(height: 12),
         const Text(
           '还没有生成分享码',
@@ -131,7 +157,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
           height: 44,
           child: ElevatedButton.icon(
             onPressed: () => _generate(context),
-            icon: const Icon(Icons.add_link),
+            icon: Icon(Icons.add_link_rounded),
             label: const Text('生成 8 位分享码'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryColor,
@@ -177,7 +203,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: expired ? null : () => _copy(context, code.code),
-                icon: const Icon(Icons.copy),
+                icon: Icon(Icons.copy_rounded),
                 label: const Text('复制'),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppTheme.primaryColor,
@@ -192,7 +218,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: () => _confirmRegenerate(context),
-                icon: const Icon(Icons.refresh),
+                icon: Icon(Icons.refresh_rounded),
                 label: const Text('重新生成'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
@@ -212,7 +238,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             // Disabled when the code is expired so we never push a
             // preview page that would show a useless dead code.
             onPressed: expired ? null : () => _openQrPreview(context, code),
-            icon: const Icon(Icons.qr_code_2),
+            icon: Icon(Icons.qr_code_rounded),
             label: const Text('分享给好友 (QR 码)'),
             style: OutlinedButton.styleFrom(
               foregroundColor: AppTheme.primaryColor,
@@ -320,9 +346,26 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
     AsyncValue<List<SharedMember>> async,
   ) {
     return async.when(
-      loading: () => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 24),
-        child: Center(child: CircularProgressIndicator()),
+      loading: () => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: SkeletonShimmer(
+          child: Column(
+            children: List.generate(
+              2,
+              (i) => Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 12),
+                child: Row(
+                  children: const [
+                    SkeletonBox.circle(size: 40),
+                    SizedBox(width: 12),
+                    SkeletonBox(width: 140, height: 14, radius: 6),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
       error: (e, _) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -371,7 +414,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                   ? NetworkImage(m.avatarUrl!)
                   : null,
               child: (m.avatarUrl == null || m.avatarUrl!.isEmpty)
-                  ? const Icon(Icons.person, color: AppTheme.primaryColor)
+                  ? Icon(Icons.person_rounded, color: AppTheme.primaryColor)
                   : null,
             ),
             const SizedBox(width: 12),
@@ -438,7 +481,8 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
               const Divider(height: 1),
               if (m.role == PetRole.viewer)
                 ListTile(
-                  leading: const Icon(Icons.edit, color: AppTheme.primaryColor),
+                  leading: Icon(Icons.edit_rounded,
+                      color: AppTheme.primaryColor),
                   title: const Text('授予编辑权限'),
                   onTap: () {
                     Navigator.of(ctx).pop();
@@ -447,8 +491,8 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                 )
               else if (m.role == PetRole.editor)
                 ListTile(
-                  leading:
-                      const Icon(Icons.lock_open, color: AppTheme.primaryColor),
+                  leading: Icon(Icons.lock_open_rounded,
+                      color: AppTheme.primaryColor),
                   title: const Text('取消编辑权限'),
                   onTap: () {
                     Navigator.of(ctx).pop();
@@ -456,7 +500,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                   },
                 ),
               ListTile(
-                leading: const Icon(Icons.delete, color: AppTheme.errorColor),
+                leading: Icon(Icons.delete_rounded, color: AppTheme.errorColor),
                 title: const Text(
                   '删除分享权限',
                   style: TextStyle(color: AppTheme.errorColor),

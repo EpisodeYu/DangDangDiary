@@ -86,7 +86,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
           ? null
           : FloatingActionButton(
               onPressed: () => _openRecordPage(selectedPet.id),
-              child: const Icon(Icons.add),
+              child: Icon(Icons.add_rounded),
             ),
     );
   }
@@ -149,7 +149,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.pets, size: 64, color: Colors.grey.shade400),
+          Icon(Icons.pets_rounded, size: 64, color: Colors.grey.shade400),
           const SizedBox(height: 16),
           const Text(
             '请先创建宠物档案',

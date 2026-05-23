@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -23,6 +24,7 @@ import '../../services/photo_service.dart';
 import '../../services/voice_service.dart';
 import '../../utils/api_error.dart';
 import '../../utils/exif_helper.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/pet_chip_dropdown.dart';
 import '../../widgets/voice_intake_sheet.dart';
 import '../../widgets/voice_record_button.dart';
@@ -236,7 +238,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.pets, size: 64, color: Colors.grey.shade400),
+          Icon(Icons.pets_rounded, size: 64, color: Colors.grey.shade400),
           const SizedBox(height: 16),
           const Text('请先创建宠物档案',
               style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
@@ -263,7 +265,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.visibility_outlined,
+            Icon(Icons.visibility_rounded,
                 size: 64, color: Colors.grey.shade400),
             const SizedBox(height: 16),
             const Text(
@@ -301,7 +303,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   color: AppTheme.secondaryColor.withValues(alpha: 0.4),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.add_a_photo_outlined,
+                child: Icon(Icons.add_a_photo_rounded,
                     size: 36, color: AppTheme.primaryColor),
               ),
               const SizedBox(height: 16),
@@ -371,17 +373,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: kAppSoftShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -391,7 +387,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             children: [
               ClipRRect(
                 borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(12)),
+                    const BorderRadius.vertical(top: Radius.circular(16)),
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: Image.file(file, fit: BoxFit.cover, cacheWidth: 600),
@@ -411,7 +407,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                         shape: BoxShape.circle,
                       ),
                       child:
-                          const Icon(Icons.close, size: 16, color: Colors.white),
+                          Icon(Icons.close_rounded, size: 16, color: Colors.white),
                     ),
                   ),
                 ),
@@ -446,7 +442,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.calendar_today,
+                      Icon(Icons.calendar_today_rounded,
                           size: 18, color: AppTheme.textSecondary),
                       const SizedBox(width: 8),
                       Text(
@@ -455,7 +451,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                             fontSize: 15, color: AppTheme.textPrimary),
                       ),
                       const SizedBox(width: 2),
-                      Icon(Icons.chevron_right,
+                      Icon(Icons.chevron_right_rounded,
                           size: 20, color: Colors.grey.shade400),
                     ],
                   ),
@@ -501,7 +497,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add, size: 22, color: Colors.grey.shade500),
+            Icon(Icons.add_rounded, size: 22, color: Colors.grey.shade500),
             const SizedBox(width: 6),
             Text(
               '继续添加照片',
@@ -560,7 +556,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.photo_library),
+              leading: Icon(Icons.photo_library_rounded),
               title: const Text('从相册选择'),
               onTap: () {
                 Navigator.pop(ctx);
@@ -568,7 +564,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.camera_alt),
+              leading: Icon(Icons.camera_alt_rounded),
               title: const Text('拍照'),
               onTap: () {
                 Navigator.pop(ctx);
@@ -576,7 +572,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.close),
+              leading: Icon(Icons.close_rounded),
               title: const Text('取消'),
               onTap: () => Navigator.pop(ctx),
             ),
@@ -856,6 +852,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
   Future<void> _submit() async {
     if (_selectedFiles.isEmpty) return;
+    // Physical-feeling confirmation that the tap registered — this is
+    // the highest-stakes action in the whole record flow.
+    HapticFeedback.mediumImpact();
 
     // Every photo must have a pet chip before we can group. Callers
     // can always tap to pick so this is just a gentle guard.

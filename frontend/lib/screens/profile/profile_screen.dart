@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../config/theme.dart';
 import '../../providers/auth_provider.dart';
+import '../../widgets/app_card.dart';
 
 class ProfileScreen extends ConsumerStatefulWidget {
   const ProfileScreen({super.key});
@@ -38,10 +39,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('我的')),
       body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          Container(
+          AppCard(
+            lifted: true,
             padding: const EdgeInsets.all(20),
-            color: Colors.white,
             child: Row(
               children: [
                 GestureDetector(
@@ -59,8 +61,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                 : null) as ImageProvider?,
                         child: _pendingAvatarBytes == null &&
                                 user?.avatarUrl == null
-                            ? const Icon(
-                                Icons.person,
+                            ? Icon(
+                                Icons.person_rounded,
                                 size: 32,
                                 color: AppTheme.primaryColor,
                               )
@@ -99,8 +101,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.white, width: 2),
                             ),
-                            child: const Icon(
-                              Icons.camera_alt,
+                            child: Icon(
+                              Icons.camera_alt_rounded,
                               size: 12,
                               color: Colors.white,
                             ),
@@ -132,7 +134,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            const Icon(Icons.edit,
+                            Icon(Icons.edit_rounded,
                                 size: 16, color: AppTheme.textSecondary),
                           ],
                         ),
@@ -151,35 +153,35 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 12),
-          Container(
-            color: Colors.white,
+          const SizedBox(height: 16),
+          AppCard(
+            padding: EdgeInsets.zero,
             child: Column(
               children: [
                 _buildMenuItem(
                   context,
-                  icon: Icons.pets,
+                  icon: Icons.pets_rounded,
                   title: '宠物档案管理',
                   onTap: () => context.push('/profile/pets'),
                 ),
                 const Divider(height: 1, indent: 56),
                 _buildMenuItem(
                   context,
-                  icon: Icons.ios_share,
+                  icon: Icons.ios_share_rounded,
                   title: '宠物档案分享',
                   onTap: () => context.push('/profile/pets/share'),
                 ),
                 const Divider(height: 1, indent: 56),
                 _buildMenuItem(
                   context,
-                  icon: Icons.swap_horiz,
+                  icon: Icons.logout_rounded,
                   title: '切换账号',
                   onTap: () => _showLogoutDialog(context, ref),
                 ),
                 const Divider(height: 1, indent: 56),
                 _buildMenuItem(
                   context,
-                  icon: Icons.info_outline,
+                  icon: Icons.info_outline_rounded,
                   title: '关于',
                   onTap: () {},
                 ),
@@ -200,7 +202,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     return ListTile(
       leading: Icon(icon, color: AppTheme.primaryColor),
       title: Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
-      trailing: const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
+      trailing: Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
       onTap: onTap,
     );
   }

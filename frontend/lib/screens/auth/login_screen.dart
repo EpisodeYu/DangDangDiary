@@ -116,7 +116,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     labelText: '手机号',
                     hintText: '请输入手机号',
                     counterText: '',
-                    prefixIcon: const Icon(Icons.phone_android),
+                    prefixIcon: Icon(Icons.phone_android_rounded),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),
                   onChanged: (_) => setState(() {}),
@@ -137,7 +137,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           labelText: '验证码',
                           hintText: '6位数字',
                           counterText: '',
-                          prefixIcon: const Icon(Icons.lock_outline),
+                          prefixIcon: Icon(Icons.lock_outline_rounded),
                           border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12)),
                         ),

@@ -182,7 +182,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       height: 48,
       child: OutlinedButton.icon(
         onPressed: _isLoading ? null : _showRedeemEntrySheet,
-        icon: const Icon(Icons.qr_code_2),
+        icon: Icon(Icons.qr_code_rounded),
         label:
             const Text('通过分享码 / 二维码添加', style: TextStyle(fontSize: 16)),
         style: OutlinedButton.styleFrom(
@@ -209,22 +209,22 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.qr_code_scanner),
+              leading: Icon(Icons.qr_code_rounded),
               title: const Text('扫一扫'),
               onTap: () => Navigator.pop(ctx, 'scan'),
             ),
             ListTile(
-              leading: const Icon(Icons.photo_library_outlined),
+              leading: Icon(Icons.photo_library_rounded),
               title: const Text('从相册选择二维码'),
               onTap: () => Navigator.pop(ctx, 'gallery'),
             ),
             ListTile(
-              leading: const Icon(Icons.dialpad),
+              leading: Icon(Icons.dialpad_rounded),
               title: const Text('手动输入分享码'),
               onTap: () => Navigator.pop(ctx, 'manual'),
             ),
             ListTile(
-              leading: const Icon(Icons.close),
+              leading: Icon(Icons.close_rounded),
               title: const Text('取消'),
               onTap: () => Navigator.pop(ctx),
             ),
@@ -364,7 +364,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                       ? CachedNetworkImageProvider(_existingPet!.avatarUrl!)
                       : null),
               child: _avatarBytes == null && _existingPet?.avatarUrl == null
-                  ? const Icon(Icons.camera_alt, size: 32, color: AppTheme.primaryColor)
+                  ? Icon(Icons.camera_alt_rounded, size: 32, color: AppTheme.primaryColor)
                   : null,
             ),
             if (isUploading)
@@ -399,7 +399,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2),
                   ),
-                  child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                  child: Icon(Icons.edit_rounded, size: 14, color: Colors.white),
                 ),
               ),
           ],
@@ -564,7 +564,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             filled: true,
             fillColor: Colors.white,
-            suffixIcon: const Icon(Icons.calendar_today),
+            suffixIcon: Icon(Icons.calendar_today_rounded),
           ),
           controller: TextEditingController(
             text: _birthday != null
@@ -602,7 +602,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       height: 48,
       child: OutlinedButton.icon(
         onPressed: _isLoading ? null : _confirmAndDelete,
-        icon: const Icon(Icons.delete_outline),
+        icon: Icon(Icons.delete_rounded),
         label: const Text('删除此宠物档案', style: TextStyle(fontSize: 16)),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.errorColor,
@@ -618,7 +618,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       height: 48,
       child: OutlinedButton.icon(
         onPressed: _isLoading ? null : _confirmAndLeave,
-        icon: const Icon(Icons.exit_to_app),
+        icon: Icon(Icons.logout_rounded),
         label: const Text('不再查看此宠物档案', style: TextStyle(fontSize: 16)),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.errorColor,

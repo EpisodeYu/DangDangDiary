@@ -143,7 +143,7 @@ class _ShareScanScreenState extends State<ShareScanScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: _pickFromGallery,
-                      icon: const Icon(Icons.photo_library_outlined),
+                      icon: Icon(Icons.photo_library_rounded),
                       label: const Text('从相册选择'),
                     ),
                   ),
@@ -151,7 +151,7 @@ class _ShareScanScreenState extends State<ShareScanScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close),
+                      icon: Icon(Icons.close_rounded),
                       label: const Text('取消'),
                     ),
                   ),

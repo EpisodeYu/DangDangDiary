@@ -370,7 +370,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
                 ),
               ),
               const Spacer(),
-              Icon(Icons.expand_more, size: 20, color: Colors.grey.shade500),
+              Icon(Icons.arrow_drop_down_rounded, size: 18, color: Colors.grey.shade500),
             ],
           ),
         ),
@@ -393,7 +393,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
               Text(_dateFormat.format(_date),
                   style: const TextStyle(fontSize: 15)),
               const Spacer(),
-              const Icon(Icons.calendar_today,
+              Icon(Icons.calendar_today_rounded,
                   size: 18, color: AppTheme.textSecondary),
             ],
           ),
@@ -533,7 +533,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
                     title: Text(p.name),
                     subtitle: Text(p.petType == 'cat' ? '猫咪' : '狗狗'),
                     trailing: p.id == _petId
-                        ? const Icon(Icons.check,
+                        ? Icon(Icons.check_rounded,
                             color: AppTheme.primaryColor)
                         : null,
                     onTap: () => Navigator.pop(ctx, p.id),

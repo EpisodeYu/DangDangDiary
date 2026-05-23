@@ -137,7 +137,7 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
         ),
         alignment: Alignment.center,
         child: Icon(
-          _recording ? Icons.mic : Icons.mic_none,
+          _recording ? Icons.mic_rounded : Icons.mic_none_rounded,
           color: Colors.white,
           size: iconSize,
         ),
@@ -176,7 +176,7 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
-                  _willCancel ? Icons.close : Icons.keyboard_arrow_up,
+                  _willCancel ? Icons.close_rounded : Icons.keyboard_arrow_up_rounded,
                   size: 18,
                   color: hintColor,
                 ),

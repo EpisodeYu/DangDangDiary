@@ -97,7 +97,7 @@ class PhotoPickerGrid extends StatelessWidget {
                   color: Colors.black.withValues(alpha: 0.55),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.close, size: 14, color: Colors.white),
+                child: Icon(Icons.close_rounded, size: 14, color: Colors.white),
               ),
             ),
           ),
@@ -117,7 +117,7 @@ class PhotoPickerGrid extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add, size: 32, color: Colors.grey.shade500),
+            Icon(Icons.add_rounded, size: 32, color: Colors.grey.shade500),
             const SizedBox(height: 4),
             Text(
               '添加照片',

@@ -1,11 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
+import '../../widgets/app_card.dart';
+import '../../widgets/skeleton.dart';
 
 class PetManageScreen extends ConsumerStatefulWidget {
   const PetManageScreen({super.key});
@@ -34,7 +37,7 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('宠物档案管理')),
       body: petListAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+        loading: () => const SkeletonGenericList(rows: 4),
         error: (err, _) => Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -58,15 +61,16 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
       children: [
         Expanded(
           child: pets.isEmpty
-              ? const Center(
+              ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.pets, size: 64, color: AppTheme.textSecondary),
-                      SizedBox(height: 16),
-                      Text('还没有宠物档案', style: TextStyle(color: AppTheme.textSecondary)),
-                      SizedBox(height: 8),
-                      Text('点击下方按钮添加你的第一只宠物', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
+                      Icon(Icons.pets_rounded,
+                          size: 64, color: AppTheme.textSecondary),
+                      const SizedBox(height: 16),
+                      const Text('还没有宠物档案', style: TextStyle(color: AppTheme.textSecondary)),
+                      const SizedBox(height: 8),
+                      const Text('点击下方按钮添加你的第一只宠物', style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
                     ],
                   ),
                 )
@@ -75,7 +79,26 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: pets.length,
-                    itemBuilder: (context, index) => _buildPetCard(context, ref, pets[index]),
+                    itemBuilder: (context, index) {
+                      final card = _buildPetCard(context, ref, pets[index]);
+                      // Stagger the initial paint so the page doesn't
+                      // pop into existence all at once.
+                      return index < 6
+                          ? card
+                              .animate()
+                              .fadeIn(
+                                duration: 260.ms,
+                                delay: (index * 50).ms,
+                              )
+                              .slideY(
+                                begin: 0.08,
+                                end: 0,
+                                duration: 320.ms,
+                                delay: (index * 50).ms,
+                                curve: Curves.easeOutCubic,
+                              )
+                          : card;
+                    },
                   ),
                 ),
         ),
@@ -91,7 +114,7 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
                   ref.read(petListProvider.notifier).refresh();
                 }
               },
-              icon: const Icon(Icons.add),
+              icon: Icon(Icons.add_rounded),
               label: const Text('添加宠物'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryColor,
@@ -106,55 +129,50 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
   }
 
   Widget _buildPetCard(BuildContext context, WidgetRef ref, Pet pet) {
-    final card = Card(
+    final card = AppCard(
       margin: const EdgeInsets.only(bottom: 12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
-          if (updated == true) {
-            ref.read(petListProvider.notifier).refresh();
-          }
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              _buildAvatar(pet),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      pet.name,
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    if (pet.breed != null && pet.breed!.isNotEmpty)
-                      Text(
-                        pet.breed!,
-                        style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-                      ),
-                    if (_formatAge(pet.birthday) != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(
-                          _formatAge(pet.birthday)!,
-                          style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                        ),
-                      ),
-                  ],
+      padding: const EdgeInsets.all(16),
+      onTap: () async {
+        final updated = await context.push<bool>('/profile/pets/${pet.id}/edit');
+        if (updated == true) {
+          ref.read(petListProvider.notifier).refresh();
+        }
+      },
+      child: Row(
+        children: [
+          _buildAvatar(pet),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  pet.name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: AppTheme.textSecondary),
-            ],
+                const SizedBox(height: 4),
+                if (pet.breed != null && pet.breed!.isNotEmpty)
+                  Text(
+                    pet.breed!,
+                    style: const TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+                  ),
+                if (_formatAge(pet.birthday) != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      _formatAge(pet.birthday)!,
+                      style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                    ),
+                  ),
+              ],
+            ),
           ),
-        ),
+          Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+        ],
       ),
     );
 
@@ -180,7 +198,7 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
           color: AppTheme.errorColor,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: const Icon(Icons.delete, color: Colors.white),
+        child: Icon(Icons.delete_rounded, color: Colors.white),
       ),
       confirmDismiss: (_) => _confirmDelete(context),
       onDismissed: (_) => _deletePet(context, ref, pet.id),

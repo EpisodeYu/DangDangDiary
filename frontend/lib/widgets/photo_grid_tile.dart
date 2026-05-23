@@ -69,8 +69,8 @@ class PhotoGridTile extends StatelessWidget {
                   errorWidget: (context, _, err) => Container(
                     color: const Color(0xFFEFE5DD),
                     alignment: Alignment.center,
-                    child: const Icon(
-                      Icons.broken_image_outlined,
+                    child: Icon(
+                      Icons.broken_image_rounded,
                       size: 20,
                       color: AppTheme.textSecondary,
                     ),
@@ -146,7 +146,7 @@ class _SelectionCheck extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: selected
-          ? const Icon(Icons.check, size: 14, color: Colors.white)
+          ? Icon(Icons.check_rounded, size: 14, color: Colors.white)
           : null,
     );
   }

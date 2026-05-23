@@ -110,7 +110,7 @@ class _ErrorTile extends StatelessWidget {
         color: const Color(0xFFEFE5DD),
         alignment: Alignment.center,
         child: const Icon(
-          Icons.broken_image_outlined,
+          Icons.broken_image_rounded,
           size: 32,
           color: AppTheme.textSecondary,
         ),

@@ -12,6 +12,7 @@ import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
+import '../../widgets/skeleton.dart';
 
 class RoutineTab extends ConsumerWidget {
   final Pet pet;
@@ -36,19 +37,22 @@ class RoutineTab extends ConsumerWidget {
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
           asyncStatus.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.symmetric(vertical: 40),
-              child: Center(child: CircularProgressIndicator()),
+            loading: () => Container(
+              height: 132,
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1ECE7),
+                borderRadius: BorderRadius.circular(16),
+              ),
             ),
             error: (err, _) => _buildError(context, ref, err),
             data: (status) => _buildStatusCard(context, ref, status),
           ),
           const SizedBox(height: 20),
-          const Row(
+          Row(
             children: [
-              Icon(Icons.access_time, size: 16, color: AppTheme.textSecondary),
-              SizedBox(width: 6),
-              Text('日常记录',
+              Icon(Icons.schedule_rounded, size: 16, color: AppTheme.textSecondary),
+              const SizedBox(width: 6),
+              const Text('日常记录',
                   style: TextStyle(
                     fontSize: 14,
                     color: AppTheme.textSecondary,
@@ -58,10 +62,7 @@ class RoutineTab extends ConsumerWidget {
           ),
           const SizedBox(height: 12),
           asyncList.when(
-            loading: () => const Padding(
-              padding: EdgeInsets.symmetric(vertical: 40),
-              child: Center(child: CircularProgressIndicator()),
-            ),
+            loading: () => const SkeletonGenericList(rows: 4),
             error: (err, _) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
               child: Text('加载失败：${_friendlyError(err)}',
@@ -113,7 +114,7 @@ class RoutineTab extends ConsumerWidget {
             alignment: Alignment.centerRight,
             child: TextButton.icon(
               onPressed: () => context.push('/health/routine/cycle?petId=${pet.id}'),
-              icon: const Icon(Icons.settings, size: 16),
+              icon: Icon(Icons.settings_rounded, size: 16),
               label: const Text('设置周期'),
               style: TextButton.styleFrom(
                 foregroundColor: AppTheme.primaryColor,
@@ -215,7 +216,7 @@ class RoutineTab extends ConsumerWidget {
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Column(
         children: [
-          Icon(Icons.pets_outlined, size: 48, color: Colors.grey.shade400),
+          Icon(Icons.pets_rounded, size: 48, color: Colors.grey.shade400),
           const SizedBox(height: 8),
           const Text('还没有日常记录',
               style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
@@ -239,7 +240,7 @@ class RoutineTab extends ConsumerWidget {
               onPressed: (_) => _edit(context, ref, r),
               backgroundColor: Colors.blue.shade400,
               foregroundColor: Colors.white,
-              icon: Icons.edit,
+              icon: Icons.edit_rounded,
               label: '编辑',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -247,7 +248,7 @@ class RoutineTab extends ConsumerWidget {
               onPressed: (_) => _confirmDelete(context, ref, r),
               backgroundColor: AppTheme.errorColor,
               foregroundColor: Colors.white,
-              icon: Icons.delete,
+              icon: Icons.delete_rounded,
               label: '删除',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -261,7 +262,7 @@ class RoutineTab extends ConsumerWidget {
           ),
           child: Row(
             children: [
-              const Icon(Icons.calendar_today, size: 16, color: AppTheme.textSecondary),
+              Icon(Icons.calendar_today_rounded, size: 16, color: AppTheme.textSecondary),
               const SizedBox(width: 8),
               Text(r.performedAt,
                   style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),

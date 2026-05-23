@@ -8,6 +8,7 @@ import '../../config/theme.dart';
 import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
+import '../../widgets/skeleton.dart';
 
 class WeightTab extends ConsumerWidget {
   final Pet pet;
@@ -19,7 +20,7 @@ class WeightTab extends ConsumerWidget {
     final asyncList = ref.watch(weightListProvider(pet.id));
 
     return asyncList.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
+      loading: () => const SkeletonHealthList(),
       error: (err, _) => _buildError(context, ref, err),
       data: (data) => _buildContent(context, ref, data),
     );
@@ -30,7 +31,7 @@ class WeightTab extends ConsumerWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 48, color: Colors.grey.shade400),
+          Icon(Icons.error_outline_rounded, size: 48, color: Colors.grey.shade400),
           const SizedBox(height: 12),
           Text('加载失败：${_friendlyError(err)}',
               style: const TextStyle(color: AppTheme.textSecondary)),
@@ -57,11 +58,11 @@ class WeightTab extends ConsumerWidget {
         children: [
           _buildLatestCard(latest),
           const SizedBox(height: 20),
-          const Row(
+          Row(
             children: [
-              Icon(Icons.access_time, size: 16, color: AppTheme.textSecondary),
-              SizedBox(width: 6),
-              Text('体重记录',
+              Icon(Icons.schedule_rounded, size: 16, color: AppTheme.textSecondary),
+              const SizedBox(width: 6),
+              const Text('体重记录',
                   style: TextStyle(
                     fontSize: 14,
                     color: AppTheme.textSecondary,
@@ -74,6 +75,24 @@ class WeightTab extends ConsumerWidget {
             _buildEmpty()
           else
             ...data.weights.map((w) => _buildItem(context, ref, w)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmpty() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      child: Column(
+        children: [
+          Icon(Icons.monitor_weight_rounded,
+              size: 48, color: Colors.grey.shade400),
+          const SizedBox(height: 8),
+          const Text('还没有体重记录',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
+          const SizedBox(height: 4),
+          const Text('点击右下角加号添加第一条记录',
+              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
         ],
       ),
     );
@@ -115,23 +134,6 @@ class WeightTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildEmpty() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40),
-      child: Column(
-        children: [
-          Icon(Icons.monitor_weight_outlined, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 8),
-          const Text('还没有体重记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
-          const SizedBox(height: 4),
-          const Text('点击右下角加号添加第一条记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
   Widget _buildItem(BuildContext context, WidgetRef ref, WeightRecord w) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -144,7 +146,7 @@ class WeightTab extends ConsumerWidget {
               onPressed: (_) => _edit(context, ref, w),
               backgroundColor: Colors.blue.shade400,
               foregroundColor: Colors.white,
-              icon: Icons.edit,
+              icon: Icons.edit_rounded,
               label: '编辑',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -152,7 +154,7 @@ class WeightTab extends ConsumerWidget {
               onPressed: (_) => _confirmDelete(context, ref, w),
               backgroundColor: AppTheme.errorColor,
               foregroundColor: Colors.white,
-              icon: Icons.delete,
+              icon: Icons.delete_rounded,
               label: '删除',
               borderRadius: BorderRadius.circular(12),
             ),
@@ -166,7 +168,7 @@ class WeightTab extends ConsumerWidget {
           ),
           child: Row(
             children: [
-              const Icon(Icons.calendar_today, size: 16, color: AppTheme.textSecondary),
+              Icon(Icons.calendar_today_rounded, size: 16, color: AppTheme.textSecondary),
               const SizedBox(width: 8),
               Text(w.recordedAt,
                   style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
