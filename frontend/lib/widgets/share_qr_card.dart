@@ -109,17 +109,38 @@ class ShareQrCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 12),
-          Text(
-            '分享码  ${_spaced(code)}',
-            style: const TextStyle(
-              fontSize: 18,
-              letterSpacing: 4,
-              fontFamily: 'monospace',
-              fontWeight: FontWeight.w600,
-              color: AppTheme.textPrimary,
+          const Text(
+            '分享码',
+            style: TextStyle(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+              letterSpacing: 1,
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
+          // The code lives on its own line so an 8-char string with
+          // letter-spacing never has to compete with the "分享码 " label
+          // for the 312-dp content width. FittedBox(scaleDown) is a
+          // belt-and-braces guard: on the off chance the card is ever
+          // rendered narrower than its design size, the code shrinks
+          // instead of wrapping.
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              _grouped(code),
+              softWrap: false,
+              maxLines: 1,
+              overflow: TextOverflow.visible,
+              style: const TextStyle(
+                fontSize: 24,
+                letterSpacing: 4,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
           Text(
             '有效期至：${_formatExpiry(expiresAt)}',
             style: const TextStyle(
@@ -132,10 +153,13 @@ class ShareQrCard extends StatelessWidget {
     );
   }
 
-  String _spaced(String s) {
-    // Render "ABCD1234" as "A B C D 1 2 3 4" for at-a-glance readability
-    // when someone is forced to type it in manually.
-    return s.split('').join(' ');
+  /// Visually split the 8-char code into two groups of 4 for
+  /// readability (`ABCD  1234`) without inserting whitespace between
+  /// every character — which is what caused the wrap-to-next-line
+  /// rendering bug on real devices.
+  String _grouped(String s) {
+    if (s.length != 8) return s;
+    return '${s.substring(0, 4)}  ${s.substring(4)}';
   }
 
   String _formatExpiry(DateTime d) {
