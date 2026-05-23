@@ -21,16 +21,16 @@ GoRouter _buildTestRouter() {
             MainScaffold(navigationShell: shell),
         branches: [
           StatefulShellBranch(routes: [
-            GoRoute(path: '/record', builder: (_, __) => const Placeholder()),
+            GoRoute(path: '/record', builder: (_, _) => const Placeholder()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/health', builder: (_, __) => const Placeholder()),
+            GoRoute(path: '/health', builder: (_, _) => const Placeholder()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/timeline', builder: (_, __) => const Placeholder()),
+            GoRoute(path: '/timeline', builder: (_, _) => const Placeholder()),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/profile', builder: (_, __) => const Placeholder()),
+            GoRoute(path: '/profile', builder: (_, _) => const Placeholder()),
           ]),
         ],
       ),

@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -56,7 +55,7 @@ class _ShareQrPreviewScreenState extends State<ShareQrPreviewScreen> {
       final filename = 'dangdang_share_${widget.code}.png';
       final result = await SaverGallery.saveImage(
         bytes,
-        name: filename,
+        fileName: filename,
         androidRelativePath: 'Pictures/DangDangDiary',
         skipIfExists: false,
       );

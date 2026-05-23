@@ -54,7 +54,7 @@ Future<PhotoSaveResult> savePhotoToGallery(
 
     final result = await SaverGallery.saveImage(
       bytes,
-      name: filename,
+      fileName: filename,
       androidRelativePath: 'Pictures/DangDangDiary',
       skipIfExists: false,
     );
