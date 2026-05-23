@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 
 import '../../config/theme.dart';
+import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
 import '../../services/original_photo_cache.dart';
@@ -73,9 +74,23 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
     }
   }
 
+  PetRole? _roleForPet(int petId) {
+    final pets = ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+    for (final p in pets) {
+      if (p.id == petId) return p.role;
+    }
+    return null;
+  }
+
+  bool _canEditPet(int petId) {
+    final role = _roleForPet(petId);
+    return role == PetRole.owner || role == PetRole.editor;
+  }
+
   Future<void> _onLongPress(int photoId) async {
     final photo = ref.read(timelineProvider).photoMap[photoId];
     if (photo == null) return;
+    final canDelete = _canEditPet(photo.petId);
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -92,15 +107,21 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
               title: const Text('保存到相册'),
               onTap: () => Navigator.pop(ctx, 'save'),
             ),
-            ListTile(
-              leading:
-                  const Icon(Icons.delete_outline, color: AppTheme.errorColor),
-              title: const Text(
-                '删除',
-                style: TextStyle(color: AppTheme.errorColor),
+            // Viewer doesn't see "删除" at all — see the realdevice-fix
+            // follow-up to step 4 for the rationale (avoids the looping
+            // "权限已更新，请重试" SnackBar).
+            if (canDelete)
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline,
+                  color: AppTheme.errorColor,
+                ),
+                title: const Text(
+                  '删除',
+                  style: TextStyle(color: AppTheme.errorColor),
+                ),
+                onTap: () => Navigator.pop(ctx, 'delete'),
               ),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('取消'),
@@ -154,6 +175,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
   }
 
   Future<void> _deletePhoto(int photoId) async {
+    final petId = ref.read(timelineProvider).photoMap[photoId]?.petId;
     try {
       await PhotoService().deletePhoto(photoId);
       if (!mounted) return;
@@ -167,9 +189,15 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
     } on DioException catch (e) {
       if (!mounted) return;
       if (isPermissionError(e)) {
-        // Opt Step 4: pull the fresh role silently before next attempt.
-        ref.read(petListProvider.notifier).silentRefresh();
-        _showSnack('权限已更新，请重试');
+        // Await silentRefresh so the role we read for the SnackBar
+        // text is the server-truth role, not the stale one. Without
+        // this the viewer-after-demote case looped on
+        // "权限已更新，请重试" because we never actually checked the
+        // updated role.
+        await ref.read(petListProvider.notifier).silentRefresh();
+        if (!mounted) return;
+        final role = petId == null ? null : _roleForPet(petId);
+        _showSnack(permissionErrorMessage(role, deniedLabel: '无删除权限'));
       } else {
         _showSnack(_deleteErrorMessage(e));
       }

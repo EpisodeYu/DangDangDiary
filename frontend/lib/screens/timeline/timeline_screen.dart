@@ -244,20 +244,48 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     _openViewer(photo.id);
   }
 
+  /// Returns the caller's current role on `petId`, or `null` if the
+  /// pet is no longer accessible (e.g. share revoked). Reads from the
+  /// already-loaded [petListProvider], which silentRefresh keeps in
+  /// sync — see the realdevice-fix follow-up to step 4.
+  PetRole? _roleForPet(int petId) {
+    final pets = ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+    for (final p in pets) {
+      if (p.id == petId) return p.role;
+    }
+    return null;
+  }
+
+  bool _canEditPet(int petId) {
+    final role = _roleForPet(petId);
+    return role == PetRole.owner || role == PetRole.editor;
+  }
+
   Future<void> _onLongPressCalendar(TimelinePhoto photo) async {
     if (_selectionMode) return;
-    final action = await _showPhotoActionSheet(allowMultiSelect: true);
+    final canMutate = _canEditPet(photo.petId);
+    final action = await _showPhotoActionSheet(
+      allowMultiSelect: canMutate,
+      allowDelete: canMutate,
+    );
     if (!mounted) return;
     await _handlePhotoSheetAction(photo, action);
   }
 
   Future<void> _onLongPressImmersive(TimelinePhoto photo) async {
-    final action = await _showPhotoActionSheet(allowMultiSelect: false);
+    final canMutate = _canEditPet(photo.petId);
+    final action = await _showPhotoActionSheet(
+      allowMultiSelect: false,
+      allowDelete: canMutate,
+    );
     if (!mounted) return;
     await _handlePhotoSheetAction(photo, action);
   }
 
-  Future<String?> _showPhotoActionSheet({required bool allowMultiSelect}) {
+  Future<String?> _showPhotoActionSheet({
+    required bool allowMultiSelect,
+    required bool allowDelete,
+  }) {
     return showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
@@ -280,15 +308,21 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
               title: const Text('保存到相册'),
               onTap: () => Navigator.pop(ctx, 'save'),
             ),
-            ListTile(
-              leading:
-                  const Icon(Icons.delete_outline, color: AppTheme.errorColor),
-              title: const Text(
-                '删除',
-                style: TextStyle(color: AppTheme.errorColor),
+            // Hide "删除" for viewers — they can't delete anyway, and
+            // surfacing the button only to greet them with 403 +
+            // "权限已更新，请重试" felt broken to real users.
+            if (allowDelete)
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline,
+                  color: AppTheme.errorColor,
+                ),
+                title: const Text(
+                  '删除',
+                  style: TextStyle(color: AppTheme.errorColor),
+                ),
+                onTap: () => Navigator.pop(ctx, 'delete'),
               ),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
             ListTile(
               leading: const Icon(Icons.close),
               title: const Text('取消'),
@@ -353,6 +387,10 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
 
   Future<void> _deleteSinglePhoto(int photoId) async {
     final service = ref.read(_photoServiceProvider);
+    // Capture which pet this photo belongs to *before* we ask the
+    // server — the catch needs it to look up the post-refresh role.
+    final petId =
+        ref.read(timelineProvider).photoMap[photoId]?.petId;
     try {
       await service.deletePhoto(photoId);
       if (!mounted) return;
@@ -361,11 +399,13 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     } on DioException catch (e) {
       if (!mounted) return;
       if (isPermissionError(e)) {
-        // Opt Step 4: owner might have demoted us — silently pull the
-        // fresh role so the next delete attempt either succeeds or
-        // shows a disabled button.
-        ref.read(petListProvider.notifier).silentRefresh();
-        _showSnack('权限已更新，请重试');
+        // Await silentRefresh so the role we read below is the
+        // server-truth role, not the stale one our delete attempt
+        // was made under.
+        await ref.read(petListProvider.notifier).silentRefresh();
+        if (!mounted) return;
+        final role = petId == null ? null : _roleForPet(petId);
+        _showSnack(permissionErrorMessage(role, deniedLabel: '无删除权限'));
       } else {
         _showSnack(_deleteErrorMessage(e));
       }
@@ -382,16 +422,20 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     if (!mounted || confirmed != true) return;
 
     final service = ref.read(_photoServiceProvider);
+    final timelineState = ref.read(timelineProvider);
     final deleted = <int>[];
     final failed = <int>[];
-    bool anyPermissionFailure = false;
+    final permissionFailedPetIds = <int>{};
     for (final id in ids) {
       try {
         await service.deletePhoto(id);
         deleted.add(id);
       } on DioException catch (e) {
         failed.add(id);
-        if (isPermissionError(e)) anyPermissionFailure = true;
+        if (isPermissionError(e)) {
+          final pid = timelineState.photoMap[id]?.petId;
+          if (pid != null) permissionFailedPetIds.add(pid);
+        }
       } catch (_) {
         failed.add(id);
       }
@@ -400,17 +444,38 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     if (deleted.isNotEmpty) {
       ref.read(timelineProvider.notifier).removePhotos(deleted);
     }
-    if (anyPermissionFailure) {
-      ref.read(petListProvider.notifier).silentRefresh();
+
+    // Resolve the permission-error copy AFTER silentRefresh so a
+    // viewer who got demoted mid-batch sees "无删除权限" instead of
+    // the endless "权限已更新，请重试" loop. We pick the strongest
+    // remaining role across the failed pets: if any one of them is
+    // still editor/owner the failure is plausibly transient.
+    String? permissionMessage;
+    if (permissionFailedPetIds.isNotEmpty) {
+      await ref.read(petListProvider.notifier).silentRefresh();
+      if (!mounted) return;
+      PetRole? bestRole;
+      for (final pid in permissionFailedPetIds) {
+        final r = _roleForPet(pid);
+        if (r == PetRole.owner ||
+            r == PetRole.editor ||
+            (bestRole == null && r != null)) {
+          bestRole = r;
+          if (r == PetRole.owner || r == PetRole.editor) break;
+        }
+      }
+      permissionMessage =
+          permissionErrorMessage(bestRole, deniedLabel: '无删除权限');
     }
+
     _exitSelection();
     if (failed.isEmpty) {
       _showSnack('已删除 ${deleted.length} 张');
     } else if (deleted.isEmpty) {
-      _showSnack(anyPermissionFailure ? '权限已更新，请重试' : '删除失败，请稍后重试');
+      _showSnack(permissionMessage ?? '删除失败，请稍后重试');
     } else {
-      final suffix = anyPermissionFailure
-          ? '${failed.length} 张权限已更新，请重试'
+      final suffix = permissionMessage != null
+          ? '${failed.length} 张${permissionMessage}'
           : '${failed.length} 张失败';
       _showSnack('已删除 ${deleted.length} 张，$suffix');
     }

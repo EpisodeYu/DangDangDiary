@@ -981,9 +981,26 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       Navigator.of(context, rootNavigator: true).pop();
 
       if (isPermissionError(e)) {
-        // Opt Step 4: owner revoked our editor role mid-session.
-        ref.read(petListProvider.notifier).silentRefresh();
-        _showSnack('权限已更新，请重试');
+        // Owner revoked our editor role mid-session. Await
+        // silentRefresh so the SnackBar reflects the *post-refresh*
+        // role; if it's still viewer we say "无上传权限" instead of
+        // looping on the misleading "权限已更新，请重试".
+        await ref.read(petListProvider.notifier).silentRefresh();
+        if (!mounted) return;
+        // Best-effort: pick the first pet we attempted to upload to.
+        final petIds = groups.keys.toList(growable: false);
+        PetRole? role;
+        if (petIds.isNotEmpty) {
+          final pets =
+              ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+          for (final p in pets) {
+            if (p.id == petIds.first) {
+              role = p.role;
+              break;
+            }
+          }
+        }
+        _showSnack(permissionErrorMessage(role, deniedLabel: '无上传权限'));
       } else {
         final data = e.response?.data;
         String message = '上传失败，请稍后重试';

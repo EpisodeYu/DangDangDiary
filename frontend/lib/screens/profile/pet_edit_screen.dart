@@ -871,12 +871,31 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       }
     } catch (e) {
       if (mounted) {
-        // Opt Step 4: if the owner just demoted us we still hit a 403
-        // here; refresh quietly + show a clear "retry" message.
+        // If the owner just demoted us we still hit a 403 here; await
+        // silentRefresh so the SnackBar reflects the post-refresh
+        // role. Returning the looping "权限已更新，请重试" for a
+        // viewer made the bug from the realdevice round equally
+        // confusing on this screen.
         if (e is DioException && isPermissionError(e)) {
-          ref.read(petListProvider.notifier).silentRefresh();
+          await ref.read(petListProvider.notifier).silentRefresh();
+          if (!mounted) return;
+          PetRole? role;
+          if (widget.petId != null) {
+            final pets =
+                ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+            for (final p in pets) {
+              if (p.id == widget.petId) {
+                role = p.role;
+                break;
+              }
+            }
+          }
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('权限已更新，请重试')),
+            SnackBar(
+              content: Text(
+                permissionErrorMessage(role, deniedLabel: '无编辑权限'),
+              ),
+            ),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
