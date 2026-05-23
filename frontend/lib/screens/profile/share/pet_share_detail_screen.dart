@@ -10,6 +10,7 @@ import '../../../models/share.dart';
 import '../../../providers/pet_provider.dart';
 import '../../../providers/share_provider.dart';
 import '../../../services/share_service.dart';
+import 'share_qr_preview_screen.dart';
 
 class PetShareDetailScreen extends ConsumerStatefulWidget {
   final int petId;
@@ -204,7 +205,42 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             ),
           ],
         ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            // Disabled when the code is expired so we never push a
+            // preview page that would show a useless dead code.
+            onPressed: expired ? null : () => _openQrPreview(context, code),
+            icon: const Icon(Icons.qr_code_2),
+            label: const Text('分享给好友 (QR 码)'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primaryColor,
+              side: const BorderSide(color: AppTheme.primaryColor),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
       ],
+    );
+  }
+
+  void _openQrPreview(BuildContext context, ShareCode code) {
+    final petListAsync = ref.read(petListProvider);
+    final pet = petListAsync.valueOrNull?.pets
+        .where((p) => p.id == widget.petId)
+        .firstOrNull;
+    final petName = pet?.name ?? '我的宠物';
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ShareQrPreviewScreen(
+          code: code.code,
+          petName: petName,
+          expiresAt: code.expiresAt,
+        ),
+      ),
     );
   }
 
@@ -450,6 +486,10 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
       await ref
           .read(sharedMembersProvider(widget.petId).notifier)
           .updateRole(m.userId, role);
+      // Opt Step 4: keep our own pet list in sync so a multi-device
+      // owner sees the latest member role on the other device on
+      // resume. Silent — no spinner on this page.
+      ref.read(petListProvider.notifier).silentRefresh();
       if (!context.mounted) return;
       final name = m.nickname?.isNotEmpty == true ? m.nickname! : '该成员';
       final msg = role == PetRole.editor

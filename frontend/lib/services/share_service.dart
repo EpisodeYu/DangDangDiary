@@ -88,6 +88,11 @@ String shareErrorToMessage(Object error) {
         return '分享码生成失败，请重试';
       case 'SHARE_OWNER_CANNOT_LEAVE':
         return '档案所有者不能退出共享';
+      // Frontend-only code used by Optimization Step 3's scanner /
+      // gallery picker when the QR payload doesn't look like one of
+      // our share URLs. The backend never returns this.
+      case 'SHARE_QR_INVALID':
+        return '这不是一张当当日记的分享码';
     }
   }
   return '操作失败，请稍后重试';

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_image_compress/flutter_image_compress.dart';
@@ -13,6 +14,8 @@ import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/share_provider.dart';
 import '../../services/share_service.dart';
+import '../../utils/api_error.dart';
+import 'share/share_scan_screen.dart';
 
 const _catBreeds = [
   '中华田园猫', '英国短毛猫', '美国短毛猫', '布偶猫', '暹罗猫',
@@ -84,6 +87,21 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   bool get _isOwner => _existingPet?.isOwner ?? true;
   bool get _isViewer => _existingPet?.role == PetRole.viewer;
   bool get _canEdit => !_isEditing || !_isViewer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Opt Step 4: When opening the edit screen of an existing pet, do
+    // one silent fetch in the background. If the owner just elevated
+    // this user from viewer→editor on another device, we'll pick the
+    // new role up in-place without flashing the list to AsyncLoading.
+    if (_isEditing) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(petListProvider.notifier).silentRefresh();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -163,9 +181,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     return SizedBox(
       height: 48,
       child: OutlinedButton.icon(
-        onPressed: _isLoading ? null : _showRedeemDialog,
+        onPressed: _isLoading ? null : _showRedeemEntrySheet,
         icon: const Icon(Icons.qr_code_2),
-        label: const Text('通过分享码添加档案', style: TextStyle(fontSize: 16)),
+        label:
+            const Text('通过分享码 / 二维码添加', style: TextStyle(fontSize: 16)),
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.primaryColor,
           side: const BorderSide(color: AppTheme.primaryColor),
@@ -173,6 +192,73 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         ),
       ),
     );
+  }
+
+  /// Three-way entry to the redeem flow added in Optimization Step 3:
+  ///   * 扫一扫 — push the full-screen camera scanner
+  ///   * 从相册选择二维码 — analyse a single picked image
+  ///   * 手动输入分享码 — fall through to the legacy 8-char dialog
+  /// Each path eventually funnels into the existing [_redeem] for the
+  /// network call, so the success / error UX matches what's already
+  /// shipping.
+  Future<void> _showRedeemEntrySheet() async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.qr_code_scanner),
+              title: const Text('扫一扫'),
+              onTap: () => Navigator.pop(ctx, 'scan'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('从相册选择二维码'),
+              onTap: () => Navigator.pop(ctx, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.dialpad),
+              title: const Text('手动输入分享码'),
+              onTap: () => Navigator.pop(ctx, 'manual'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted) return;
+
+    switch (choice) {
+      case 'scan':
+        final code = await Navigator.of(context).push<String>(
+          MaterialPageRoute(builder: (_) => const ShareScanScreen()),
+        );
+        if (code != null && mounted) await _redeem(code);
+        break;
+      case 'gallery':
+        final code = await pickShareCodeFromGallery();
+        if (!mounted) break;
+        if (code == null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('图片中没有识别到当当日记的分享码'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        } else {
+          await _redeem(code);
+        }
+        break;
+      case 'manual':
+        await _showRedeemDialog();
+        break;
+    }
   }
 
   Future<void> _showRedeemDialog() async {
@@ -785,9 +871,18 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存失败: $e')),
-        );
+        // Opt Step 4: if the owner just demoted us we still hit a 403
+        // here; refresh quietly + show a clear "retry" message.
+        if (e is DioException && isPermissionError(e)) {
+          ref.read(petListProvider.notifier).silentRefresh();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('权限已更新，请重试')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('保存失败: $e')),
+          );
+        }
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);

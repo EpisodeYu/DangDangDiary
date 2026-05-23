@@ -15,9 +15,19 @@ class AppConstants {
 
   /// When true, run an on-device TFLite model to check that the uploaded
   /// image contains a cat or dog before sending it to the server.
-  /// Set to false to fall back to server-side recognition (see
-  /// backend setting ENABLE_SERVER_PET_RECOGNITION).
-  static const bool enableClientPetRecognition = true;
+  ///
+  /// Disabled by default since Optimization Step 1 (2026-05): users often
+  /// upload strongly-related but non-cat-non-dog photos (pet supplies,
+  /// group shots, food bowls, vet receipts) and a strict client-side
+  /// classifier rejects them, hurting UX. The server-side
+  /// `RecognizeScene` path is also off by default (see
+  /// `ENABLE_SERVER_PET_RECOGNITION`).
+  ///
+  /// The flag, [PetClassifier] service, the TFLite asset under
+  /// `assets/models/` and the `tflite_flutter` dependency are all kept
+  /// so future work can re-enable on-device recognition by flipping
+  /// this back to `true`.
+  static const bool enableClientPetRecognition = false;
 
   /// TFLite model bundled under assets/models/. Expected to be a
   /// MobileNet-family ImageNet classifier (float32, 1x224x224x3 input,
@@ -39,4 +49,25 @@ class AppConstants {
   ///   'zero_to_one'      -> px / 255            (TF Hub classification signature)
   ///   'minus_one_to_one' -> (px / 127.5) - 1    (Keras preprocess_input)
   static const String petClassifierNormalization = 'zero_to_one';
+
+  // ---------------- Share-code QR (Optimization Step 3) ----------------
+
+  /// URL prefix used as the QR payload for share codes. Pattern is
+  /// `<shareLinkBaseUrl><8-char code>`. The domain itself is a
+  /// placeholder until a real one is purchased; `parseShareCode`
+  /// validates `host` against [shareLinkHosts] so we can swap the
+  /// production host in one place without breaking already-printed
+  /// QR codes.
+  static const String shareLinkBaseUrl = 'https://dangdangdiary.app/s/';
+
+  /// Hosts we accept while scanning a QR. Anything else is rejected
+  /// up-front with a user-facing "这不是一张当当日记的分享码".
+  static const Set<String> shareLinkHosts = {
+    'dangdangdiary.app',
+    'app.dangdangdiary.com',
+  };
+
+  /// Server-side share codes are 8 ASCII alphanumerics, matched
+  /// case-insensitively but normalized to upper-case before redeem.
+  static final RegExp shareCodePattern = RegExp(r'^[A-Z0-9]{8}$');
 }

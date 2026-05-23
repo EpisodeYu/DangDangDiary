@@ -52,6 +52,14 @@ dependencies:
   uuid: ^4.4.0
   # Phase 2 Step 4: vector brand assets for Logo / Splash
   flutter_svg: ^2.0.10+1
+  # Optimization Step 3 (share QR) + Step 5 (save original photo):
+  # save images (QR card / pet original) into the system gallery.
+  saver_gallery: ^4.1.1
+  # Optimization Step 3: render the QR widget shown on the share card.
+  qr_flutter: ^4.1.0
+  # Optimization Step 3: live camera scan + analyse-from-image for share
+  # QR codes. Uses MLKit on Android and Apple Vision on iOS.
+  mobile_scanner: ^7.2.0
 
 dev_dependencies:
   flutter_test:
