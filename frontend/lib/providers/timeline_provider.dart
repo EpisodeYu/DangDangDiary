@@ -184,12 +184,28 @@ class TimelineMerge {
     return '$y-$m';
   }
 
+  static String dayKey(DateTime d) {
+    final y = d.year.toString().padLeft(4, '0');
+    final m = d.month.toString().padLeft(2, '0');
+    final day = d.day.toString().padLeft(2, '0');
+    return '$y-$m-$day';
+  }
+
   static String monthLabel(String key) {
     final parts = key.split('-');
     return '${int.parse(parts[0])}年${int.parse(parts[1])}月';
   }
 
-  static List<TimelineGroup> regroupByMonth(
+  static String dayLabel(String key) {
+    final parts = key.split('-');
+    return '${int.parse(parts[0])}年${int.parse(parts[1])}月'
+        '${int.parse(parts[2])}日';
+  }
+
+  /// Optimization Step 2: groups are now per-day; empty days are
+  /// skipped naturally. Photo list ordering must already be DESC by
+  /// stable key on entry — that yields newest-day-first group order.
+  static List<TimelineGroup> regroupByDay(
     List<int> orderedIds,
     Map<int, TimelinePhoto> photoMap,
   ) {
@@ -198,7 +214,7 @@ class TimelineMerge {
     for (final id in orderedIds) {
       final p = photoMap[id];
       if (p == null) continue;
-      final key = monthKey(p.takenAt);
+      final key = dayKey(p.takenAt);
       final bucket = groups.putIfAbsent(key, () {
         order.add(key);
         return <TimelinePhoto>[];
@@ -206,15 +222,28 @@ class TimelineMerge {
       bucket.add(p);
     }
     return order
-        .map((k) => TimelineGroup(date: k, label: monthLabel(k), photos: groups[k]!))
+        .map((k) => TimelineGroup(date: k, label: dayLabel(k), photos: groups[k]!))
         .toList(growable: false);
   }
 
+  /// Map `"YYYY-MM"` → index of the first photo (in flat order) that
+  /// belongs to that month. Used by `jumpToMonth` so the right-rail
+  /// scrollbar (still month-level) can land on the newest day group
+  /// inside the targeted month.
+  ///
+  /// `groups` may be either day-level (new) or month-level (legacy);
+  /// we always derive the month prefix from `group.date[0..7]`.
   static Map<String, int> rebuildMonthIndex(List<TimelineGroup> groups) {
     final map = <String, int>{};
     var idx = 0;
     for (final g in groups) {
-      map[g.date] = idx;
+      // `g.date` is "YYYY-MM-DD" after Step 2; substring(0, 7) gives
+      // back the month prefix without needing to parse.
+      final monthPrefix =
+          g.date.length >= 7 ? g.date.substring(0, 7) : g.date;
+      // putIfAbsent keeps the first (newest) day's index for each
+      // month so jumpToMonth lands at the top of that month.
+      map.putIfAbsent(monthPrefix, () => idx);
       idx += g.photos.length;
     }
     return map;
@@ -243,7 +272,7 @@ class TimelineMerge {
           .compareTo(_OrderKey.fromPhoto(photoMap[b]!));
     });
 
-    final groups = regroupByMonth(ids, photoMap);
+    final groups = regroupByDay(ids, photoMap);
     final monthIndex = rebuildMonthIndex(groups);
 
     // Decide cursors and has_more_* based on direction.
@@ -480,7 +509,7 @@ class TimelineNotifier extends StateNotifier<TimelineState> {
     final orderedIds = state.orderedPhotoIds
         .where((id) => !removing.contains(id))
         .toList(growable: false);
-    final groups = TimelineMerge.regroupByMonth(orderedIds, photoMap);
+    final groups = TimelineMerge.regroupByDay(orderedIds, photoMap);
     final monthIndex = TimelineMerge.rebuildMonthIndex(groups);
 
     final newDistribution = state.monthDistribution

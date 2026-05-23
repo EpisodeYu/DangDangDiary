@@ -89,6 +89,16 @@ def _month_key(d: date) -> str:
     return f"{d.year:04d}-{d.month:02d}"
 
 
+def _day_label(key: str) -> str:
+    # "2024-01-03" -> "2024年1月3日"
+    year, month, day = key.split("-")
+    return f"{int(year)}年{int(month)}月{int(day)}日"
+
+
+def _day_key(d: date) -> str:
+    return f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
+
+
 async def _resolve_accessible_pet_ids(
     db: AsyncSession, user_id: int, requested: list[int] | None,
 ) -> list[int]:
@@ -169,12 +179,37 @@ async def _load_uploader_nicknames(
 
 
 def _group_by_month(photos: list[TimelinePhotoItem]) -> list[TimelineGroup]:
+    """Legacy month-level grouping. Kept for tests / quick rollback; the
+    production timeline window now uses [_group_by_day] (Optimization
+    Step 2)."""
     bucket: "OrderedDict[str, list[TimelinePhotoItem]]" = OrderedDict()
     for p in photos:
         key = _month_key(p.taken_at)
         bucket.setdefault(key, []).append(p)
     return [
         TimelineGroup(date=key, label=_month_label(key), photos=items)
+        for key, items in bucket.items()
+    ]
+
+
+def _group_by_day(photos: list[TimelinePhotoItem]) -> list[TimelineGroup]:
+    """Day-level grouping (Optimization Step 2).
+
+    Photos arrive already DESC by stable key (taken_at, created_at, id),
+    so iterating an `OrderedDict` keyed by day naturally yields groups
+    in newest-day-first order. Days with no photos simply do not appear
+    in the output — there's no placeholder bucket.
+
+    Note `groups[].date` is now `"YYYY-MM-DD"`; the front-end derives
+    the month prefix when it needs to align with the right-rail
+    scrollbar (which is still month-level).
+    """
+    bucket: "OrderedDict[str, list[TimelinePhotoItem]]" = OrderedDict()
+    for p in photos:
+        key = _day_key(p.taken_at)
+        bucket.setdefault(key, []).append(p)
+    return [
+        TimelineGroup(date=key, label=_day_label(key), photos=items)
         for key, items in bucket.items()
     ]
 
@@ -535,8 +570,11 @@ async def get_timeline_window(
         )
         for photo in photos
     ]
-    # `items` is already DESC by stable key.
-    groups = _group_by_month(items)
+    # `items` is already DESC by stable key. Group by day so the
+    # frontend can render one header per day (no empty days appear),
+    # while the month-level scrollbar keeps using
+    # `/photos/timeline/dates` which is still aggregated by month.
+    groups = _group_by_day(items)
 
     head = photos[0]
     tail = photos[-1]

@@ -46,6 +46,16 @@ class TimelinePhoto {
     return '$y-$m';
   }
 
+  /// `YYYY-MM-DD` form matching the new (Optimization Step 2)
+  /// `TimelineGroup.date`. Used by the calendar view to align tiles
+  /// with their day group key.
+  String get dayKey {
+    final y = takenAt.year.toString().padLeft(4, '0');
+    final m = takenAt.month.toString().padLeft(2, '0');
+    final d = takenAt.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
   factory TimelinePhoto.fromJson(Map<String, dynamic> json) {
     return TimelinePhoto(
       id: json['id'] as int,
@@ -64,7 +74,9 @@ class TimelinePhoto {
 
 @immutable
 class TimelineGroup {
-  final String date; // "YYYY-MM"
+  /// Optimization Step 2: bucket per day. `"YYYY-MM-DD"`.
+  /// Days without photos simply do not appear in the response.
+  final String date;
   final String label;
   final List<TimelinePhoto> photos;
 

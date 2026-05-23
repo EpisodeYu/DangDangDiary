@@ -72,8 +72,10 @@ class TimelinePhotoItem(BaseModel):
 
 
 class TimelineGroup(BaseModel):
-    date: str  # "YYYY-MM"
-    label: str  # e.g. "2024年1月"
+    # Optimization Step 2: bucket per day (was per month previously).
+    # Days without any photo simply don't appear in the response.
+    date: str  # "YYYY-MM-DD"
+    label: str  # e.g. "2024年1月3日"
     photos: list[TimelinePhotoItem]
 
 

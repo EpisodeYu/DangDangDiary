@@ -9,7 +9,9 @@ import '../../models/timeline.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/timeline_provider.dart';
 import '../../services/original_photo_cache.dart';
+import '../../services/photo_saver.dart';
 import '../../services/photo_service.dart';
+import '../../utils/api_error.dart';
 import '../../widgets/immersive_photo_tile.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/photo_grid_tile.dart';
@@ -46,8 +48,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   final ScrollController _calendarScrollController = ScrollController();
   final ScrollController _immersiveScrollController = ScrollController();
 
-  // Keyed per month so we can scroll-to on jumpToMonth (calendar mode only).
-  final Map<String, GlobalKey> _monthKeys = {};
+  // Optimization Step 2: groups are per-day now, so each key is a
+  // `YYYY-MM-DD` day group. The right-rail scrollbar is still
+  // month-level — its highlight uses `_activeMonth`, which is just
+  // `_activeDayKey.substring(0, 7)`.
+  final Map<String, GlobalKey> _dayKeys = {};
   String? _activeMonth;
 
   bool _selectionMode = false;
@@ -136,34 +141,49 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   }
 
   void _updateActiveMonth() {
-    String? candidate;
-    for (final entry in _monthKeys.entries) {
+    String? candidateMonth;
+    for (final entry in _dayKeys.entries) {
       final ctx = entry.value.currentContext;
       if (ctx == null) continue;
       final box = ctx.findRenderObject();
       if (box is! RenderBox) continue;
       final pos = box.localToGlobal(Offset.zero).dy;
       if (pos <= 180) {
-        candidate = entry.key;
+        // entry.key is "YYYY-MM-DD"; derive the month prefix that
+        // the scrollbar speaks.
+        candidateMonth = entry.key.length >= 7
+            ? entry.key.substring(0, 7)
+            : entry.key;
       } else {
         break;
       }
     }
-    if (candidate != null && candidate != _activeMonth) {
-      setState(() => _activeMonth = candidate);
+    if (candidateMonth != null && candidateMonth != _activeMonth) {
+      setState(() => _activeMonth = candidateMonth);
     }
   }
 
   Future<void> _scrollToMonth(String month) async {
-    final key = _monthKeys[month];
-    final ctx = key?.currentContext;
+    // `_dayKeys` is populated in build() in iteration order over
+    // `state.groups`, which is newest-first. The first day-key that
+    // starts with `month-` is therefore the newest day inside that
+    // month — exactly what the user expects when scrubbing the
+    // scrollbar to a month.
+    String? targetDayKey;
+    for (final k in _dayKeys.keys) {
+      if (k.startsWith('$month-')) {
+        targetDayKey = k;
+        break;
+      }
+    }
+    if (targetDayKey == null) return;
+    final ctx = _dayKeys[targetDayKey]?.currentContext;
     if (ctx != null) {
       await Scrollable.ensureVisible(
         ctx,
         duration: const Duration(milliseconds: 240),
         alignment: 0.0,
       );
-      return;
     }
   }
 
@@ -256,6 +276,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
                 onTap: () => Navigator.pop(ctx, 'multi'),
               ),
             ListTile(
+              leading: const Icon(Icons.download_outlined),
+              title: const Text('保存到相册'),
+              onTap: () => Navigator.pop(ctx, 'save'),
+            ),
+            ListTile(
               leading:
                   const Icon(Icons.delete_outline, color: AppTheme.errorColor),
               title: const Text(
@@ -286,12 +311,22 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       case 'multi':
         _enterSelection(photo.id);
         break;
+      case 'save':
+        await _savePhotoToGallery(photo);
+        break;
       case 'delete':
         final confirmed = await _confirmDelete(1);
         if (!mounted || confirmed != true) return;
         await _deleteSinglePhoto(photo.id);
         break;
     }
+  }
+
+  Future<void> _savePhotoToGallery(TimelinePhoto photo) async {
+    _showSnack('正在保存...');
+    final result = await savePhotoToGallery(photo.id, takenAt: photo.takenAt);
+    if (!mounted) return;
+    _showSnack(result.success ? '已保存到相册' : (result.errorMessage ?? '保存失败'));
   }
 
   Future<bool?> _confirmDelete(int count) {
@@ -325,7 +360,15 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       _showSnack('已删除');
     } on DioException catch (e) {
       if (!mounted) return;
-      _showSnack(_deleteErrorMessage(e));
+      if (isPermissionError(e)) {
+        // Opt Step 4: owner might have demoted us — silently pull the
+        // fresh role so the next delete attempt either succeeds or
+        // shows a disabled button.
+        ref.read(petListProvider.notifier).silentRefresh();
+        _showSnack('权限已更新，请重试');
+      } else {
+        _showSnack(_deleteErrorMessage(e));
+      }
     } catch (_) {
       if (!mounted) return;
       _showSnack('删除失败，请稍后重试');
@@ -348,7 +391,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
         deleted.add(id);
       } on DioException catch (e) {
         failed.add(id);
-        if (_isPermissionError(e)) anyPermissionFailure = true;
+        if (isPermissionError(e)) anyPermissionFailure = true;
       } catch (_) {
         failed.add(id);
       }
@@ -357,25 +400,25 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     if (deleted.isNotEmpty) {
       ref.read(timelineProvider.notifier).removePhotos(deleted);
     }
+    if (anyPermissionFailure) {
+      ref.read(petListProvider.notifier).silentRefresh();
+    }
     _exitSelection();
     if (failed.isEmpty) {
       _showSnack('已删除 ${deleted.length} 张');
     } else if (deleted.isEmpty) {
-      _showSnack(anyPermissionFailure ? '无删除权限' : '删除失败，请稍后重试');
+      _showSnack(anyPermissionFailure ? '权限已更新，请重试' : '删除失败，请稍后重试');
     } else {
-      final suffix = anyPermissionFailure ? '${failed.length} 张无删除权限' : '${failed.length} 张失败';
+      final suffix = anyPermissionFailure
+          ? '${failed.length} 张权限已更新，请重试'
+          : '${failed.length} 张失败';
       _showSnack('已删除 ${deleted.length} 张，$suffix');
     }
   }
 
-  bool _isPermissionError(DioException e) {
-    final data = e.response?.data;
-    if (data is Map && data['code'] == 'PET_EDITOR_REQUIRED') return true;
-    return e.response?.statusCode == 403;
-  }
-
   String _deleteErrorMessage(DioException e) {
-    if (_isPermissionError(e)) return '无删除权限';
+    // Permission errors are handled before this is called; this only
+    // formats non-permission failures.
     final data = e.response?.data;
     if (data is Map<String, dynamic>) {
       return (data['message'] as String?) ?? '删除失败，请稍后重试';
@@ -424,7 +467,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     }
 
     for (final g in state.groups) {
-      _monthKeys.putIfAbsent(g.date, () => GlobalKey());
+      _dayKeys.putIfAbsent(g.date, () => GlobalKey());
     }
 
     return PopScope(
@@ -747,9 +790,9 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   ) {
     return [
       SliverToBoxAdapter(
-        key: _monthKeys[group.date],
+        key: _dayKeys[group.date],
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 6),
           child: Row(
             children: [
               Container(
