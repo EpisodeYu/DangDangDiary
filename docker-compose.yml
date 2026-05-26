@@ -1,4 +1,28 @@
 services:
+  fastapi:
+    # 2026-05-26：后端从宿主机裸进程（nohup uvicorn）收进 compose。
+    # 绑定挂载源码 + --reload，保留开发热重载：改代码即时生效，
+    # 只有改 requirements.txt 才需要 `docker compose build fastapi`。
+    build: ./backend
+    container_name: dangdang-fastapi
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      # 仅绑回环：方便宿主机 curl localhost:8000 / SSH 隧道调试，
+      # 对外访问仍只经 nginx（fastapi:8000，compose 网络内直连）。
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+
   nginx:
     image: nginx:1.27-alpine
     container_name: dangdang-nginx
@@ -15,6 +39,7 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       - minio
+      - fastapi
 
   postgres:
     # Phase 2 Step 3 — uses the official pgvector image so the
