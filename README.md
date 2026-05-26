@@ -309,22 +309,31 @@ cp backend/.env.example backend/.env
 # - DashScope 双 Key（北京 + 新加坡）
 ```
 
-### 6.2 起基础设施
+### 6.2 起整栈（含后端）
 
 ```bash
-docker compose up -d        # PG (pgvector) + Redis + MinIO + Nginx
+docker compose up -d        # FastAPI + PG (pgvector) + Redis + MinIO + Nginx
 ```
 
-### 6.3 后端
+后端（FastAPI）已收进 compose：`build: ./backend`，绑定挂载源码 + `--reload`，
+**改业务代码自动热重载，无需重启**；只有改 `requirements.txt` 才要重建镜像。
+
+### 6.3 后端运维
 
 ```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-# Swagger: http://localhost:8000/docs (或 http://<server>/docs 走 Nginx)
+# 数据库迁移（.env 用 compose 服务名，必须在容器里跑）
+docker compose exec fastapi alembic upgrade head
+
+# 改了 .env 后重读配置
+docker compose restart fastapi
+
+# 改了 requirements.txt 后重建
+docker compose build fastapi && docker compose up -d fastapi
+
+# Swagger: https://<域名>/docs（走 Nginx），或本机 http://localhost:8000/docs
 ```
+
+> 起停、迁移、换域名、媒体签名等运维细节与踩坑见 [`docs/deploy-ops.md`](docs/deploy-ops.md)。
 
 ### 6.4 前端
 
@@ -363,6 +372,7 @@ cd backend && pytest -v        # 跑在内存 SQLite，无需 PG
 | [`docs/00-global-rules.md`](docs/00-global-rules.md) | 跨步骤约定（最高优先级） |
 | [`docs/DangDangDiary-technical-plan.plan.md`](docs/DangDangDiary-technical-plan.plan.md) | 总架构、DB、API 全览 |
 | [`docs/step1-environment-setup.md`](docs/step1-environment-setup.md) | 环境与项目骨架 |
+| [`docs/deploy-ops.md`](docs/deploy-ops.md) | 部署与运维：起停 / 重启 / 迁移 / 换域名 / 媒体签名踩坑 |
 | [`docs/step2-auth-module.md`](docs/step2-auth-module.md) | 短信 + JWT |
 | [`docs/step3-pet-profile.md`](docs/step3-pet-profile.md) | 宠物档案 CRUD |
 | [`docs/step4-photo-record.md`](docs/step4-photo-record.md) | 照片上传 + EXIF + 校验 |

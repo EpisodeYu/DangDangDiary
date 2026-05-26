@@ -24,21 +24,30 @@ Each step doc (`docs/step1-*.md` through `docs/step8-*.md`) is the authoritative
 
 ### Key Commands (once implemented)
 
+The backend (FastAPI) runs **inside docker compose** (service `fastapi`), with the
+source bind-mounted and `--reload` on — editing backend code hot-reloads, no rebuild.
+See `docs/deploy-ops.md` for the full ops runbook.
+
 ```bash
-# Start all backend services
+# Start the whole stack (FastAPI + PG + Redis + MinIO + Nginx)
 docker compose up -d
 
-# Backend: run migrations
-cd backend && alembic upgrade head
+# Backend: run migrations (must run INSIDE the container — .env uses
+# compose service names like `postgres`, unresolvable from the host)
+docker compose exec fastapi alembic upgrade head
 
-# Backend: run dev server
-cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Backend: restart after editing .env / rebuild after editing requirements.txt
+docker compose restart fastapi
+docker compose build fastapi && docker compose up -d fastapi
+
+# Backend: logs
+docker compose logs -f fastapi
 
 # Frontend: run on device
 cd frontend && flutter run
 
-# Frontend: build APK
-cd frontend && flutter build apk --release
+# Frontend: build release APK (inject the real domain at build time)
+cd frontend && flutter build apk --release --dart-define=BASE_URL=https://dangdangdiary.org
 ```
 
 ## Architecture
@@ -118,6 +127,7 @@ The phone client **only** talks to Nginx. Internal service addresses (`minio:900
 | `docs/DangDangDiary-technical-plan.plan.md` | Full architecture, DB schema, API overview |
 | `docs/step0-env-setup-manual.md` | Manual environment setup reference |
 | `docs/step1-environment-setup.md` | Docker Compose + project skeletons |
+| `docs/deploy-ops.md` | Deploy/ops runbook: start-stop, restart, migrations, domain switch, the `MINIO_ENDPOINT`↔nginx `Host` signing gotcha |
 | `docs/step2-auth-module.md` | SMS auth + JWT |
 | `docs/step3-pet-profile.md` | Pet CRUD + profile UI |
 | `docs/step4-photo-record.md` | Photo upload + validation + EXIF |
