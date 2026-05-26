@@ -6,7 +6,7 @@ from app.exceptions import AppException
 from app.models.pet import Pet, PetMember, PetShareCode, MemberRole
 from app.schemas.pet import PetCreate, PetResponse, PetUpdate
 from app.services.storage import (
-    adelete_object_by_url,
+    adelete_avatar,
     adelete_objects_by_prefix,
     aupload_pet_avatar,
 )
@@ -263,7 +263,7 @@ async def upload_avatar(
     await db.refresh(pet)
 
     if old_avatar_url:
-        await adelete_object_by_url(old_avatar_url)
+        await adelete_avatar(old_avatar_url)
 
     active = (
         await _has_active_share_code(db, pet_id)
@@ -303,7 +303,7 @@ async def delete_pet(
     await db.commit()
 
     if avatar_url:
-        await adelete_object_by_url(avatar_url)
+        await adelete_avatar(avatar_url)
 
     await adelete_objects_by_prefix(settings.MINIO_BUCKET_PHOTOS, f"{pet_id}/")
     await adelete_objects_by_prefix(settings.MINIO_BUCKET_THUMBNAILS, f"{pet_id}/")

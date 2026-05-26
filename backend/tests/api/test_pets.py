@@ -22,6 +22,7 @@ from app.models.routine import Routine, RoutineType
 from app.models.user import User
 from app.models.vaccination import Vaccination
 from app.models.weight import Weight
+from app.services.storage import build_avatar_url
 
 from tests.conftest import _mock_sms_send
 
@@ -196,10 +197,10 @@ async def test_editor_can_write_but_not_delete_pet(client, test_engine):
     assert resp.json()["name"] == "新名字"
 
     # B can upload avatar.
-    fake_url = "http://public.example.com/media/avatars/pets/x/editor.jpg"
+    fake_key = "pets/x/editor.jpg"
     files = {"file": ("x.jpg", b"\xff\xd8\xff" + b"\x00" * 256, "image/jpeg")}
     with patch(
-        "app.services.storage.upload_pet_avatar", return_value=fake_url
+        "app.services.storage.upload_pet_avatar", return_value=fake_key
     ):
         resp = await c.post(
             f"/pets/{pet_id}/avatar", files=files, headers=headers_b,
@@ -235,21 +236,23 @@ async def test_avatar_upload_success(client):
     pet = await _create_pet(c, headers)
     pet_id = pet["id"]
 
-    fake_url = "http://public.example.com/media/avatars/pets/1/123.jpg"
+    # upload_pet_avatar now returns a bucket-relative key; the response
+    # composes the public URL via build_avatar_url at serialization time.
+    fake_key = "pets/1/123.jpg"
 
     files = {"file": ("avatar.jpg", b"\xff\xd8\xff" + b"\x00" * 256, "image/jpeg")}
 
-    # The pet service now calls `aupload_pet_avatar`, which delegates
-    # to `storage.upload_pet_avatar` via `asyncio.to_thread`. Patching
-    # the sync helper keeps the assertion style unchanged.
+    # The pet service calls `aupload_pet_avatar`, which delegates to
+    # `storage.upload_pet_avatar` via `asyncio.to_thread`. Patch the sync helper.
     with patch(
-        "app.services.storage.upload_pet_avatar", return_value=fake_url
+        "app.services.storage.upload_pet_avatar", return_value=fake_key
     ) as upload_mock:
         resp = await c.post(f"/pets/{pet_id}/avatar", files=files, headers=headers)
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["avatar_url"] == fake_url
+    assert body["avatar_url"] == build_avatar_url(fake_key)
+    assert body["avatar_url"] != fake_key  # key was actually composed into a URL
     assert upload_mock.call_count == 1
     args, _ = upload_mock.call_args
     assert args[0] == pet_id
@@ -291,11 +294,12 @@ async def test_delete_pet_cascades_all_tables_and_minio(client, test_engine):
     pet = await _create_pet(c, headers, name="要删的")
     pet_id = pet["id"]
 
-    # Set an avatar_url so the delete path triggers delete_object_by_url too.
+    # Set an avatar_url (bucket-relative key, per the key-storage switch) so
+    # the delete path triggers avatar cleanup too.
     sm = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
     async with sm() as s:
         pet_row = (await s.execute(select(Pet).where(Pet.id == pet_id))).scalar_one()
-        pet_row.avatar_url = "http://public.example.com/media/avatars/pets/1/old.jpg"
+        pet_row.avatar_url = "pets/1/old.jpg"
 
         # Seed one record per child table so we can verify cascade.
         s.add(Photo(
@@ -331,8 +335,8 @@ async def test_delete_pet_cascades_all_tables_and_minio(client, test_engine):
 
     # Patch MinIO side-effects on the underlying sync helpers — the
     # service now calls the async wrappers, which dispatch through
-    # `asyncio.to_thread(delete_object_by_url, ...)` etc.
-    with patch("app.services.storage.delete_object_by_url") as del_url, \
+    # `asyncio.to_thread(delete_avatar, ...)` etc.
+    with patch("app.services.storage.delete_avatar") as del_avatar, \
             patch("app.services.storage.delete_objects_by_prefix") as del_prefix:
         resp = await c.delete(f"/pets/{pet_id}", headers=headers)
 
@@ -355,8 +359,8 @@ async def test_delete_pet_cascades_all_tables_and_minio(client, test_engine):
         assert pet_row is None
 
     # MinIO cleanup calls.
-    assert del_url.call_count == 1
-    assert del_url.call_args.args[0].endswith("/old.jpg")
+    assert del_avatar.call_count == 1
+    assert del_avatar.call_args.args[0] == "pets/1/old.jpg"
 
     prefixes = [call.args for call in del_prefix.call_args_list]
     assert len(prefixes) == 3

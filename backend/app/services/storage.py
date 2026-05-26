@@ -113,7 +113,13 @@ async def aensure_all_buckets() -> None:
 
 
 def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
-    """Upload pet avatar and return the public URL path."""
+    """Upload pet avatar and return the bucket-relative object key.
+
+    Returns the key (e.g. ``pets/8/170.jpg``), not an absolute URL. The
+    public URL is composed at response time via [build_avatar_url] so a
+    domain / scheme change needs no data migration (mirrors how photos store
+    keys, not URLs).
+    """
     bucket = settings.MINIO_BUCKET_AVATARS
     _ensure_bucket(bucket)
 
@@ -129,11 +135,15 @@ def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
         content_type=content_type,
     )
 
-    return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+    return object_key
 
 
 def upload_user_avatar(user_id: int, data: bytes, content_type: str) -> str:
-    """Upload user avatar and return the public URL path."""
+    """Upload user avatar and return the bucket-relative object key.
+
+    See [upload_pet_avatar] — returns the key (``users/2/170.jpg``), the URL
+    is built at response time by [build_avatar_url].
+    """
     bucket = settings.MINIO_BUCKET_AVATARS
     _ensure_bucket(bucket)
 
@@ -149,7 +159,21 @@ def upload_user_avatar(user_id: int, data: bytes, content_type: str) -> str:
         content_type=content_type,
     )
 
-    return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+    return object_key
+
+
+def build_avatar_url(key: str | None) -> str | None:
+    """Compose the public avatar URL from a bucket-relative object key.
+
+    Idempotent: ``None`` passes through, and an already-absolute URL (legacy
+    rows written before the key-storage switch, or a double call) is returned
+    unchanged so it is always safe to apply at the serialization boundary.
+    """
+    if not key:
+        return key
+    if key.startswith("http://") or key.startswith("https://"):
+        return key
+    return f"{settings.PUBLIC_BASE_URL}/media/{settings.MINIO_BUCKET_AVATARS}/{key}"
 
 
 def upload_photo(
@@ -298,6 +322,32 @@ def delete_object_by_url(url: str) -> None:
         pass
 
 
+def delete_avatar(value: str | None) -> None:
+    """Delete an avatar object given its bucket-relative key.
+
+    Avatars are stored as keys (``pets/8/170.jpg``). Tolerates a legacy
+    absolute URL / ``/media/avatars/...`` path so it still cleans up rows
+    written before the key-storage switch.
+    """
+    if not value:
+        return
+    key = value
+    if "://" in value or value.startswith("/"):
+        marker = f"/media/{settings.MINIO_BUCKET_AVATARS}/"
+        path = urlparse(value).path
+        idx = path.find(marker)
+        if idx == -1:
+            return
+        key = path[idx + len(marker):]
+    if not key:
+        return
+    client = _get_client()
+    try:
+        client.remove_object(settings.MINIO_BUCKET_AVATARS, key)
+    except Exception:
+        pass
+
+
 def delete_objects_by_prefix(bucket: str, prefix: str) -> None:
     """Delete all objects under a prefix in a bucket."""
     client = _get_client()
@@ -351,6 +401,10 @@ async def adelete_photo_objects(
 
 async def adelete_object_by_url(url: str) -> None:
     await asyncio.to_thread(delete_object_by_url, url)
+
+
+async def adelete_avatar(value: str | None) -> None:
+    await asyncio.to_thread(delete_avatar, value)
 
 
 async def adelete_objects_by_prefix(bucket: str, prefix: str) -> None:

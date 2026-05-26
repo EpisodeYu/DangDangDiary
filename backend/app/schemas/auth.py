@@ -2,6 +2,8 @@ import re
 
 from pydantic import BaseModel, field_validator
 
+from app.services.storage import build_avatar_url
+
 _PHONE_RE = re.compile(r"^1[3-9]\d{9}$")
 _CODE_RE = re.compile(r"^\d{6}$")
 
@@ -47,6 +49,13 @@ class UserResponse(BaseModel):
     avatar_url: str | None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("avatar_url", mode="after")
+    @classmethod
+    def _avatar_to_url(cls, v: str | None) -> str | None:
+        # avatar_url is stored as a bucket-relative key; compose the public
+        # URL here so every construction path (incl. model_validate) is covered.
+        return build_avatar_url(v)
 
 
 class TokenResponse(BaseModel):

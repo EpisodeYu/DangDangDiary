@@ -73,15 +73,22 @@ MINIO_ENDPOINT=minio:9000
 
 ### 2. `PUBLIC_BASE_URL` = 对外域名
 
-后端返回给前端的所有媒体 URL（缩略图、原图预签名）都是 `f"{PUBLIC_BASE_URL}/media/..."`
-拼出来的，**响应时即时拼接**（DB 只存 object key，换域名无需迁移数据）。
+后端返回给前端的所有媒体 URL（缩略图、原图预签名、**头像**）都是
+`f"{PUBLIC_BASE_URL}/media/..."` 拼出来的，**响应时即时拼接**：DB 里只存
+bucket 相对 object key，绝对 URL 在序列化时由 `storage.build_thumbnail_url` /
+`get_photo_presigned_url` / `build_avatar_url` 组装。**换域名 / 切 HTTPS 无需迁移数据。**
 
 ```ini
 PUBLIC_BASE_URL=https://dangdangdiary.org
 ```
 
-> 换域名 / 切 HTTPS 只需改这一行 + `docker compose restart fastapi`。前端的 `BASE_URL`
-> 是编译期 `--dart-define` 注入的，见 README §6.4 / `frontend/lib/config/constants.dart`。
+> 换域名只需改这一行 + `docker compose restart fastapi`。前端的 `BASE_URL` 是编译期
+> `--dart-define` 注入的，见 README §6.4 / `frontend/lib/config/constants.dart`。
+>
+> ⚠️ **历史坑（2026-05-26 已修）**：头像曾经把**绝对 URL** 整条存进
+> `users.avatar_url` / `pets.avatar_url`，换域名后旧头像全变死链（缩略图/原图因为存 key
+> 反而自愈了，对比之下更隐蔽）。已重构为存 key + `build_avatar_url` 响应时拼接，并由迁移
+> `c9d0e1f2a3b4` 把存量绝对 URL 改写成 key。**以后任何新的"媒体 URL"字段都不要存绝对 URL。**
 
 ### 3. ⚠️ `MINIO_ENDPOINT` 必须与 nginx `/media/` 的 `Host` 头一致
 
