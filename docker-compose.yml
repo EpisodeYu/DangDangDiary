@@ -3,8 +3,12 @@ services:
     image: nginx:1.27-alpine
     container_name: dangdang-nginx
     restart: unless-stopped
-    ports:
-      - "80:80"
+    # 2026-05-26：80 端口由 ~/infra/ingress/ 统一接管。
+    # 这里改为 expose（仅 docker network 内部可达），ingress-nginx attach
+    # 到 dangdangdiary_default 网络后通过容器名 `dangdang-nginx:80` 直连。
+    # 想绕过 ingress 测试时可临时改回 ports: ["80:80"]，但先确认 80 没被 ingress 占。
+    expose:
+      - "80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     extra_hosts:
