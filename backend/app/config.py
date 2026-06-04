@@ -18,10 +18,6 @@ class Settings(BaseSettings):
 
     # MinIO (internal access)
     MINIO_ENDPOINT: str = "127.0.0.1:9000"
-    # Externally-reachable host:port for MinIO. Used to mint presigned URLs
-    # that third parties (DashScope STT) can fetch. Leave empty to derive
-    # `<PUBLIC_BASE_URL host>:9000` at call time.
-    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin123"
     MINIO_SECURE: bool = False
