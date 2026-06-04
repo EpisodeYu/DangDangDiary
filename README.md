@@ -8,13 +8,20 @@
 
 **当当日记** 是一个 Flutter + FastAPI 全栈项目，把"养它的每一天"沉淀成可回看的时间轴：拍照、写日常、记体重、登记驱虫疫苗，到期本地推送提醒。
 
-核心特色是 **AI 重塑录入体验**——你几乎不用手动整理：
+### 🤝 一只宠物，全家一起记 —— 多人档案共享
 
-- 🎙️ **长按语音速记**：实时流式 STT + 通义千问意图抽取，一句"奶牛今天 4.2 公斤，吃了驱虫药"自动落成结构化草稿（体重 / 驱虫 / 日常各归各位）。
-- 🖼️ **照片自动归档**：DashScope 多模态 Embedding + pgvector 相似度检索，上传照片自动判定属于哪只毛孩子，并通过用户的确认/纠正持续学习。
-- 🐾 **入库前 AI 安检**：端侧 TFLite 先判图里有没有猫狗，避免把无关照片传上云。
+当当日记的核心是**协作**：一只宠物的档案可以被全家共享。
 
-围绕 AI 之外，还配套：多人**档案共享**（OWNER / EDITOR / VIEWER 角色 + 邀请码）、**到期本地推送**、品牌化 Logo & Splash，以及一套以稳定可用为目标的 MVP 基线（手机号 SMS + JWT、HEIC 转码、EXIF 时间还原、MinIO + Nginx 统一入口）。
+- **三级角色**：OWNER / EDITOR / VIEWER，权限精确到每一个写操作（列表接口直接下发 `my_role`，前端按角色禁用按钮，不会"点进去才报 403"）。
+- **扫码即加入**：生成带二维码的分享卡片，家人相机扫一扫、或手填 8 位邀请码即可加入。
+- **安全可控**：邀请码一次性使用、24h 过期、OWNER 可随时撤销；成员可主动退出、亦可被移除。
+
+### 🎙️ AI 重塑录入体验 —— 几乎不用手动整理
+
+- **长按语音速记**：实时流式 STT + 通义千问意图抽取，一句"奶牛今天 4.2 公斤，吃了驱虫药"自动落成结构化草稿（体重 / 驱虫 / 日常各归各位）。
+- **照片自动归档**：DashScope 多模态 Embedding + pgvector 相似度检索，上传照片自动指认到对应毛孩子，并随用户的确认/纠正持续学习。
+
+此外还有：**到期本地推送**提醒、品牌化 Logo & Splash、UI 微动画与骨架屏，以及一套以稳定可用为目标的 MVP 基线（手机号 SMS + JWT、HEIC 转码、EXIF 时间还原、MinIO + Nginx 统一入口）。
 
 ---
 
@@ -41,10 +48,10 @@
 | 健康管理 | 体重曲线、内/外驱虫、疫苗、日常护理记录；驱虫倒计时与到期提醒 |
 | 时间轴 | 沉浸式照片墙 + 多档案筛选 + 滚动条快速定位 |
 | 本地推送 | 驱虫到期前 3 天本地通知，零依赖外部推送服务 |
-| 语音速记 *(Phase 2)* | 长按 30 秒说话 → 自动转文字 → LLM 抽槽 → 生成记录草稿 |
-| 照片自动归类 *(Phase 2)* | 多模态向量化 + pgvector 相似度，把刚上传的照片自动指认到对应宠物 |
-| 档案共享 *(Phase 2)* | OWNER / EDITOR / VIEWER 三级角色，邀请码加入，可主动退出/被移除 |
-| 品牌化 *(Phase 2)* | Logo / Splash / AppBar / 加载动效统一品牌资产 |
+| 档案共享 | OWNER / EDITOR / VIEWER 三级角色；二维码卡片 + 8 位邀请码加入，可主动退出 / 被移除 |
+| 语音速记 | 长按说话 → 流式转文字 → LLM 抽槽 → 生成记录草稿 |
+| 照片自动归类 | 多模态向量化 + pgvector 相似度，把刚上传的照片自动指认到对应宠物 |
+| 品牌化 & UI 打磨 | Logo / Splash / AppBar 统一品牌资产；列表微动画 + 骨架屏加载态 |
 
 ---
 
@@ -54,39 +61,40 @@
 
 | 类别 | 选型 | 用途与说明 |
 |------|------|------------|
-| 框架 | **Flutter 3.11+** / Dart | 单代码库覆盖 Android / iOS，AI 生成代码质量高 |
-| 状态管理 | **flutter_riverpod ^2.5** | 类型安全、可测、解耦 UI 与业务，配合 `AsyncValue` 处理异步状态 |
-| 路由 | **go_router ^14** | 声明式路由 + 深链跳转，支持登录拦截 |
-| 网络 | **dio ^5.7** | 拦截器统一注入 JWT、自动续 token；APP 唤醒时主动清空连接池避开 NAT 失效 |
-| 本地存储 | **shared_preferences** | Token / 偏好持久化 |
-| 图像处理 | **image_picker / image_picker_android (Android 13+ Photo Picker)** + **flutter_image_compress** + **exif** | 多选限制真实生效；HEIC → JPEG 在端上完成；EXIF 拍摄日期解析 |
-| 端上模型 | **tflite_flutter ^0.11** + **image ^4.3** | 离线宠物（猫/狗）二分类，过滤无关图片，省一次云端调用 |
-| 图片缓存 | **cached_network_image** + 自定义 `PaintingBinding` 缓存（512 MiB / 600 entries）| 时间轴缩略图与原图同时常驻，滚动不掉帧 |
-| 大图查看 | **photo_view** | 双指缩放、原图懒加载 |
-| 本地推送 | **flutter_local_notifications ^18** + **timezone** | 驱虫到期日历调度，无需 FCM/极光 |
-| 录音 | **record ^5.1** | 长按语音输入；通过 `dependency_overrides` 修复上游 record_linux 类型不兼容 |
-| 矢量品牌 | **flutter_svg** | Logo / Splash / AppBar 复用同一份 SVG |
-| 其它 | go_router, intl, pull_to_refresh, permission_handler, path_provider, flutter_slidable, uuid | — |
+| 框架 | `Flutter 3.11+` / Dart | 单代码库覆盖 Android / iOS |
+| 状态管理 | `flutter_riverpod: ^2.5.0` | 类型安全、可测、解耦 UI 与业务，配合 `AsyncValue` 处理异步状态 |
+| 路由 | `go_router: ^14.0.0` | 声明式路由 + 深链跳转，支持登录拦截 |
+| 网络 | `dio: ^5.7.0` | 拦截器统一注入 JWT、自动续 token；APP 唤醒时主动清空连接池避开 NAT 失效 |
+| 本地存储 | `shared_preferences: ^2.3.0` | Token / 偏好持久化 |
+| 图像处理 | `image_picker: ^1.1.0` / `image_picker_android: ^0.8.13`（Android 13+ Photo Picker）+ `flutter_image_compress: ^2.3.0` + `exif: ^3.3.0` | 多选限制真实生效；HEIC → JPEG 端上完成；EXIF 拍摄日期解析 |
+| 图片缓存 | `cached_network_image: ^3.4.0` + 自定义 `PaintingBinding` 缓存（512 MiB / 600 entries） | 时间轴缩略图与原图同时常驻，滚动不掉帧 |
+| 大图查看 | `photo_view: ^0.15.0` | 双指缩放、原图懒加载 |
+| 本地推送 | `flutter_local_notifications: ^18.0.1` + `timezone: ^0.9.4` | 驱虫到期日历调度，无需 FCM / 极光 |
+| 语音录制 | `record: ^5.1.2` | 长按语音输入 |
+| 二维码分享 | `qr_flutter: ^4.1.0` + `mobile_scanner: ^7.2.0` + `saver_gallery: ^4.1.1` | 生成分享二维码卡片、相机扫码加入、卡片 / 原图存相册（扫码 Android 走 MLKit、iOS 走 Apple Vision） |
+| UI 打磨 | `flutter_animate: ^4.5.2` + `shimmer: ^3.0.0` | 列表错峰 / 按钮按压微动画 + 骨架屏加载态 |
+| 矢量品牌 | `flutter_svg: ^2.0.10+1` | Logo / Splash / AppBar 复用同一份 SVG |
+| 其它 | `intl` / `pull_to_refresh` / `permission_handler` / `path_provider` / `flutter_slidable` / `uuid` | — |
 
 ### 2.2 后端：Python 3.11 + FastAPI
 
 | 类别 | 选型 | 用途与说明 |
 |------|------|------------|
-| Web 框架 | **FastAPI 0.115** + **Uvicorn[standard]** | 自动生成 Swagger，原生 async；统一异常处理转 `code/message/details` |
-| ORM | **SQLAlchemy 2.0 async** + **asyncpg** | 全异步 DB 访问；`AsyncSession` 注入 |
-| 迁移 | **Alembic 1.13** | 版本化迁移，支持 pgvector 扩展 |
-| 数据校验 | **Pydantic 2.9** + **pydantic-settings** | 强类型请求/响应模型；`.env` 自动加载 |
-| 鉴权 | **python-jose[cryptography]** + **passlib[bcrypt]** | JWT 编解码；bcrypt 是为头像 / 备用密钥保留 |
-| 缓存 | **redis-py 5.1** | 短信验证码 (5 min TTL)、60 s 重发冷却、分类结果短期缓存 |
-| 对象存储 | **minio 7.2** | S3 协议；启动时预创建所有 bucket，省请求路径开销 |
-| 文件上传 | **python-multipart** | multipart/form-data 解析 |
-| 出站 HTTP | **httpx 0.27** | 调阿里云、DashScope；连接复用 |
-| 任务调度 | **apscheduler 3.10** | 后端定时任务（清理临时文件等） |
-| 图像 | **Pillow 10.4** | 缩略图生成、EXIF 解析、宠物校验前预处理 |
-| 阿里云 | **alibabacloud-dypnsapi**（短信认证）+ **alibabacloud-imagerecog**（场景识别） | SMS + 服务端宠物校验 |
-| AI 服务 | **dashscope ^1.20** + **openai ^1.40** | 通义千问 LLM (qwen-flash)、fun-asr 流式 STT、多模态向量化 |
-| 向量库 | **pgvector ^0.3** | PostgreSQL 原生向量索引，照片自动归类的相似度引擎 |
-| 测试 | **pytest** + **pytest-asyncio** + **aiosqlite** | 单测跑在内存 SQLite 上，无需起 PG |
+| Web 框架 | `fastapi==0.115.0` + `uvicorn[standard]==0.30.0` | 自动生成 Swagger，原生 async；统一异常处理转 `code/message/details` |
+| ORM | `sqlalchemy==2.0.35`（async）+ `asyncpg` | 全异步 DB 访问；`AsyncSession` 注入 |
+| 迁移 | `alembic==1.13.0` | 版本化迁移，支持 pgvector 扩展 |
+| 数据校验 | `pydantic==2.9.0` + `pydantic-settings` | 强类型请求 / 响应模型；`.env` 自动加载 |
+| 鉴权 | `python-jose[cryptography]` + `passlib[bcrypt]` | JWT 编解码；bcrypt 为头像 / 备用密钥保留 |
+| 缓存 | `redis==5.1.0` | 短信验证码 (5 min TTL)、60 s 重发冷却、分类结果短期缓存 |
+| 对象存储 | `minio==7.2.9` | S3 协议；启动时预创建所有 bucket，省请求路径开销 |
+| 文件上传 | `python-multipart` | multipart/form-data 解析 |
+| 出站 HTTP | `httpx==0.27.0` | 调阿里云、DashScope；连接复用 |
+| 任务调度 | `apscheduler==3.10.4` | 后端定时任务（清理临时文件等） |
+| 图像 | `pillow==10.4.0` | 缩略图生成、EXIF 解析、上传图片预处理 |
+| 阿里云 SDK | `alibabacloud-dypnsapi`（短信认证）+ `alibabacloud-imagerecog`（宠物校验，默认关闭） | SMS 登录；服务端宠物图像校验默认关闭、代码保留待启 |
+| AI 服务 | `dashscope>=1.20.0` + `openai>=1.40.0` | 通义千问 LLM (qwen-flash)、fun-asr 流式 STT、多模态向量化 |
+| 向量库 | `pgvector>=0.3.0,<0.4` | PostgreSQL 原生向量索引，照片自动归类的相似度引擎 |
+| 测试 | `pytest` + `pytest-asyncio` + `aiosqlite` | 单测跑在内存 SQLite 上，无需起 PG |
 
 ### 2.3 基础设施（Docker Compose）
 
@@ -101,7 +109,6 @@
 ### 2.4 第三方云服务
 
 - **阿里云号码认证服务（Dypnsapi `SendSmsVerifyCode`）** — 系统赠送签名 + 模板，验证码由 API 自动生成。
-- **阿里云视觉智能开放平台 `RecognizeScene`** — 服务端宠物图片二次校验（默认关闭，端上 TFLite 优先）。
 - **阿里云 DashScope** — 多区域调度：
   - **新加坡区域** 跑 STT (`fun-asr-realtime`) 与 LLM (`qwen-flash`)，TLS 握手延迟从北京区 6.3 s 降到 2.6 s（实测 N=10）。
   - **北京区域** 跑多模态向量化 (`tongyi-embedding-vision-plus`, 1152 维) 与 STT 兜底。
@@ -116,14 +123,15 @@
 
 客户端 **只** 跟 Nginx (:80/:443) 通信，FastAPI 的 `:8000`、MinIO 的 `:9000` 全部隐藏在 Docker 网络里。`/api/...` 反代给 FastAPI，`/media/...` 反代给 MinIO，签名 URL 也基于 `PUBLIC_BASE_URL` 拼装，保证前端拿到的 URL 全部走入口域名 — 既方便上线时换 HTTPS / 更换 OSS，也避免内网地址泄露。
 
-### 3.2 双层宠物图片校验 — 省钱又快
+### 3.2 扫码即加入 — 二维码 + 邀请码分享
 
-照片上传链路上做了两层防误传：
+把宠物档案分享给家人只需一步：
 
-1. **端上 TFLite**：`tflite_flutter` 加载离线猫狗分类模型，在用户点"上传"前先在手机上判别。无网也能拒绝错图，不消耗云额度。
-2. **服务端兜底**：通过 `ENABLE_SERVER_PET_RECOGNITION` 开关接入阿里云 `RecognizeScene`。默认关闭，作为端上模型被绕过时的最后一道关卡。
+- **二维码卡片**：`qr_flutter` 渲染一张带宠物信息的分享卡片，一键存进相册（`saver_gallery`）发给家人；
+- **相机扫码加入**：`mobile_scanner`（Android 走 MLKit、iOS 走 Apple Vision）扫码、或手填 8 位邀请码即可加入；
+- **安全可控**：邀请码一次性使用、24h 过期、OWNER 可随时撤销。
 
-效果：99% 的"非宠物图"在手机本地就被挡掉，云调用量降一个量级。
+> 注：早期的「端上 TFLite + 服务端 `RecognizeScene` 宠物校验」自 Optimization Step 1（2026-05）起**默认关闭** —— 真实用户常传宠物用品 / 食盆 / 疫苗本等强相关但"非猫狗"的照片，严格分类器反而误拒、伤害体验。相关代码与开关（`enableClientPetRecognition` / `ENABLE_SERVER_PET_RECOGNITION`）保留，便于将来按需重启。
 
 ### 3.3 端上 EXIF + HEIC 转码 — 拍摄日期 100% 可信
 
@@ -158,7 +166,7 @@ iPhone 默认存 HEIC，且很多 Android 厂商修改过 EXIF。我们在 Flutt
 
 ### 3.7 照片自动归类 — pgvector + 多模态向量
 
-最有意思的 Phase 2 功能：上传照片后，后端调用 DashScope 多模态向量化（1152 维）embed 一遍，和该用户每只宠物的 **图心 (centroid)** 做余弦相似度比较，再用 Top-1 阈值 + margin 规则决定归属。
+最有意思的功能之一：上传照片后，后端调用 DashScope 多模态向量化（1152 维）embed 一遍，和该用户每只宠物的 **图心 (centroid)** 做余弦相似度比较，再用 Top-1 阈值 + margin 规则决定归属。
 
 工程上的几个克制设计：
 
@@ -170,7 +178,7 @@ iPhone 默认存 HEIC，且很多 Android 厂商修改过 EXIF。我们在 Flutt
 
 ### 3.8 长按语音速记 — STT + LLM 抽槽
 
-Phase 2 Step 2：长按录音 → 上传到后端 → DashScope `fun-asr-realtime` (新加坡区) 流式 STT → 通义千问 `qwen-flash` 抽槽（实体、日期、记录类型）→ 生成结构化草稿，用户在 sheet 里再确认即可保存。
+长按录音 → 上传到后端 → DashScope `fun-asr-realtime` (新加坡区) 流式 STT → 通义千问 `qwen-flash` 抽槽（实体、日期、记录类型）→ 生成结构化草稿，用户在 sheet 里再确认即可保存。
 
 实测延迟（3.1 s 音频）：
 
@@ -209,7 +217,6 @@ graph TB
     Android["Android"]
     iOS["iOS (Phase 2)"]
     LocalPush["本地推送<br/>(flutter_local_notifications)"]
-    TFLite["端上 TFLite<br/>宠物分类"]
   end
 
   subgraph server[云服务器 2C4G - Docker Compose]
@@ -222,7 +229,6 @@ graph TB
 
   subgraph third[第三方服务]
     SMS["阿里云 Dypnsapi<br/>短信认证"]
-    Scene["阿里云 RecognizeScene<br/>(服务端兜底)"]
     DSCN["DashScope 北京<br/>LLM + 多模态向量"]
     DSSG["DashScope 新加坡<br/>fun-asr STT"]
   end
@@ -230,7 +236,6 @@ graph TB
   Android -->|HTTPS| Nginx
   iOS -->|HTTPS| Nginx
   Android --- LocalPush
-  Android --- TFLite
 
   Nginx -->|/api/| FastAPI
   Nginx -->|/media/| MinIO
@@ -239,7 +244,6 @@ graph TB
   FastAPI --> Redis
   FastAPI --> MinIO
   FastAPI --> SMS
-  FastAPI --> Scene
   FastAPI --> DSCN
   FastAPI --> DSSG
 ```
@@ -260,10 +264,10 @@ DangDangDiary/
 │   │   │   ├── auth.py         # 短信 + JWT
 │   │   │   ├── pets.py         # 宠物档案 CRUD
 │   │   │   ├── photos.py       # 上传 / 时间轴
-│   │   │   ├── classify.py     # Phase 2: 照片自动归类
+│   │   │   ├── classify.py     # 照片自动归类（多模态向量 + pgvector）
 │   │   │   ├── health.py       # 体重 / 驱虫 / 疫苗 / 日常
-│   │   │   ├── share.py        # Phase 2: 档案共享
-│   │   │   ├── voice.py        # Phase 2: 语音速记
+│   │   │   ├── share.py        # 档案共享（二维码 / 邀请码 + 角色）
+│   │   │   ├── voice.py        # 语音速记（STT + LLM 抽槽）
 │   │   │   └── router.py       # 注册所有子路由
 │   │   ├── models/             # SQLAlchemy ORM
 │   │   ├── schemas/            # Pydantic 模型
@@ -282,7 +286,7 @@ DangDangDiary/
 │       ├── app.dart            # 顶层 App + 生命周期 hook
 │       ├── config/             # 路由 / 主题 / base_url
 │       ├── models/
-│       ├── services/           # api_client / pet_classifier (TFLite) / voice / health_reminder...
+│       ├── services/           # api_client / voice / health_reminder / share / classify...
 │       ├── providers/          # Riverpod
 │       ├── screens/
 │       │   ├── auth/           # 登录
