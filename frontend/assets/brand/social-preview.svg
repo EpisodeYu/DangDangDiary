@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1280 640" width="1280" height="640">
+  <rect width="1280" height="640" fill="#FFF8F5"/>
+  <!-- 底部品牌色细条 -->
+  <rect x="0" y="628" width="1280" height="12" fill="#FF8B6A"/>
+
+  <!-- 现有 logo（猫咪写日记） -->
+  <image xlink:href="logo_1024.png" x="120" y="100" width="440" height="440"/>
+
+  <!-- 文案 -->
+  <text x="630" y="288" font-family="Noto Sans CJK SC" font-weight="bold" font-size="112" fill="#FF8B6A">当当日记</text>
+  <text x="636" y="352" font-family="Noto Sans CJK SC" font-size="44" fill="#A8907F">DangDang Diary</text>
+  <text x="636" y="426" font-family="Noto Sans CJK SC" font-size="35" fill="#6B5B52">把养它的每一天，变成可回看的时间轴</text>
+  <text x="636" y="482" font-family="Noto Sans CJK SC" font-size="28" fill="#FF8B6A">AI 语音速记 · 照片自动归类 · 到期提醒</text>
+</svg>

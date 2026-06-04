@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/assets/brand/social-preview.png" width="720" alt="当当日记 DangDang Diary">
+</p>
+
 # 当当日记 (DangDang Diary)
 
 > 一款写给猫狗主人的宠物日记 APP — 把"养它的每一天"变成可回看的时间轴。
