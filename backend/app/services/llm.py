@@ -1,23 +1,13 @@
-"""DashScope LLM (``qwen-flash`` by default) intent extractor.
+"""LiteLLM-backed ``qwen-flash`` intent extractor.
 
-Talks to DashScope's OpenAI-compatible endpoint. Prefers the **Singapore**
-region (``dashscope-intl.aliyuncs.com``) with an automatic fallback to
-**Beijing** if the SG key isn't configured or the first call errors. See
-``docs/phase2-step2-voice-intake.md §0.5.2`` for the benchmarks that
-motivated (a) the region split — Tokyo→BJ TLS handshake ≈ 3.2s, SG
-≈ 0.08s — and (b) the 2026-04-23 model switch from ``qwen-plus`` (p50
-2.30s) to ``qwen-flash`` (p50 1.07s) with 100% field accuracy retained.
-
-``AsyncOpenAI`` clients are lazy-cached per region (see ``_get_client``)
-so the cross-border TLS handshake only happens on the first request
-after a process restart — re-instantiating per request wastes 200-400ms
-on every voice intake.
+The Diary service holds only its scoped gateway key. The shared LiteLLM
+gateway owns the Singapore/Beijing deployments, provider credentials,
+retry, fallback, circuit breaking, and audit.
 """
 from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
@@ -27,66 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 class LlmUnavailableError(RuntimeError):
-    """DashScope LLM 暂不可用（上游 5xx / 网络 / JSON 破损）。"""
+    """LiteLLM gateway 暂不可用（上游 5xx / 网络 / JSON 破损）。"""
 
 
-@dataclass(frozen=True)
-class _Region:
-    label: str
-    api_key: str
-    base_url: str
+_client: Any | None = None
 
 
-# Lazy-cached `AsyncOpenAI` clients, keyed by `(api_key, base_url)`.
-#
-# The OpenAI SDK wraps `httpx.AsyncClient`, which in turn maintains a
-# persistent HTTP/2 connection pool. Re-instantiating per request
-# forces a fresh TCP + TLS handshake to `dashscope-intl.aliyuncs.com`
-# each time — measured at ~200-400ms from the Tokyo host, on the
-# critical path for every voice intake. Keeping one client per region
-# alive across requests amortises that cost down to effectively zero
-# once the pool is warm.
-#
-# Safe to share across coroutines: `AsyncOpenAI` / `httpx.AsyncClient`
-# are designed for concurrent use from a single asyncio event loop,
-# and the client is stateless beyond the connection pool. We never
-# tear it down explicitly (process exit drops the sockets).
-_client_cache: dict[tuple[str, str], Any] = {}
-
-
-def _get_client(region: _Region):  # type: ignore[no-untyped-def]
+def _get_client():  # type: ignore[no-untyped-def]
     from openai import AsyncOpenAI
 
-    key = (region.api_key, region.base_url)
-    client = _client_cache.get(key)
-    if client is None:
-        client = AsyncOpenAI(api_key=region.api_key, base_url=region.base_url)
-        _client_cache[key] = client
-    return client
-
-
-def _regions_in_priority_order() -> list[_Region]:
-    """Return non-empty regions to try, primary first.
-
-    Singapore is preferred (faster handshake from the Tokyo host and
-    identical quality/pricing for ``qwen-plus``). Beijing is the
-    fallback. Missing keys are skipped silently — as long as at least
-    one is configured we can still serve.
-    """
-    out: list[_Region] = []
-    if settings.DASHSCOPE_API_KEY_SAG:
-        out.append(_Region(
-            label="singapore",
-            api_key=settings.DASHSCOPE_API_KEY_SAG,
-            base_url=settings.DASHSCOPE_BASE_URL_SAG,
-        ))
-    if settings.DASHSCOPE_API_KEY:
-        out.append(_Region(
-            label="beijing-fallback",
-            api_key=settings.DASHSCOPE_API_KEY,
-            base_url=settings.DASHSCOPE_BASE_URL,
-        ))
-    return out
+    global _client
+    if _client is None:
+        _client = AsyncOpenAI(
+            api_key=settings.LITELLM_API_KEY,
+            base_url=settings.LITELLM_BASE_URL,
+        )
+    return _client
 
 
 # Prompt version — stored alongside each log so we can A/B prompts
@@ -194,11 +140,10 @@ async def extract_intent(
     the backend (STT accuracy on pet nicknames is the biggest source
     of missing `pet_id` in the wild).
     """
-    regions = _regions_in_priority_order()
-    if not regions:
-        raise LlmUnavailableError(
-            "neither DASHSCOPE_API_KEY_SAG nor DASHSCOPE_API_KEY is configured"
-        )
+    if not settings.LITELLM_API_KEY:
+        raise LlmUnavailableError("LITELLM_API_KEY is not configured")
+    if not settings.LITELLM_BASE_URL:
+        raise LlmUnavailableError("LITELLM_BASE_URL is not configured")
 
     # Import lazily so unit tests can patch without requiring the dep
     # installed on every runner.
@@ -211,53 +156,37 @@ async def extract_intent(
         today=today,
     )
 
-    last_error: LlmUnavailableError | None = None
-    for region in regions:
-        client = _get_client(region)
+    client = _get_client()
+    try:
+        resp = await client.chat.completions.create(
+            model=settings.TONGYI_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0,
+            top_p=1,
+            max_tokens=300,
+            seed=42,
+        )
+    except OpenAIError as exc:
+        logger.warning("gateway llm error: %s", type(exc).__name__)
+        raise LlmUnavailableError(str(exc)) from exc
+    except Exception as exc:
+        logger.warning("gateway llm unexpected error: %s", type(exc).__name__)
+        raise LlmUnavailableError(str(exc)) from exc
 
-        try:
-            resp = await client.chat.completions.create(
-                model=settings.TONGYI_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                response_format={"type": "json_object"},
-                temperature=0,
-                top_p=1,
-                max_tokens=300,
-                seed=42,
-            )
-        except OpenAIError as e:
-            logger.warning("dashscope llm error (%s): %s", region.label, e)
-            last_error = LlmUnavailableError(str(e))
-            continue
-        except Exception as e:  # network / SSL / other
-            logger.warning("dashscope llm unexpected error (%s): %s", region.label, e)
-            last_error = LlmUnavailableError(str(e))
-            continue
+    raw = resp.choices[0].message.content or "{}"
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("gateway llm returned non-json response length=%d", len(raw))
+        raise LlmUnavailableError("malformed json") from exc
 
-        raw = resp.choices[0].message.content or "{}"
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as e:
-            logger.warning(
-                "llm returned non-json (%s): %r", region.label, raw[:500]
-            )
-            last_error = LlmUnavailableError("malformed json")
-            # Don't fall back on bad-json — same prompt on the next region
-            # is unlikely to produce different structure and will just
-            # delay the user. Surface immediately.
-            raise last_error from e
+    if not isinstance(parsed, dict):
+        raise LlmUnavailableError("json is not an object")
 
-        if not isinstance(parsed, dict):
-            last_error = LlmUnavailableError("json is not an object")
-            raise last_error
-
-        logger.info("llm region=%s model=%s ok", region.label, settings.TONGYI_MODEL)
-        # Stash raw string so the caller can persist it without re-serialising.
-        parsed["_raw"] = raw
-        return parsed
-
-    assert last_error is not None  # loop guarantees at least one attempt
-    raise last_error
+    logger.info("gateway llm model=%s ok", settings.TONGYI_MODEL)
+    parsed["_raw"] = raw
+    return parsed

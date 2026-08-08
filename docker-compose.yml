@@ -22,6 +22,9 @@ services:
         condition: service_started
       minio:
         condition: service_started
+    networks:
+      - default
+      - litellm-net
 
   nginx:
     image: nginx:1.27-alpine
@@ -92,3 +95,8 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+
+networks:
+  litellm-net:
+    name: litellm_default
+    external: true

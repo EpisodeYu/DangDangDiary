@@ -25,7 +25,7 @@ Phase 1 的记录入口完全是"打开页面 → 选宠物 → 填表单 → �
 - **全局规则 §4 API 约定**（见 [docs/00-global-rules.md](00-global-rules.md)）：snake_case、错误结构 `{code, message, details}`、创建返回完整对象、删除 204。本步所有新接口严格对齐。
 - **全局规则 §媒体处理**：原文要求"照片先在前端做格式转换"。音频同理——Flutter 端直接录 AAC/M4A（由 `record` 包默认输出），后端只接受 `audio/m4a`、`audio/aac`、`audio/mpeg`、`audio/wav` 四种 MIME，其它拒收。
 - **复用而非重写写入逻辑**：本步不新增业务表（`voice_intake_logs` 仅为审计日志），不绕过现有的权限校验。`confirm` 接口内部必须走 `services/health.py` 等同一层服务，权限（EDITOR 及以上）随 Phase 2 Step 1 的成员角色自动生效。
-- **第三方服务**：STT 与 LLM **全部走 DashScope（百炼）**，两者都默认走**新加坡地域**（需要 `DASHSCOPE_API_KEY_SAG`）：STT 用 `fun-asr`、LLM 用 `qwen-plus` JSON mode；任一路径异常时自动回落到北京地域（`DASHSCOPE_API_KEY`）的 `paraformer-v1` / 同一个 `qwen-plus`。**不**再使用阿里云智能语音交互（NLS）的「录音文件识别极速版」，因此不需要 `ALIYUN_STT_APP_KEY`。参考：[docs/API_docs/录音文件识别.md](API_docs/录音文件识别.md)。
+- **第三方服务**：STT 仍由本服务直连 DashScope，新加坡 `fun-asr` 为主、北京 `paraformer-v1` 回落。LLM JSON 抽取改为使用独立共享 LiteLLM 网关和 `dangdang-diary` 受限 Virtual Key；`qwen-flash` 的新加坡/北京 deployment、Provider Key、retry/fallback 和审计均由网关管理。**不**再使用阿里云智能语音交互（NLS）的「录音文件识别极速版」，因此不需要 `ALIYUN_STT_APP_KEY`。参考：[docs/API_docs/录音文件识别.md](API_docs/录音文件识别.md)。
 
 ---
 
@@ -55,14 +55,14 @@ Phase 1 的记录入口完全是"打开页面 → 选宠物 → 填表单 → �
 
     **定型**：SG `fun-asr-realtime` WebSocket 流式为主；BJ `paraformer-v1` async-file 保留为兜底。实时模型在 SG 路径上跑得反而比 async-file 快一个数量级，因为 realtime 池子和 batch 队列物理隔离，不会被 async 队列的堆积拖慢。
 
-- **为什么不用 `qwen-audio-asr`**：把 STT 和语义理解揉在一个大模型里，单价贵一个数量级（≈ ¥0.06/30s），且与"STT 转文字 / `qwen-plus` 独立做结构化抽取"的分层架构重复付费；分层也让金标集可分别回归。
+- **为什么不用 `qwen-audio-asr`**：把 STT 和语义理解揉在一个大模型里，单价贵一个数量级（≈ ¥0.06/30s），且与"STT 转文字 / `qwen-flash` 独立做结构化抽取"的分层架构重复付费；分层也让金标集可分别回归。
 - **为什么不切到阿里云 NLS「录音文件识别极速版」（FlashRecognizer）**：2026-04-23 基准显示它比当前 SG realtime 路径慢一倍（p50 2.54s vs 1.26s），且 ISI 是独立产品线——需要维护 NLS 项目、24h Token 轮换、AppKey、独立计费。收益不抵运维成本。作为**第二兜底**可以记住，若 BJ async 也塌了再考虑接入。
 - **为什么不用 BJ `paraformer-realtime-v2` WS 流式**：2026-04-23 基准 p50 19.1s / max 42.7s，跨境 WS 抖动远高于 SG 路径；且 SG 没有 `paraformer-realtime-v2`（国际区只提供 `fun-asr-realtime`），两边模型不能互为热备。
 - **调用方式**（主路径）：`dashscope.audio.asr.Recognition(model='fun-asr-realtime', format='pcm', sample_rate=16000, callback=...)` → `recognition.start()` → 按 3200B（100ms）分块 `send_audio_frame(pcm_chunk)` → `recognition.stop()` 阻塞到 server 返回 `is_sentence_end=True`。后端在 `asyncio.to_thread` 里包一层，外层用 `asyncio.wait_for(timeout=6)` 兜底超时。音频走**后端内存直推**，不经 MinIO；MinIO 仍然写一份用作审计日志 + async-file 回落时的 presigned URL 源。实现见 [`backend/app/services/stt.py`](../backend/app/services/stt.py)。
 - **调用方式**（回落路径）：`Transcription.async_call(model='paraformer-v1', file_urls=[presigned_url])` → `Transcription.wait(task=task_id)` → `httpx.get(transcription_url)`。12s 超时上限（由 `asyncio.wait_for` 拦截，SDK 自身的 `Transcription.wait` 不支持 timeout）。
 - **支持格式**：主路径要求 16-bit 单声道 PCM WAV @ 8k/16k（stdlib `wave` 解析），不符合的格式（m4a / aac / mp3 / 多声道）自动落到回落路径。Flutter `record` 默认已经是 16k 单声道 WAV，主路径 100% 命中。
 - **限制**：前端硬限 ≤ 30s + ≤ 2MB；realtime API 对长度无硬限制，本场景足够。
-- **地域**：主路径用**新加坡** key（`DASHSCOPE_API_KEY_SAG`，endpoint `wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference`，模型 `fun-asr-realtime`）；回落用**北京** key（`DASHSCOPE_API_KEY`，endpoint `dashscope.aliyuncs.com/api/v1`，模型 `paraformer-v1`）。LLM + 多模态 embedding 继续按 §0.5.2 配置，不共用。
+- **地域**：主路径用**新加坡** key（`DASHSCOPE_API_KEY_SAG`，endpoint `wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference`，模型 `fun-asr-realtime`）；回落用**北京** key（`DASHSCOPE_API_KEY`，endpoint `dashscope.aliyuncs.com/api/v1`，模型 `paraformer-v1`）。LLM 改走共享网关；多模态 embedding 继续按 Phase 2 Step 3 配置。
 - **基准脚本**：
   - 异步文件路径 + FlashRecognizer：`backend/scripts/stt_bench.py`
   - WebSocket 流式路径：`backend/scripts/stt_realtime_bench.py`（2026-04-23 新增）
@@ -70,6 +70,8 @@ Phase 1 的记录入口完全是"打开页面 → 选宠物 → 填表单 → �
 - **后续优化**：当前实现仍然是"端录完整段音频 → 上传到后端 → 后端再推 WebSocket 给 DashScope"。理论最优是**前端边录边通过 WebSocket 推给后端（或直接推 DashScope）**，松手时 transcript 已经在手上，感知延迟 <500ms。方案设计见 [`docs/future-voice-frontend-streaming.md`](future-voice-frontend-streaming.md)，排期未定。
 
 ### 0.5.2 LLM：通义千问 `qwen-flash` @ 新加坡（主）/ 北京（回落）
+
+> 2026-08-08 网关迁移：模型选择和下述地域基准继续有效，但业务代码不再持有 LLM Provider Key 或自行按地域重试。`services/llm.py` 只调用 `LITELLM_BASE_URL`；共享网关把 `qwen-flash` 配成新加坡 9 / 北京 1 的同组 deployments，并负责 fallback。
 
 - **选型历史**：
   - 2026-04-21 首版：选 `qwen-plus`。当时 `qwen-flash` 虽快 2×，但对 `N_days_ago:<n>` 模板有**稳定错误**——5/5 把字面量 `N` 替换成真实数字（输出 `3_days_ago:3`），`_parse_date` 识别不了。
@@ -82,13 +84,13 @@ Phase 1 的记录入口完全是"打开页面 → 选宠物 → 填表单 → �
     > ⚠️ 基准评分里 `qwen-flash` 在 `routine_bath_3days_ago` case 上显示"字段漏"，是因为脚本做字面量字符串比较；经 `_parse_date` 后两个模型的输出等价。
 
 - **为什么不切 `qwen3.6-plus`**：同批基准 avg 3.35s / p50 3.31s，比 `qwen-flash` 慢 3×、比 `qwen-plus` 慢 40%，准确率无增益。3.6 的优势在 agentic / 多模态推理，与本任务无关。
-- **地域**：主路径用**新加坡** key（`DASHSCOPE_API_KEY_SAG`，endpoint `dashscope-intl.aliyuncs.com/compatible-mode/v1`），回落用**北京** key（`DASHSCOPE_API_KEY`，endpoint `dashscope.aliyuncs.com/compatible-mode/v1`）。同一个模型在两个 region 的输出等价，选型驱动纯粹是东京→北京 TLS 握手 ≈ 3.2s 的跨境成本。实现见 [`backend/app/services/llm.py`](../backend/app/services/llm.py) 的 `_regions_in_priority_order()`：SG 返回 `OpenAIError` / 网络异常时自动一次性回落到 BJ（`malformed json` 不回落，直接外抛）。
-- **客户端复用**：`openai.AsyncOpenAI` 按 `(api_key, base_url)` 做模块级 lazy cache（[`llm.py#_get_client`](../backend/app/services/llm.py)）。`AsyncOpenAI` 内部走 `httpx.AsyncClient` 连接池，每请求重建会强制一次跨境 TLS 握手（Tokyo→SG 实测 ~200-400ms）。复用后冷启动第一次还是握手一次，之后连接复用，LLM 阶段从 ~2.5s 降到 ~0.9-1.4s（见 E2E 基准）。
-- **调用通道**：`openai.AsyncOpenAI` 直打 DashScope OpenAI 兼容接口（不用 `dashscope` SDK 打 LLM）。与多模态 embedding（[phase2-step3](phase2-step3-photo-auto-assign.md)）共用一套客户端。
+- **地域**：共享网关持有新加坡/北京 Provider Key 和 endpoint；业务只请求逻辑模型 `qwen-flash`。同一个模型在两个 region 的输出等价，地域优先级仍由东京→北京 TLS 握手 ≈ 3.2s 的跨境成本驱动。
+- **客户端复用**：`services/llm.py` 模块级复用一个指向 LiteLLM 的 `openai.AsyncOpenAI`，业务进程只维护到本机网关的连接池；跨境 Provider 连接池由 LiteLLM 管理。
+- **调用通道**：LLM 经 `LITELLM_BASE_URL` 访问共享网关。STT 与多模态 embedding（[phase2-step3](phase2-step3-photo-auto-assign.md)）仍按各自协议直连 DashScope，不受此次迁移影响。
 - **JSON mode**：`response_format={"type": "json_object"}` + §5 system prompt，严格 JSON 输出。
 - **参数**：温度 0，top_p 1，`max_tokens=300`，`seed=42`（便于复现金标集回归）。
 - **单次成本**：输入 ≈ 300 tokens、输出 ≈ 80 tokens，按 qwen-flash 定价（输入 0.00015 元/千、输出 0.0015 元/千） ≈ **¥0.00016 / 次**，比 qwen-plus 便宜 60%。
-- **`TONGYI_MODEL` 环境变量**：代码里**不要硬编码**模型名，全部从 `settings.TONGYI_MODEL` 读（默认 `qwen-flash`）。若日后发现字段准确率回归，改 `.env` 一行切回 `qwen-plus` 即可。
+- **`TONGYI_MODEL` 环境变量**：代码里**不要硬编码**模型名，全部从 `settings.TONGYI_MODEL` 读（默认 `qwen-flash`）；该名称必须在共享网关中为 Diary Key 授权。
 
 ### 0.5.3 单次语音记录总成本
 
@@ -113,7 +115,7 @@ Phase 1 的记录入口完全是"打开页面 → 选宠物 → 填表单 → �
 上传音频 multipart  ──►  POST /api/v1/voice/intake
                             │
                             ├─ STT (DashScope SG fun-asr-realtime WS 主 / BJ paraformer-v1 async 回落) → transcript
-                            ├─ LLM (DashScope qwen-plus, JSON mode)         → {intent, fields, confidence}
+                            ├─ LLM (LiteLLM → qwen-flash, JSON mode)       → {intent, fields, confidence}
                             ├─ 字段归一化 (日期 / 宠物名 → pet_id / 枚举)
                             └─ 返回 draft + missing_fields + needs_confirm
     │
@@ -279,7 +281,7 @@ async def confirm(request_id: str, user: User, intent: str,
 1. **预校验**：MIME / 时长 / 大小；`client_request_id` 走 Redis `SETNX` 去重。
 2. **音频落 MinIO**：放到 `voice-intake/<user_id>/<yyyymmdd>/<uuid>.m4a`，bucket 与照片分开，生命周期策略 24h。
 3. **STT**：`services/stt.py`（SG `fun-asr-realtime` WebSocket 流式主 + BJ `paraformer-v1` async-file 回落）；主路径抛 `SttUnavailableError` 或 6s 超时时自动落回落；全部失败 → `stt_failed`。
-4. **LLM**：`services/llm.py`（新建，走 DashScope OpenAI 兼容端点调 `qwen-plus`，强 JSON mode），prompt 见 §5；超时 8s，失败 1 次重试。
+4. **LLM**：`services/llm.py` 通过共享 LiteLLM 调 `qwen-flash`，强 JSON mode；prompt 见 §5。超时、重试和新加坡→北京 fallback 由网关统一管理。
 5. **归一化**（`_normalize_draft`）：
    - 相对日期："今天/昨天/上周三" → 按服务器 UTC + 用户 profile 的时区解析为 `date`；**绝不让 LLM 自己算日期**。
    - 宠物解析：LLM 输出 `pet_name`（字符串），后端在当前用户 `pets` 列表里做精确 → 模糊匹配；多候选或无匹配时置 `pet_id=null`、加入 `missing_fields`；`default_pet_id` 仅在 LLM 未给出 `pet_name` 时兜底。
@@ -290,7 +292,7 @@ async def confirm(request_id: str, user: User, intent: str,
 ### 4.2 `services/stt.py`、`services/llm.py`（新建）
 
 - 薄封装，只暴露 `transcribe(audio_bytes: bytes, mime: str, audio_url: str) -> str` 和 `extract_intent(transcript: str, context: dict) -> dict`。
-- 所有第三方 key 从 `config.py` 读 `.env`（`DASHSCOPE_API_KEY` = 北京，服务 LLM 回落 + embedding + STT 回落；`DASHSCOPE_API_KEY_SAG` = 新加坡，服务 STT 主路径 + LLM 主路径。不再有 `ALIYUN_STT_*` 或 `TONGYI_API_KEY`），符合全局规则。
+- LLM 只读取 `LITELLM_BASE_URL` 与 `LITELLM_API_KEY`；后者是 `dangdang-diary` 受限 Virtual Key。`DASHSCOPE_API_KEY` / `DASHSCOPE_API_KEY_SAG` 只留给 STT 和多模态 embedding，符合全局规则。
 - 单元测试通过 monkeypatch 注入 fake client 覆盖，不打真实网络。
 
 #### 4.2.1 `services/stt.py` 参考实现
@@ -312,17 +314,14 @@ async def confirm(request_id: str, user: User, intent: str,
 
 源码见 [backend/app/services/llm.py](../backend/app/services/llm.py)。关键设计：
 
-- 用 `openai.AsyncOpenAI` 直打 DashScope **OpenAI 兼容端点**（不用 `dashscope` SDK）。与 [phase2-step3](phase2-step3-photo-auto-assign.md) 的 embedding 客户端同源。
-- 两个 region 按优先级串行重试，与 STT 的 `_regions_in_priority_order()` 对称：
-  1. **新加坡（主）**：`api_key = settings.DASHSCOPE_API_KEY_SAG`，`base_url = 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1'`
-  2. **北京回落**：`api_key = settings.DASHSCOPE_API_KEY`，`base_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'`
-- `extract_intent(transcript, *, known_pet_names, default_pet_name, today) -> dict`：SG 抛 `OpenAIError` 或其他异常时**自动换 region 重试**；所有 region 失败 → `LlmUnavailableError`。`malformed json` 情况**不回落**（模型本身返回坏 JSON，换区也没用），直接外抛以免浪费用户另一秒。
-- 生成 prompt 时把用户宠物列表作为**闭集**传入（`known_pet_names`），让 qwen-plus 自己做同音字矫正（STT 常把「咪咪」听成「米米」，在 LLM 侧就近映射比后端做 fuzzy match 鲁棒）。
+- 用 `openai.AsyncOpenAI` 调共享 LiteLLM 的 OpenAI 兼容端点；`api_key = settings.LITELLM_API_KEY`，`base_url = settings.LITELLM_BASE_URL`。
+- `extract_intent(transcript, *, known_pet_names, default_pet_name, today) -> dict` 只调用一次逻辑模型。地域 retry/fallback 由网关执行；所有 deployment 失败才转为 `LlmUnavailableError`。`malformed json` 仍直接外抛，避免把模型语义错误误当成线路故障。
+- 生成 prompt 时把用户宠物列表作为**闭集**传入（`known_pet_names`），让 qwen-flash 自己做同音字矫正（STT 常把「咪咪」听成「米米」，在 LLM 侧就近映射比后端做 fuzzy match 鲁棒）。
 - 生成 prompt 时**必须**把 `today`（服务端当日）写进 user message（格式「当前日期：YYYY-MM-DD（星期X）」）。这是 **prompt v2** 的关键修复：v1 依赖"LLM 只吐 today / yesterday / N_days_ago 快捷写法"的约定，但遇到「上个月 8 号 / 上周三 / 两周前」这种无法用快捷写法表达的相对日期时，LLM 会被迫退化到 `YYYY-MM-DD`；在没有日期锚点的情况下它会从训练先验里幻觉一个日期（实测 2026-04-21 问"上个月 8 号"→ `2024-05-08`）。v2 起允许 LLM 自己把相对日期换算成 `YYYY-MM-DD`，同时 `_parse_date` 加了「不晚于今天 & 不早于 10 年前」的兜底。
 - 成功时在返回 dict 里塞一个 `_raw` 字段，调用方把原始字符串落到 `voice_intake_logs.llm_raw` 用于 prompt 迭代审计（`voice_intake_service` 会把它 pop 掉后再返回给客户端）。
-- 参数：`temperature=0, top_p=1, max_tokens=300, seed=42, response_format={"type": "json_object"}`，`model = settings.TONGYI_MODEL`（默认 `qwen-plus`）。
+- 参数：`temperature=0, top_p=1, max_tokens=300, seed=42, response_format={"type": "json_object"}`，`model = settings.TONGYI_MODEL`（默认 `qwen-flash`）。
 
-> 离线单元测试：voice_intake 测试链路 monkeypatch `voice_intake_service.llm_extract_intent` 这一层即可，不打真实网络。如需测 region 回落分支，monkeypatch `openai.AsyncOpenAI` 的构造器或 `chat.completions.create` 按 `base_url` 返回不同结果。
+> 离线单元测试：voice_intake 测试链路 monkeypatch `voice_intake_service.llm_extract_intent` 这一层即可，不打真实网络。网关客户端测试注入 fake `chat.completions.create`；地域 fallback 由共享网关的双副本故障矩阵覆盖。
 
 ---
 
@@ -358,7 +357,7 @@ JSON mode + 严格 schema。系统提示词要点：
 ```
 
 - 温度 0，top_p 1。
-- user message 首行固定追加「当前日期：YYYY-MM-DD（星期X）」，作为所有相对日期换算的锚点；缺了这一行 qwen-plus 对「上个月 8 号」等表达会从训练先验里幻觉日期（v1 → v2 修复点）。
+- user message 首行固定追加「当前日期：YYYY-MM-DD（星期X）」，作为所有相对日期换算的锚点；缺了这一行模型对「上个月 8 号」等表达会从训练先验里幻觉日期（v1 → v2 修复点）。
 - prompt 版本号随 log 一起存，便于 A/B。
 - 上线前备一份金标集（20-30 条典型语句 × 预期 JSON），在 CI 里跑 `llm.extract_intent` 的离线回归——允许轻度偏移，但 `intent` 必须 100% 命中。
 
@@ -435,11 +434,13 @@ Android `AndroidManifest.xml` 追加 `<uses-permission android:name="android.per
 
 | 键名 | 必填 | 默认值 | 现状 | 申请 / 获取入口 |
 |---|---|---|---|---|
-| `DASHSCOPE_API_KEY` | 是 | — | ✅ 已配置 | 北京地域 key。[bailian.console.aliyun.com](https://bailian.console.aliyun.com/?tab=model#/api-key)（**不是** modelstudio 子站）→ API Key 管理。服务：LLM 回落、STT 回落（`paraformer-v1` async-file）、`multimodal-embedding-v1`（[phase2-step3](phase2-step3-photo-auto-assign.md)）。 |
-| `DASHSCOPE_API_KEY_SAG` | 是（推荐） | — | ✅ 已配置 | 新加坡地域 key。[modelstudio.console.aliyun.com](https://modelstudio.console.aliyun.com/?tab=dashboard#/api-key) → API Key 管理。服务：STT 主路径（`fun-asr-realtime` WebSocket 流式）、LLM 主路径（`qwen-plus`）。未配置时两者都只剩北京路径，STT p50 从 1.3s→4.1s、LLM p50 从 2.3s→4.4s 退化（见 §0.5.1 / §0.5.2 基准）。 |
-| `DASHSCOPE_BASE_URL` | 否 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 默认 | 北京 OpenAI 兼容端点。LLM 回落 + embedding 使用。 |
-| `DASHSCOPE_BASE_URL_SAG` | 否 | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | 默认 | 新加坡 OpenAI 兼容端点。LLM 主路径使用。 |
-| `TONGYI_MODEL` | 否 | `qwen-plus` | 默认 | 可切 `qwen-max` / 带日期的快照版做灰度。 |
+| `LITELLM_BASE_URL` | 是 | `http://litellm:4000/v1` | ✅ 已配置 | 共享网关 Docker network 内地址。 |
+| `LITELLM_API_KEY` | 是 | — | ✅ 已配置 | 网关管理员签发的 `dangdang-diary` Virtual Key，只允许 `qwen-flash`，不得使用 master key。 |
+| `DASHSCOPE_API_KEY` | 是 | — | ✅ 已配置 | 北京地域 key。[bailian.console.aliyun.com](https://bailian.console.aliyun.com/?tab=model#/api-key)（**不是** modelstudio 子站）→ API Key 管理。仅服务 STT 回落（`paraformer-v1` async-file）和多模态 embedding。 |
+| `DASHSCOPE_API_KEY_SAG` | 是（推荐） | — | ✅ 已配置 | 新加坡地域 key。[modelstudio.console.aliyun.com](https://modelstudio.console.aliyun.com/?tab=dashboard#/api-key) → API Key 管理。仅服务 STT 主路径（`fun-asr-realtime` WebSocket 流式）和多模态 embedding。 |
+| `DASHSCOPE_BASE_URL` | 否 | `https://dashscope.aliyuncs.com/compatible-mode/v1` | 兼容保留 | 历史直连配置；当前 LLM 客户端不再读取。 |
+| `DASHSCOPE_BASE_URL_SAG` | 否 | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` | 兼容保留 | 历史直连配置；当前 LLM 客户端不再读取。 |
+| `TONGYI_MODEL` | 否 | `qwen-flash` | 默认 | 必须与 Diary Virtual Key 的网关 allowlist 一致。 |
 
 > STT 的 endpoint / model 名不暴露为 env 键——主路径是 WebSocket（`wss://dashscope-intl.aliyuncs.com/api-ws/v1/inference`，`fun-asr-realtime`），回落是 HTTP（`https://dashscope.aliyuncs.com/api/v1`，`paraformer-v1`），协议不同、不能用同一个 knob 交换，硬编码在 [backend/app/services/stt.py](../backend/app/services/stt.py)。要改模型 / endpoint 直接改代码。
 | `VOICE_INTAKE_MAX_SECONDS` | 否 | `30` | 默认 | 前后端各自自限 |
