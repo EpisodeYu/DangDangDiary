@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
-import '../../widgets/app_page_intro.dart';
 
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
@@ -68,11 +67,6 @@ class _DewormingCycleScreenState extends ConsumerState<DewormingCycleScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const AppPageIntro(
-              title: '定期守护',
-              subtitle: '设置驱虫周期，按需开启提醒。',
-              icon: Icons.shield_rounded,
-            ),
             _buildSection(
               title: '内驱',
               reminderEnabled: _internalReminder,

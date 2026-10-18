@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
 import '../../widgets/app_empty_state.dart';
-import '../../widgets/app_page_intro.dart';
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
 import '../../widgets/app_card.dart';
@@ -74,16 +73,8 @@ class _PetManageScreenState extends ConsumerState<PetManageScreen> {
                   onRefresh: () => ref.read(petListProvider.notifier).refresh(),
                   child: ListView.builder(
                     padding: const EdgeInsets.all(16),
-                    itemCount: pets.length + 1,
-                    itemBuilder: (context, position) {
-                      if (position == 0) {
-                        return AppPageIntro(
-                          title: '毛孩子的家',
-                          subtitle: '共 ${pets.length} 份档案，每一份都是独特的陪伴。',
-                          icon: Icons.pets_rounded,
-                        );
-                      }
-                      final index = position - 1;
+                    itemCount: pets.length,
+                    itemBuilder: (context, index) {
                       final card = _buildPetCard(context, ref, pets[index]);
                       // Stagger the initial paint so the page doesn't
                       // pop into existence all at once.

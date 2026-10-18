@@ -226,7 +226,6 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const AppPageIntro(title: '把今天，留在这里', subtitle: '一张照片，一件小事，都是相伴的日常。'),
           Semantics(
             button: true,
             label: '点击添加照片',

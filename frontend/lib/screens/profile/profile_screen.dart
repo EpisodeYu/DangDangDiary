@@ -43,7 +43,6 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          const AppPageIntro(title: '相伴的日常', subtitle: '你的资料，和毛孩子的小世界。'),
           AppCard(
             lifted: true,
             color: AppTheme.softPeach,

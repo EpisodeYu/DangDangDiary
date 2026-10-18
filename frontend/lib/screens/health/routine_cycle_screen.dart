@@ -7,7 +7,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
-import '../../widgets/app_page_intro.dart';
 
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
@@ -67,11 +66,6 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const AppPageIntro(
-              title: '照顾，也有节奏',
-              subtitle: '设置日常周期，按需开启提醒。',
-              icon: Icons.spa_rounded,
-            ),
             _buildSection(
               title: '洗澡',
               reminderEnabled: _bathReminder,

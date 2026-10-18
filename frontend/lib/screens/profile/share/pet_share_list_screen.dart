@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../config/theme.dart';
 import '../../../widgets/app_empty_state.dart';
-import '../../../widgets/app_page_intro.dart';
 import '../../../models/pet.dart';
 import '../../../providers/pet_provider.dart';
 import '../../../widgets/app_card.dart';
@@ -50,14 +49,9 @@ class PetShareListScreen extends ConsumerWidget {
             onRefresh: () => ref.read(petListProvider.notifier).refresh(),
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: ownedPets.length + 1,
-              itemBuilder: (context, index) => index == 0
-                  ? const AppPageIntro(
-                      title: '一起陪伴',
-                      subtitle: '把毛孩子的日常，分享给在意的人。',
-                      icon: Icons.ios_share_rounded,
-                    )
-                  : _buildPetCard(context, ownedPets[index - 1]),
+              itemCount: ownedPets.length,
+              itemBuilder: (context, index) =>
+                  _buildPetCard(context, ownedPets[index]),
             ),
           );
         },

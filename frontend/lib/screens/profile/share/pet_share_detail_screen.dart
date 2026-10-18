@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/theme.dart';
-import '../../../widgets/app_page_intro.dart';
 import '../../../models/pet.dart';
 import '../../../models/share.dart';
 import '../../../providers/pet_provider.dart';
@@ -71,11 +70,6 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            const AppPageIntro(
-              title: '一起守护小日常',
-              subtitle: '管理分享码与成员，分享每一份陪伴。',
-              icon: Icons.favorite_border_rounded,
-            ),
             _buildShareCodeCard(context, shareCodeAsync),
             const SizedBox(height: 24),
             _buildMembersHeader(membersAsync),
