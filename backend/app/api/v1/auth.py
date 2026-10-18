@@ -17,7 +17,7 @@ from app.schemas.auth import (
     UserResponse,
 )
 from app.services import auth as auth_service
-from app.services.storage import adelete_object_by_url, aupload_user_avatar
+from app.services.storage import adelete_avatar, aupload_user_avatar
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -96,6 +96,6 @@ async def upload_user_avatar_endpoint(
     await db.refresh(current_user)
 
     if old_avatar_url:
-        await adelete_object_by_url(old_avatar_url)
+        await adelete_avatar(old_avatar_url)
 
     return UserResponse.model_validate(current_user)

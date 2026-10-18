@@ -18,10 +18,6 @@ class Settings(BaseSettings):
 
     # MinIO (internal access)
     MINIO_ENDPOINT: str = "127.0.0.1:9000"
-    # Externally-reachable host:port for MinIO. Used to mint presigned URLs
-    # that third parties (DashScope STT) can fetch. Leave empty to derive
-    # `<PUBLIC_BASE_URL host>:9000` at call time.
-    MINIO_PUBLIC_ENDPOINT: str = ""
     MINIO_ACCESS_KEY: str = "minioadmin"
     MINIO_SECRET_KEY: str = "minioadmin123"
     MINIO_SECURE: bool = False
@@ -57,7 +53,11 @@ class Settings(BaseSettings):
     ALIYUN_IMAGERECOG_ENDPOINT: str = "imagerecog.cn-shanghai.aliyuncs.com"
     ALIYUN_IMAGERECOG_REGION: str = "cn-shanghai"
 
-    # DashScope (Phase 2 Step 2 voice intake)
+    # Shared LiteLLM gateway (Phase 2 Step 2 LLM extraction)
+    LITELLM_BASE_URL: str = "http://litellm:4000/v1"
+    LITELLM_API_KEY: str = ""
+
+    # DashScope (STT and multimodal embedding only)
     #
     # Split by region on purpose (benchmarked 2026-04-21 from the Tokyo
     # origin, N=10 on a 3.1s / 16kHz clip; see `scripts/stt_bench.py`):
@@ -72,16 +72,16 @@ class Settings(BaseSettings):
     # STT therefore prefers the Singapore region (WebSocket streaming
     # with fun-asr-realtime — see `app/services/stt.py` for the 2026-
     # 04-23 re-benchmark that motivated dropping the async `fun-asr`
-    # path). LLM and embedding still default to the Beijing key since
-    # qwen-plus / multimodal-embedding-v1 pricing & quota live there.
+    # path). Multimodal embedding still uses DashScope directly; LLM intent
+    # extraction now uses the scoped LiteLLM gateway key above.
     # STT endpoints / model names are hard-coded in stt.py because the
     # primary path is WebSocket-only (ws://...) while the fallback is
     # HTTP-only (https://...) — not interchangeable via a single knob.
-    DASHSCOPE_API_KEY: str = ""            # Beijing region (LLM fallback + embedding + STT fallback)
-    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (STT primary + LLM primary)
+    DASHSCOPE_API_KEY: str = ""            # Beijing region (embedding + STT fallback)
+    DASHSCOPE_API_KEY_SAG: str = ""        # Singapore region (STT primary + embedding)
     DASHSCOPE_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     DASHSCOPE_BASE_URL_SAG: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    # LLM: measured 2026-04-23 on the Singapore region via
+    # LLM model choice: measured 2026-04-23 on the Singapore region via
     # `backend/scripts/llm_bench.py` (N=3 × 6 golden cases):
     #   - qwen-flash:  p50 1.07s / p90 1.86s / avg 1.48s — FIELD 100%*
     #   - qwen-plus:   p50 2.30s / p90 2.56s / avg 2.34s — FIELD 100%

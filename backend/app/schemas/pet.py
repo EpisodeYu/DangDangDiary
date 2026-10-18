@@ -3,6 +3,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, field_validator
 
 from app.models.pet import MemberRole, PetType
+from app.services.storage import build_avatar_url
 
 
 class PetCreate(BaseModel):
@@ -65,6 +66,11 @@ class PetResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @field_validator("avatar_url", mode="after")
+    @classmethod
+    def _avatar_to_url(cls, v: str | None) -> str | None:
+        return build_avatar_url(v)
 
 
 class PetListResponse(BaseModel):

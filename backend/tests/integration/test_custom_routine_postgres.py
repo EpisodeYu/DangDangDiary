@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.skipif(not URL, reason='local Pos
 
 
 def run_migration(connection, direction):
-    path = Path(__file__).parents[2] / 'alembic/versions/c9d0e1f2a3b4_custom_routine_items.py'
+    path = Path(__file__).parents[2] / 'alembic/versions/d0e1f2a3b4c5_custom_routine_items.py'
     spec = importlib.util.spec_from_file_location('custom_routine_migration', path)
     migration = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(migration)

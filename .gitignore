@@ -26,6 +26,10 @@ frontend/windows/flutter/generated_plugins.cmake
 *.env.local
 backend/.env
 
+# Backup files (may contain secrets, e.g. .env.bak.<timestamp>)
+*.bak
+*.bak.*
+
 # OS
 .DS_Store
 Thumbs.db

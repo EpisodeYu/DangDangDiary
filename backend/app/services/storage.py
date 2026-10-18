@@ -113,7 +113,13 @@ async def aensure_all_buckets() -> None:
 
 
 def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
-    """Upload pet avatar and return the public URL path."""
+    """Upload pet avatar and return the bucket-relative object key.
+
+    Returns the key (e.g. ``pets/8/170.jpg``), not an absolute URL. The
+    public URL is composed at response time via [build_avatar_url] so a
+    domain / scheme change needs no data migration (mirrors how photos store
+    keys, not URLs).
+    """
     bucket = settings.MINIO_BUCKET_AVATARS
     _ensure_bucket(bucket)
 
@@ -129,11 +135,15 @@ def upload_pet_avatar(pet_id: int, data: bytes, content_type: str) -> str:
         content_type=content_type,
     )
 
-    return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+    return object_key
 
 
 def upload_user_avatar(user_id: int, data: bytes, content_type: str) -> str:
-    """Upload user avatar and return the public URL path."""
+    """Upload user avatar and return the bucket-relative object key.
+
+    See [upload_pet_avatar] — returns the key (``users/2/170.jpg``), the URL
+    is built at response time by [build_avatar_url].
+    """
     bucket = settings.MINIO_BUCKET_AVATARS
     _ensure_bucket(bucket)
 
@@ -149,7 +159,21 @@ def upload_user_avatar(user_id: int, data: bytes, content_type: str) -> str:
         content_type=content_type,
     )
 
-    return f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+    return object_key
+
+
+def build_avatar_url(key: str | None) -> str | None:
+    """Compose the public avatar URL from a bucket-relative object key.
+
+    Idempotent: ``None`` passes through, and an already-absolute URL (legacy
+    rows written before the key-storage switch, or a double call) is returned
+    unchanged so it is always safe to apply at the serialization boundary.
+    """
+    if not key:
+        return key
+    if key.startswith("http://") or key.startswith("https://"):
+        return key
+    return f"{settings.PUBLIC_BASE_URL}/media/{settings.MINIO_BUCKET_AVATARS}/{key}"
 
 
 def upload_photo(
@@ -298,6 +322,32 @@ def delete_object_by_url(url: str) -> None:
         pass
 
 
+def delete_avatar(value: str | None) -> None:
+    """Delete an avatar object given its bucket-relative key.
+
+    Avatars are stored as keys (``pets/8/170.jpg``). Tolerates a legacy
+    absolute URL / ``/media/avatars/...`` path so it still cleans up rows
+    written before the key-storage switch.
+    """
+    if not value:
+        return
+    key = value
+    if "://" in value or value.startswith("/"):
+        marker = f"/media/{settings.MINIO_BUCKET_AVATARS}/"
+        path = urlparse(value).path
+        idx = path.find(marker)
+        if idx == -1:
+            return
+        key = path[idx + len(marker):]
+    if not key:
+        return
+    client = _get_client()
+    try:
+        client.remove_object(settings.MINIO_BUCKET_AVATARS, key)
+    except Exception:
+        pass
+
+
 def delete_objects_by_prefix(bucket: str, prefix: str) -> None:
     """Delete all objects under a prefix in a bucket."""
     client = _get_client()
@@ -353,6 +403,10 @@ async def adelete_object_by_url(url: str) -> None:
     await asyncio.to_thread(delete_object_by_url, url)
 
 
+async def adelete_avatar(value: str | None) -> None:
+    await asyncio.to_thread(delete_avatar, value)
+
+
 async def adelete_objects_by_prefix(bucket: str, prefix: str) -> None:
     await asyncio.to_thread(delete_objects_by_prefix, bucket, prefix)
 
@@ -406,49 +460,28 @@ def upload_voice_audio(
     return object_key
 
 
-_voice_public_client: Minio | None = None
-
-
-def _get_voice_public_client() -> Minio:
-    """A Minio client pointing at the externally-reachable endpoint.
-
-    Presigned URLs are host-signed, so a URL minted by a client with host
-    `127.0.0.1:9000` is rejected (SignatureDoesNotMatch) when fetched via
-    the external host. Keep a second client bound to the public endpoint
-    whose sole purpose is to mint URLs DashScope can fetch.
-    """
-    global _voice_public_client
-    if _voice_public_client is None:
-        endpoint = settings.MINIO_PUBLIC_ENDPOINT.strip()
-        if not endpoint:
-            # Derive <host>:9000 from PUBLIC_BASE_URL so a vanilla deploy
-            # works without an extra env var.
-            parsed = urlparse(settings.PUBLIC_BASE_URL)
-            host = parsed.hostname or "127.0.0.1"
-            endpoint = f"{host}:9000"
-        _voice_public_client = Minio(
-            endpoint,
-            access_key=settings.MINIO_ACCESS_KEY,
-            secret_key=settings.MINIO_SECRET_KEY,
-            secure=settings.MINIO_SECURE,
-        )
-    return _voice_public_client
-
-
 def voice_audio_presigned_url(
     object_key: str, expires_seconds: int = 900,
 ) -> str:
     """Mint a presigned GET URL for a voice-intake object.
 
-    The URL must be reachable from DashScope's servers — that's why it
-    is signed by `_get_voice_public_client()` rather than the internal
-    client, and why it returns the raw MinIO URL (port 9000) instead of
-    rewriting through Nginx.
+    The URL must be reachable from DashScope's servers, so we route it
+    through nginx at `PUBLIC_BASE_URL/media/...` rather than exposing
+    MinIO's port 9000 publicly. The signature is computed with
+    `Host: minio:9000` (the internal client's endpoint); nginx restores
+    that Host header on the way through, so the signature still
+    validates. Same pattern as `get_photo_presigned_url`.
     """
-    return _get_voice_public_client().presigned_get_object(
-        settings.MINIO_BUCKET_VOICE_INTAKE,
+    bucket = settings.MINIO_BUCKET_VOICE_INTAKE
+    internal_url = _get_client().presigned_get_object(
+        bucket,
         object_key,
         expires=timedelta(seconds=expires_seconds),
+    )
+    parsed = urlparse(internal_url)
+    return (
+        f"{settings.PUBLIC_BASE_URL}/media/{bucket}/{object_key}"
+        f"?{parsed.query}"
     )
 
 
