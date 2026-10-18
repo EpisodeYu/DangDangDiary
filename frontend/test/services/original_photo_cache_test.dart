@@ -64,7 +64,7 @@ void main() {
     final cacheDir = Directory('${tempRoot.path}/original_photo_cache');
     final remaining = await cacheDir
         .list()
-        .where((e) => e is File && e.path.contains('/pending_'))
+        .where((e) => e is File && e.uri.pathSegments.last.startsWith('pending_'))
         .toList();
     expect(remaining, isEmpty);
   });
@@ -166,7 +166,7 @@ void main() {
         .list()
         .where((e) =>
             e is File &&
-            (e.path.contains('/photo_') || e.path.contains('/pending_')))
+            (e.uri.pathSegments.last.startsWith('photo_') || e.uri.pathSegments.last.startsWith('pending_')))
         .length;
     expect(beforeFiles, greaterThanOrEqualTo(2));
 
@@ -177,7 +177,7 @@ void main() {
         .list()
         .where((e) =>
             e is File &&
-            (e.path.contains('/photo_') || e.path.contains('/pending_')))
+            (e.uri.pathSegments.last.startsWith('photo_') || e.uri.pathSegments.last.startsWith('pending_')))
         .toList();
     expect(remaining, isEmpty);
 

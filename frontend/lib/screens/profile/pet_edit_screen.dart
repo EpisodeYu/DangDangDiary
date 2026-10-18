@@ -12,9 +12,11 @@ import 'package:path_provider/path_provider.dart';
 import '../../config/theme.dart';
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
+import '../../providers/pet_export_provider.dart';
 import '../../providers/share_provider.dart';
 import '../../services/share_service.dart';
 import '../../utils/api_error.dart';
+import '../../widgets/pet_export_dialog.dart';
 import 'share/share_scan_screen.dart';
 
 const _catBreeds = [
@@ -158,6 +160,8 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
             ],
             if (_isEditing) ...[
               SizedBox(height: _canEdit ? 16 : 0),
+              _buildExportButton(),
+              const SizedBox(height: 12),
               _buildBottomActionButton(),
             ],
           ],
@@ -176,6 +180,30 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   Widget _buildBottomActionButton() {
     return _isOwner ? _buildDeleteButton() : _buildLeaveButton();
   }
+
+  Widget _buildExportButton() => OutlinedButton.icon(
+    onPressed: _isLoading || _existingPet == null ? null : () async {
+      final saved = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => PetExportDialog(
+          petId: widget.petId!,
+          service: ref.read(petExportServiceProvider),
+        ),
+      );
+      if (saved == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('档案压缩包已保存')),
+        );
+      }
+    },
+    icon: const Icon(Icons.download_rounded),
+    label: const Text('下载此档案全部数据', style: TextStyle(fontSize: 16)),
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size.fromHeight(48),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    ),
+  );
 
   Widget _buildRedeemButton() {
     return SizedBox(

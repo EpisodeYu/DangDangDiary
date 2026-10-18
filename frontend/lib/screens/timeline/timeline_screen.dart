@@ -502,7 +502,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       _showSnack(permissionMessage ?? '删除失败，请稍后重试');
     } else {
       final suffix = permissionMessage != null
-          ? '${failed.length} 张${permissionMessage}'
+          ? '${failed.length} 张$permissionMessage'
           : '${failed.length} 张失败';
       _showSnack('已删除 ${deleted.length} 张，$suffix');
     }

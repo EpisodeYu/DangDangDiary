@@ -66,11 +66,17 @@ dependencies:
   # UI polish pass: shimmer skeleton placeholders for list / detail loading
   # states. Drop-in replacement for CircularProgressIndicator on lists.
   shimmer: ^3.0.0
+  # Export: stream ZIP files on-device and save via the native location picker.
+  archive: 4.0.9
+  # 0.5+ requires meta ^1.19, incompatible with this Flutter SDK's test pin.
+  file_saver: 0.4.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
 
 # `record: ^5.2` publishes a pubspec that pins record_linux to the
 # old `>=0.5.0 <1.0.0` range, but the upstream repo has since moved

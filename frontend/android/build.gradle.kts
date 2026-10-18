@@ -19,6 +19,14 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    // tflite_flutter 0.11 targets Java 8 but leaves Kotlin's target unset.
+    // Flutter 3.44 applies KGP to plugins; on JDK 21 the implicit Kotlin
+    // target then disagrees with Java and prevents any APK from building.
+    if (project.name == "tflite_flutter") {
+        tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach {
+            compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
+        }
+    }
 }
 
 tasks.register<Delete>("clean") {

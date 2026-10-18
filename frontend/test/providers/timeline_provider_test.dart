@@ -73,7 +73,7 @@ TimelineWindowResponse _window({
 
 void main() {
   group('TimelineMerge.mergeWindow', () {
-    test('initial merge builds ordered ids and grouped months', () {
+    test('initial merge builds ordered ids and grouped days', () {
       final state = TimelineState.initial(const TimelineFilter(petIds: []));
       final resp = _window(
         photos: [
@@ -89,9 +89,10 @@ void main() {
         fromNewer: false, fromOlder: false, fromAnchor: false,
       );
       expect(next.orderedPhotoIds, [3, 2, 1]);
-      expect(next.groups.map((g) => g.date).toList(), ['2024-02', '2024-01']);
+      expect(next.groups.map((g) => g.date).toList(), ['2024-02-10', '2024-01-20', '2024-01-05']);
       expect(next.groups[0].photos.length, 1);
-      expect(next.groups[1].photos.length, 2);
+      expect(next.groups[1].photos.length, 1);
+      expect(next.groups[2].photos.length, 1);
       expect(next.monthFirstPhotoIndex, {'2024-02': 0, '2024-01': 1});
       expect(next.tailCursor, 'c_older');
       expect(next.hasMoreOlder, true);
@@ -131,7 +132,7 @@ void main() {
       expect(second.tailCursor, 'c2');
       expect(second.hasMoreOlder, false);
       expect(second.groups.map((g) => g.date).toList(),
-          ['2024-05', '2024-04', '2024-03']);
+          ['2024-05-01', '2024-04-15', '2024-04-10', '2024-03-01']);
     });
 
     test('stable sort with equal taken_at uses created_at then id DESC', () {
@@ -186,7 +187,7 @@ void main() {
 
       expect(anchor.orderedPhotoIds, [100, 99, 50, 49, 48]);
       expect(anchor.groups.map((g) => g.date).toList(),
-          ['2024-06', '2024-05', '2024-02', '2024-01']);
+          ['2024-06-01', '2024-05-20', '2024-02-15', '2024-02-10', '2024-01-30']);
       expect(anchor.monthFirstPhotoIndex['2024-02'], 2);
     });
 

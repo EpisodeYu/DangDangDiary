@@ -36,10 +36,10 @@ class _CacheEntry {
   });
 
   Map<String, dynamic> toJson() => {
-        'key': key,
-        'size': sizeBytes,
-        'last_access': lastAccess.millisecondsSinceEpoch,
-      };
+    'key': key,
+    'size': sizeBytes,
+    'last_access': lastAccess.millisecondsSinceEpoch,
+  };
 
   factory _CacheEntry.fromJson(Map<String, dynamic> json) {
     return _CacheEntry(
@@ -70,17 +70,27 @@ class _CacheEntry {
 /// persisted. The cache key is the stable `photo_id` so the file survives app
 /// restarts and can be reused across days/weeks.
 class OriginalPhotoCache {
-  OriginalPhotoCache._();
+  OriginalPhotoCache._({PhotoService? photoService, Dio? downloadDio})
+    : _photoService = photoService ?? PhotoService(),
+      _downloadDio =
+          downloadDio ??
+          Dio(
+            BaseOptions(
+              connectTimeout: const Duration(seconds: 15),
+              receiveTimeout: const Duration(seconds: 120),
+            ),
+          );
+
+  @visibleForTesting
+  OriginalPhotoCache.forTest({
+    required PhotoService photoService,
+    required Dio downloadDio,
+  }) : this._(photoService: photoService, downloadDio: downloadDio);
 
   static final OriginalPhotoCache instance = OriginalPhotoCache._();
 
-  final PhotoService _photoService = PhotoService();
-  final Dio _downloadDio = Dio(
-    BaseOptions(
-      connectTimeout: const Duration(seconds: 15),
-      receiveTimeout: const Duration(seconds: 120),
-    ),
-  );
+  final PhotoService _photoService;
+  final Dio _downloadDio;
 
   Directory? _cacheDir;
   File? _indexFile;
@@ -89,6 +99,7 @@ class OriginalPhotoCache {
 
   /// In-flight download dedup — keyed by photo id.
   final Map<int, Future<File>> _inflightDownloads = {};
+  final Map<String, int> _pins = {};
 
   /// Photo ids currently being prefetched in the background (fire-and-forget).
   /// We keep a weak record to avoid re-requesting within a short window.
@@ -114,7 +125,10 @@ class OriginalPhotoCache {
     if (_initCompleter != null) return _initCompleter!.future;
     final completer = Completer<void>();
     _initCompleter = completer;
-    _initialize().then(completer.complete).catchError((Object e, StackTrace st) {
+    _initialize().then(completer.complete).catchError((
+      Object e,
+      StackTrace st,
+    ) {
       completer.completeError(e, st);
     });
     return completer.future;
@@ -245,6 +259,41 @@ class OriginalPhotoCache {
       return await future;
     } finally {
       _inflightDownloads.remove(photoId);
+    }
+  }
+
+  /// Give an export its own stable copy. Protect the original from LRU
+  /// eviction until the copy finishes, including files larger than the quota.
+  /// Cancelling an export does not cancel a viewer's shared download.
+  Future<void> copyOriginalTo(
+    int photoId,
+    String destination, {
+    required CancelToken cancelToken,
+  }) async {
+    await _ensureInitialized();
+    if (cancelToken.isCancelled) throw cancelToken.cancelError!;
+    final key = _photoKey(photoId);
+    _pins[key] = (_pins[key] ?? 0) + 1;
+    try {
+      final original = await Future.any<File>([
+        fetchOriginal(photoId),
+        cancelToken.whenCancel.then<File>((error) => throw error),
+      ]);
+      if (cancelToken.isCancelled) throw cancelToken.cancelError!;
+      if (await original.length() == 0) {
+        await removePhoto(photoId);
+        throw const FileSystemException('原图文件为空，请重试');
+      }
+      await original.copy(destination);
+      if (cancelToken.isCancelled) throw cancelToken.cancelError!;
+    } finally {
+      final count = (_pins[key] ?? 1) - 1;
+      if (count == 0) {
+        _pins.remove(key);
+      } else {
+        _pins[key] = count;
+      }
+      await _evictIfNeeded();
     }
   }
 
@@ -421,9 +470,13 @@ class OriginalPhotoCache {
     var used = totalBytes;
     for (final entry in entries) {
       if (used <= target) break;
+      if (_pins.containsKey(entry.key)) continue;
       final file = _fileForKey(entry.key);
       try {
-        if (await file.exists()) await file.delete();
+        if (await file.exists()) {
+          if (_pins.containsKey(entry.key)) continue;
+          await file.delete();
+        }
       } catch (_) {}
       _index.remove(entry.key);
       used -= entry.sizeBytes;
@@ -495,6 +548,7 @@ class OriginalPhotoCache {
     _inflightDownloads.clear();
     _prefetching.clear();
     _index.clear();
+    _pins.clear();
     _initCompleter = null;
     _cacheDir = null;
     _indexFile = null;

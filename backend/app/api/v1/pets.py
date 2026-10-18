@@ -6,7 +6,9 @@ from app.database import get_db
 from app.dependencies import get_current_user_id
 from app.exceptions import AppException
 from app.schemas.pet import PetCreate, PetListResponse, PetResponse, PetUpdate
+from app.schemas.pet_export import PetExportResponse
 from app.services import pet as pet_service
+from app.services.pet_export import get_pet_export
 
 router = APIRouter(prefix="/pets", tags=["pets"])
 
@@ -41,6 +43,17 @@ async def get_pet(
     user_id: int = Depends(get_current_user_id),
 ):
     return await pet_service.get_pet_detail(db, pet_id, user_id)
+
+
+@router.get("/{pet_id}/export", response_model=PetExportResponse)
+async def export_pet(
+    pet_id: int,
+    photos: bool = Query(True),
+    records: bool = Query(True),
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return await get_pet_export(db, pet_id, user_id, photos=photos, records=records)
 
 
 @router.put("/{pet_id}", response_model=PetResponse)

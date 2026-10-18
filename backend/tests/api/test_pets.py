@@ -94,7 +94,9 @@ async def test_pet_crud_roundtrip(client):
     assert resp.json()["breed"] == "中华田园猫"
 
     # delete
-    resp = await c.delete(f"/pets/{pet_id}", headers=headers)
+    # CRUD is a database/API test; object storage is covered separately below.
+    with patch("app.services.pet.adelete_objects_by_prefix"):
+        resp = await c.delete(f"/pets/{pet_id}", headers=headers)
     assert resp.status_code == 204
 
     resp = await c.get(f"/pets/{pet_id}", headers=headers)
