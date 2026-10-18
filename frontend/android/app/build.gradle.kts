@@ -1,3 +1,6 @@
+import java.net.URI
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -47,6 +50,33 @@ android {
 flutter {
     source = "../.."
 }
+
+// A release APK must never silently use the Dart localhost development default.
+// Flutter passes both --dart-define and --dart-define-from-file here as Base64.
+val releaseDartDefines = providers.gradleProperty("dart-defines").orElse("")
+val validateReleaseBaseUrl by tasks.registering {
+    doLast {
+        val baseUrl = releaseDartDefines.get().split(',')
+            .filter { it.isNotBlank() }
+            .map { String(Base64.getDecoder().decode(it), Charsets.UTF_8) }
+            .lastOrNull { it.startsWith("BASE_URL=") }
+            ?.substringAfter('=')
+        require(!baseUrl.isNullOrBlank()) {
+            "Release APK requires --dart-define=BASE_URL=https://YOUR_SERVER_HOST " +
+                "(the phone-accessible Nginx entry, without /api/v1 or a trailing slash)."
+        }
+        val uri = runCatching { URI(baseUrl) }.getOrNull()
+        require(uri != null && uri.scheme in listOf("http", "https") &&
+            !uri.host.isNullOrBlank() && uri.rawPath.isNullOrEmpty() &&
+            uri.rawUserInfo == null && uri.rawQuery == null && uri.rawFragment == null) {
+            "BASE_URL must be an http(s) origin with an optional port, " +
+                "without credentials, paths, query parameters or a trailing slash."
+        }
+    }
+}
+
+tasks.matching { it.name == "compileFlutterBuildRelease" || it.name == "preReleaseBuild" }
+    .configureEach { dependsOn(validateReleaseBaseUrl) }
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")

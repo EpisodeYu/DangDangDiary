@@ -35,11 +35,17 @@ cd backend && alembic upgrade head
 cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # Frontend: run on device
-cd frontend && flutter run
+cd frontend && flutter run --dart-define=BASE_URL=https://YOUR_SERVER_HOST
 
 # Frontend: build APK
-cd frontend && flutter build apk --release
+cd frontend && flutter build apk --release --dart-define=BASE_URL=https://YOUR_SERVER_HOST
 ```
+
+For Android release builds, always supply the phone-accessible Nginx origin.
+If `frontend/release.env.local` exists locally, use
+`flutter build apk --release --dart-define-from-file=release.env.local` from
+`frontend/` to reuse its verified `BASE_URL`. This local file is Git-ignored.
+Do not omit the define or add `--no-pub` when switching build modes.
 
 ## Architecture
 

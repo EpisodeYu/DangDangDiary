@@ -144,22 +144,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        const Text(
-                          '欢迎回家',
-                          style: TextStyle(
-                            fontSize: 21,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        const Text(
-                          '用手机号，开启相伴的日常',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        const SizedBox(height: 28),
                         TextField(
                           controller: _phoneController,
                           keyboardType: TextInputType.phone,

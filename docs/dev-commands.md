@@ -77,8 +77,8 @@ tmux kill-session -t 会话名
 ```bash
 cd ~/DangDangDiary/frontend
 
-# 使用默认 baseUrl（10.0.2.2，模拟器用）
-flutter build apk --debug
+# Android 模拟器访问宿主机 Nginx（默认 127.0.0.1 指向设备自身）
+flutter build apk --debug --dart-define=BASE_URL=http://10.0.2.2
 
 # 指定服务器 IP（真机测试用，替换为你的实际 IP）
 flutter build apk --debug --dart-define=BASE_URL=http://你的服务器IP
@@ -91,6 +91,24 @@ flutter build apk --debug --dart-define=BASE_URL=http://你的服务器IP
 ```bash
 flutter build apk --release --dart-define=BASE_URL=http://你的服务器IP
 ```
+
+`BASE_URL` 必须是手机可访问的 Nginx 统一入口（可带端口），不要添加 `/api/v1` 或末尾 `/`。Release 构建会检查此参数，遗漏或格式不正确时直接失败，避免生成连接设备自身 `127.0.0.1` 的安装包。真实部署地址仅通过本机构建参数传入，不写入代码默认值或文档。
+
+本机可将 `BASE_URL=https://YOUR_SERVER_HOST` 保存到 `frontend/release.env.local`（已被 Git 忽略），后续在 `frontend` 目录复用：
+
+```bash
+flutter build apk --release --dart-define-from-file=release.env.local
+```
+
+切换 Android 集成测试与 release 构建时不要加 `--no-pub`，以便 Flutter 重新生成对应模式的平台插件注册文件。
+
+### Android 实际接口连通性检查
+
+```bash
+flutter drive --driver=test_driver/api_connectivity_driver.dart --target=integration_test/api_connectivity_test.dart -d YOUR_ANDROID_DEVICE --no-dds --dart-define=BASE_URL=https://YOUR_SERVER_HOST
+```
+
+使用 App 的真实 HTTP 客户端、Android 网络配置和正常证书校验，以无令牌的 `GET /api/v1/auth/me` 检查预期 `401 / INVALID_ACCESS_TOKEN` 响应。该检查单独运行，需要真实可用的后端；不发送验证码、不读取用户资料、不修改服务端数据。构建 APK 时须传入同一个已验证的入口地址。
 
 ### 代码检查（不编译，速度快）
 

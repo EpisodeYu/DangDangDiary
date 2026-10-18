@@ -60,4 +60,14 @@ Windows 无法执行 iOS 原生构建和设备验证；本轮移动端原生验�
 
 后端完整回归曾暴露 `test_tampered_payload_returns_none` 的偶发失败：修改 Base64URL 签名末尾字符可能只改变未使用的填充位，实际签名字节相同。现改为修改首字符并更名为 `test_tampered_signature_returns_none`，确保测试确实篡改签名；鉴权实现未改动。
 
-切换 Android 集成测试与 release 构建时，不加 `--no-pub`（例如 `flutter build apk --release`）。本机 Flutter 3.44 的 `--no-pub` 也跳过平台插件注册文件再生成，会留下上一种构建模式的注册代码；正常构建会按模式处理开发依赖。导出集成测试脚本也已调整，支持从 release 模式切回测试模式。
+切换 Android 集成测试与 release 构建时，不加 `--no-pub`（例如 `flutter build apk --release --dart-define=BASE_URL=https://YOUR_SERVER_HOST`）。本机 Flutter 3.44 的 `--no-pub` 也跳过平台插件注册文件再生成，会留下上一种构建模式的注册代码；正常构建会按模式处理开发依赖。导出集成测试脚本也已调整，支持从 release 模式切回测试模式。
+
+## 登录页与 APK 配置修正
+
+- 按反馈移除登录表单中的“欢迎回家”及“用手机号，开启相伴的日常”，保留品牌区域、输入框与登录流程。
+- 上次 APK 构建遗漏 `BASE_URL`，使用默认 `http://127.0.0.1`，在 Android 上指向设备自身。先前的 release 检查仅验证安装、启动与键盘布局，未验证真实服务器连接。
+- Android release 构建新增必填参数及入口格式检查；正确命令见 `dev-commands.md`。联网权限和 HTTP 配置原本已具备，无需修改。
+- 增加单独运行的 Android 实际接口检查 `integration_test/api_connectivity_test.dart`：使用 App 的真实客户端与正常 TLS 校验，无令牌请求 `/api/v1/auth/me`，断言后端返回 `401 / INVALID_ACCESS_TOKEN`。不发送短信、不修改生产数据。
+- 本机部署入口保存在被 Git 忽略的 `frontend/release.env.local`，后续可通过 `--dart-define-from-file=release.env.local` 复用；真实域名未写入代码或文档示例。
+- 修正验证：静态检查无问题，130 项 Flutter 测试通过；390×844 与 320×640（1.5 倍字号）登录页截图复核通过；缺少 `BASE_URL` 的 release 构建按预期被拦截；Android 15 模拟器中的实际 HTTPS 接口检查通过。
+- Release APK 构建及 v2 签名校验通过，三个 ABI 的编译产物均包含已验证的 HTTPS 入口且不再包含被移除文案；Android 安装、冷启动与登录页截图复核通过。APK 沿用现有调试签名。
