@@ -7,6 +7,7 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../widgets/skeleton.dart';
+import '../../widgets/health_record_action.dart';
 
 import '../../config/theme.dart';
 import '../../widgets/app_page_intro.dart';
@@ -263,21 +264,17 @@ class DewormingTab extends ConsumerWidget {
         endActionPane: ActionPane(
           motion: const BehindMotion(),
           children: [
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _edit(context, ref, d),
               backgroundColor: AppTheme.blueColor,
-              foregroundColor: Colors.white,
               icon: Icons.edit_rounded,
               label: '编辑',
-              borderRadius: BorderRadius.circular(16),
             ),
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _confirmDelete(context, ref, d),
               backgroundColor: AppTheme.errorColor,
-              foregroundColor: Colors.white,
               icon: Icons.delete_rounded,
               label: '删除',
-              borderRadius: BorderRadius.circular(16),
             ),
           ],
         ),

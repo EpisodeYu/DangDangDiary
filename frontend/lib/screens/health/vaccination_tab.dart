@@ -11,6 +11,7 @@ import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
 import '../../widgets/skeleton.dart';
+import '../../widgets/health_record_action.dart';
 
 class VaccinationTab extends ConsumerWidget {
   final Pet pet;
@@ -80,21 +81,17 @@ class VaccinationTab extends ConsumerWidget {
         endActionPane: ActionPane(
           motion: const BehindMotion(),
           children: [
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _edit(context, ref, v),
               backgroundColor: AppTheme.blueColor,
-              foregroundColor: Colors.white,
               icon: Icons.edit_rounded,
               label: '编辑',
-              borderRadius: BorderRadius.circular(16),
             ),
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _confirmDelete(context, ref, v),
               backgroundColor: AppTheme.errorColor,
-              foregroundColor: Colors.white,
               icon: Icons.delete_rounded,
               label: '删除',
-              borderRadius: BorderRadius.circular(16),
             ),
           ],
         ),

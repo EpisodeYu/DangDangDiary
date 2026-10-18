@@ -11,6 +11,7 @@ import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
 import '../../widgets/skeleton.dart';
+import '../../widgets/health_record_action.dart';
 
 class WeightTab extends ConsumerWidget {
   final Pet pet;
@@ -124,21 +125,17 @@ class WeightTab extends ConsumerWidget {
         endActionPane: ActionPane(
           motion: const BehindMotion(),
           children: [
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _edit(context, ref, w),
               backgroundColor: AppTheme.blueColor,
-              foregroundColor: Colors.white,
               icon: Icons.edit_rounded,
               label: '编辑',
-              borderRadius: BorderRadius.circular(16),
             ),
-            SlidableAction(
+            HealthRecordAction(
               onPressed: (_) => _confirmDelete(context, ref, w),
               backgroundColor: AppTheme.errorColor,
-              foregroundColor: Colors.white,
               icon: Icons.delete_rounded,
               label: '删除',
-              borderRadius: BorderRadius.circular(16),
             ),
           ],
         ),
