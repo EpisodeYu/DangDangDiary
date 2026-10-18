@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../config/theme.dart';
+import '../../../widgets/app_page_intro.dart';
 import '../../../models/pet.dart';
 import '../../../models/share.dart';
 import '../../../providers/pet_provider.dart';
@@ -70,6 +71,11 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            const AppPageIntro(
+              title: '一起守护小日常',
+              subtitle: '管理分享码与成员，分享每一份陪伴。',
+              icon: Icons.favorite_border_rounded,
+            ),
             _buildShareCodeCard(context, shareCodeAsync),
             const SizedBox(height: 24),
             _buildMembersHeader(membersAsync),
@@ -135,8 +141,9 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
               ),
             ],
           ),
-          data: (code) =>
-              code == null ? _buildEmptyCode(context) : _buildActiveCode(context, code),
+          data: (code) => code == null
+              ? _buildEmptyCode(context)
+              : _buildActiveCode(context, code),
         ),
       ),
     );
@@ -147,10 +154,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
       children: [
         Icon(Icons.qr_code_rounded, size: 48, color: AppTheme.textSecondary),
         const SizedBox(height: 12),
-        const Text(
-          '还没有生成分享码',
-          style: TextStyle(color: AppTheme.textSecondary),
-        ),
+        const Text('还没有生成分享码', style: TextStyle(color: AppTheme.textSecondary)),
         const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
@@ -161,9 +165,9 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             label: const Text('生成 8 位分享码'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryColor,
-              foregroundColor: Colors.white,
+              foregroundColor: AppTheme.primaryInk,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
               ),
             ),
           ),
@@ -179,15 +183,31 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
 
     return Column(
       children: [
-        SelectableText(
-          code.code,
-          style: const TextStyle(
-            fontSize: 32,
-            letterSpacing: 6,
-            fontWeight: FontWeight.w700,
-            fontFamily: 'monospace',
-            color: AppTheme.textPrimary,
-          ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            const style = TextStyle(
+              fontSize: 32,
+              letterSpacing: 6,
+              fontWeight: FontWeight.w700,
+              fontFamily: 'monospace',
+              color: AppTheme.textPrimary,
+            );
+            final scaler = MediaQuery.textScalerOf(context);
+            final painter = TextPainter(
+              text: TextSpan(text: code.code, style: style),
+              textDirection: Directionality.of(context),
+              textScaler: scaler,
+            )..layout();
+            final fit = (constraints.maxWidth / painter.width).clamp(0.0, 1.0);
+            painter.dispose();
+            return SelectableText(
+              code.code,
+              maxLines: 1,
+              textAlign: TextAlign.center,
+              textScaler: scaler,
+              style: style.copyWith(fontSize: 32 * fit, letterSpacing: 6 * fit),
+            );
+          },
         ),
         const SizedBox(height: 8),
         Text(
@@ -206,7 +226,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                 icon: Icon(Icons.copy_rounded),
                 label: const Text('复制'),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppTheme.primaryColor,
+                  foregroundColor: AppTheme.accentColor,
                   side: const BorderSide(color: AppTheme.primaryColor),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
@@ -222,7 +242,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                 label: const Text('重新生成'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
+                  foregroundColor: AppTheme.primaryInk,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),
@@ -241,7 +261,7 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             icon: Icon(Icons.qr_code_rounded),
             label: const Text('分享给好友 (QR 码)'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: AppTheme.primaryColor,
+              foregroundColor: AppTheme.accentColor,
               side: const BorderSide(color: AppTheme.primaryColor),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10),
@@ -296,9 +316,9 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
       ref.read(petListProvider.notifier).refresh();
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(shareErrorToMessage(e))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(shareErrorToMessage(e))));
     }
   }
 
@@ -354,7 +374,9 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
               2,
               (i) => Padding(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 12),
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 child: Row(
                   children: const [
                     SkeletonBox.circle(size: 40),
@@ -473,7 +495,9 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
             children: [
               ListTile(
                 title: Text(
-                  m.nickname?.isNotEmpty == true ? m.nickname! : '用户${m.userId}',
+                  m.nickname?.isNotEmpty == true
+                      ? m.nickname!
+                      : '用户${m.userId}',
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 subtitle: Text('当前权限：${petRoleLabel(m.role)}'),
@@ -481,8 +505,10 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
               const Divider(height: 1),
               if (m.role == PetRole.viewer)
                 ListTile(
-                  leading: Icon(Icons.edit_rounded,
-                      color: AppTheme.primaryColor),
+                  leading: Icon(
+                    Icons.edit_rounded,
+                    color: AppTheme.primaryColor,
+                  ),
                   title: const Text('授予编辑权限'),
                   onTap: () {
                     Navigator.of(ctx).pop();
@@ -491,8 +517,10 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
                 )
               else if (m.role == PetRole.editor)
                 ListTile(
-                  leading: Icon(Icons.lock_open_rounded,
-                      color: AppTheme.primaryColor),
+                  leading: Icon(
+                    Icons.lock_open_rounded,
+                    color: AppTheme.primaryColor,
+                  ),
                   title: const Text('取消编辑权限'),
                   onTap: () {
                     Navigator.of(ctx).pop();
@@ -536,15 +564,13 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
       ref.read(petListProvider.notifier).silentRefresh();
       if (!context.mounted) return;
       final name = m.nickname?.isNotEmpty == true ? m.nickname! : '该成员';
-      final msg = role == PetRole.editor
-          ? '已授予 $name 编辑权限'
-          : '已取消 $name 的编辑权限';
+      final msg = role == PetRole.editor ? '已授予 $name 编辑权限' : '已取消 $name 的编辑权限';
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(shareErrorToMessage(e))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(shareErrorToMessage(e))));
     }
   }
 
@@ -575,14 +601,14 @@ class _PetShareDetailScreenState extends ConsumerState<PetShareDetailScreen> {
           .read(sharedMembersProvider(widget.petId).notifier)
           .remove(m.userId);
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已移除 $name 的分享权限')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已移除 $name 的分享权限')));
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(shareErrorToMessage(e))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(shareErrorToMessage(e))));
     }
   }
 }

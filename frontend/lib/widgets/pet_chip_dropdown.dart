@@ -123,7 +123,7 @@ class PetChipDropdown extends StatelessWidget {
                       child: Icon(
                         Icons.check_rounded,
                         size: 16,
-                        color: AppTheme.primaryColor,
+                        color: AppTheme.accentColor,
                       ),
                     ),
                 ],

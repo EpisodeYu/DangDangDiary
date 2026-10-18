@@ -139,70 +139,81 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
       ),
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _buildHandle(),
-            const SizedBox(height: 4),
-            _buildHeader(),
-            const SizedBox(height: 16),
-            _buildTranscriptCard(),
-            const SizedBox(height: 16),
-            ..._buildFormFields(),
-            const SizedBox(height: 16),
-            Row(
+      child: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: _submitting ? null : _onCancel,
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      side: BorderSide(color: Colors.grey.shade300),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                _buildHandle(),
+                const SizedBox(height: 4),
+                _buildHeader(),
+                const SizedBox(height: 16),
+                _buildTranscriptCard(),
+                const SizedBox(height: 16),
+                ..._buildFormFields(),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _submitting ? null : _onCancel,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: BorderSide(color: AppTheme.borderColor),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: const Text(
+                          '取消',
+                          style: TextStyle(color: AppTheme.textPrimary),
+                        ),
                       ),
                     ),
-                    child: const Text('取消',
-                        style: TextStyle(color: AppTheme.textPrimary)),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton(
-                    onPressed: _submitting ? null : _onConfirm,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: ElevatedButton(
+                        onPressed: _submitting ? null : _onConfirm,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primaryColor,
+                          foregroundColor: AppTheme.primaryInk,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        child: _submitting
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Colors.white,
+                                  strokeWidth: 2.5,
+                                ),
+                              )
+                            : const Text(
+                                '确认记录',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
                       ),
                     ),
-                    child: _submitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2.5,
-                            ),
-                          )
-                        : const Text('确认记录',
-                            style: TextStyle(
-                              fontSize: 15, fontWeight: FontWeight.w600,
-                            )),
-                  ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -214,7 +225,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         width: 36,
         height: 4,
         decoration: BoxDecoration(
-          color: Colors.grey.shade300,
+          color: AppTheme.borderColor,
           borderRadius: BorderRadius.circular(2),
         ),
       ),
@@ -224,7 +235,11 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
   Widget _buildHeader() {
     final label = voiceIntentLabel(_intent);
     final conf = widget.response.confidence ?? 0;
-    return Row(
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 8,
+      runSpacing: 8,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -235,13 +250,12 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
           child: Text(
             '语音记录 · $label',
             style: const TextStyle(
-              color: AppTheme.primaryColor,
+              color: AppTheme.accentColor,
               fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
         ),
-        const Spacer(),
         Text(
           '置信度 $conf',
           style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
@@ -283,22 +297,13 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         ]);
         break;
       case VoiceIntent.vaccination:
-        widgets.addAll([
-          const SizedBox(height: 12),
-          _buildVaccineInput(),
-        ]);
+        widgets.addAll([const SizedBox(height: 12), _buildVaccineInput()]);
         break;
       case VoiceIntent.weight:
-        widgets.addAll([
-          const SizedBox(height: 12),
-          _buildWeightInput(),
-        ]);
+        widgets.addAll([const SizedBox(height: 12), _buildWeightInput()]);
         break;
       case VoiceIntent.routine:
-        widgets.addAll([
-          const SizedBox(height: 12),
-          _buildRoutineTypePicker(),
-        ]);
+        widgets.addAll([const SizedBox(height: 12), _buildRoutineTypePicker()]);
         break;
       case VoiceIntent.unknown:
         break;
@@ -314,15 +319,17 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+        ),
         const SizedBox(height: 6),
         Container(
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: missing ? AppTheme.errorColor : Colors.grey.shade300,
+              color: missing ? AppTheme.errorColor : AppTheme.borderColor,
               width: missing ? 1.4 : 1,
             ),
           ),
@@ -332,10 +339,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
           const SizedBox(height: 4),
           Text(
             '语音中未听到，请补充',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.errorColor,
-            ),
+            style: TextStyle(fontSize: 11, color: AppTheme.errorColor),
           ),
         ],
       ],
@@ -353,24 +357,32 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           child: Row(
             children: [
-              Text(
-                _petId == null
-                    ? '请选择宠物'
-                    : widget.pets
-                        .firstWhere(
-                          (p) => p.id == _petId,
-                          orElse: () => widget.pets.first,
-                        )
-                        .name,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: _petId == null
-                      ? AppTheme.textSecondary
-                      : AppTheme.textPrimary,
+              Expanded(
+                child: Text(
+                  _petId == null
+                      ? '请选择宠物'
+                      : widget.pets
+                            .firstWhere(
+                              (p) => p.id == _petId,
+                              orElse: () => widget.pets.first,
+                            )
+                            .name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    color: _petId == null
+                        ? AppTheme.textSecondary
+                        : AppTheme.textPrimary,
+                  ),
                 ),
               ),
-              const Spacer(),
-              Icon(Icons.arrow_drop_down_rounded, size: 18, color: Colors.grey.shade500),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_drop_down_rounded,
+                size: 18,
+                color: AppTheme.textSecondary,
+              ),
             ],
           ),
         ),
@@ -390,11 +402,18 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           child: Row(
             children: [
-              Text(_dateFormat.format(_date),
-                  style: const TextStyle(fontSize: 15)),
-              const Spacer(),
-              Icon(Icons.calendar_today_rounded,
-                  size: 18, color: AppTheme.textSecondary),
+              Expanded(
+                child: Text(
+                  _dateFormat.format(_date),
+                  style: const TextStyle(fontSize: 15),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.calendar_today_rounded,
+                size: 18,
+                color: AppTheme.textSecondary,
+              ),
             ],
           ),
         ),
@@ -431,16 +450,16 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
               label: Text(t.label),
               selected: sel,
               onSelected: (_) => setState(() => _dewormingType = t),
-              selectedColor: AppTheme.primaryColor,
+              selectedColor: AppTheme.softPeach,
               labelStyle: TextStyle(
-                color: sel ? Colors.white : AppTheme.textPrimary,
+                color: sel ? AppTheme.accentColor : AppTheme.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
                 side: BorderSide(
-                  color: sel ? AppTheme.primaryColor : Colors.grey.shade300,
+                  color: sel ? AppTheme.primaryColor : AppTheme.borderColor,
                 ),
               ),
             );
@@ -464,16 +483,16 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
               label: Text(t.label),
               selected: sel,
               onSelected: (_) => setState(() => _routineType = t),
-              selectedColor: AppTheme.primaryColor,
+              selectedColor: AppTheme.softPeach,
               labelStyle: TextStyle(
-                color: sel ? Colors.white : AppTheme.textPrimary,
+                color: sel ? AppTheme.accentColor : AppTheme.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
               backgroundColor: Colors.white,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(20),
                 side: BorderSide(
-                  color: sel ? AppTheme.primaryColor : Colors.grey.shade300,
+                  color: sel ? AppTheme.primaryColor : AppTheme.borderColor,
                 ),
               ),
             );
@@ -529,15 +548,16 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         child: ListView(
           shrinkWrap: true,
           children: widget.pets
-              .map((p) => ListTile(
-                    title: Text(p.name),
-                    subtitle: Text(p.petType == 'cat' ? '猫咪' : '狗狗'),
-                    trailing: p.id == _petId
-                        ? Icon(Icons.check_rounded,
-                            color: AppTheme.primaryColor)
-                        : null,
-                    onTap: () => Navigator.pop(ctx, p.id),
-                  ))
+              .map(
+                (p) => ListTile(
+                  title: Text(p.name),
+                  subtitle: Text(p.petType == 'cat' ? '猫咪' : '狗狗'),
+                  trailing: p.id == _petId
+                      ? Icon(Icons.check_rounded, color: AppTheme.primaryColor)
+                      : null,
+                  onTap: () => Navigator.pop(ctx, p.id),
+                ),
+              )
               .toList(),
         ),
       ),
@@ -669,11 +689,9 @@ Future<VoiceIntakeConfirmResult?> showVoiceIntakeSheet(
   return showModalBottomSheet<VoiceIntakeConfirmResult>(
     context: context,
     isScrollControlled: true,
+    showDragHandle: false,
     backgroundColor: Colors.transparent,
-    builder: (ctx) => VoiceIntakeSheet(
-      response: response,
-      pets: pets,
-      service: service,
-    ),
+    builder: (ctx) =>
+        VoiceIntakeSheet(response: response, pets: pets, service: service),
   );
 }

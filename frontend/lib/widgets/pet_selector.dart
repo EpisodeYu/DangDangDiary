@@ -52,7 +52,11 @@ class PetSelector extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(child: Text(pet.name)),
               if (isSelected)
-                Icon(Icons.check_rounded, size: 18, color: AppTheme.primaryColor),
+                Icon(
+                  Icons.check_rounded,
+                  size: 18,
+                  color: AppTheme.primaryColor,
+                ),
             ],
           ),
         );
@@ -64,16 +68,24 @@ class PetSelector extends StatelessWidget {
             _buildPetAvatar(selectedPet!, 24),
             const SizedBox(width: 8),
           ],
-          Text(
-            selectedPet?.name ?? '选择宠物',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.textPrimary,
+          Flexible(
+            child: Text(
+              selectedPet?.name ?? '选择宠物',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
             ),
           ),
           const SizedBox(width: 4),
-          Icon(Icons.arrow_drop_down_rounded, size: 18, color: AppTheme.textSecondary),
+          Icon(
+            Icons.arrow_drop_down_rounded,
+            size: 18,
+            color: AppTheme.textSecondary,
+          ),
         ],
       ),
     );
@@ -90,8 +102,8 @@ class PetSelector extends StatelessWidget {
     final displayText = allSelected
         ? '全部宠物'
         : (singlePet != null
-            ? singlePet.name
-            : '已选 ${selectedPetIds.length} 只');
+              ? singlePet.name
+              : '已选 ${selectedPetIds.length} 只');
 
     return InkWell(
       borderRadius: BorderRadius.circular(8),
@@ -105,16 +117,24 @@ class PetSelector extends StatelessWidget {
               _buildPetAvatar(singlePet, 24),
               const SizedBox(width: 8),
             ],
-            Text(
-              displayText,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.textPrimary,
+            Flexible(
+              child: Text(
+                displayText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
               ),
             ),
             const SizedBox(width: 4),
-            Icon(Icons.arrow_drop_down_rounded, size: 18, color: AppTheme.textSecondary),
+            Icon(
+              Icons.arrow_drop_down_rounded,
+              size: 18,
+              color: AppTheme.textSecondary,
+            ),
           ],
         ),
       ),
@@ -123,8 +143,7 @@ class PetSelector extends StatelessWidget {
 
   Future<void> _openMultiSelectMenu(BuildContext context) async {
     final renderBox = context.findRenderObject();
-    final overlayRender =
-        Overlay.of(context).context.findRenderObject();
+    final overlayRender = Overlay.of(context).context.findRenderObject();
     if (renderBox is! RenderBox || overlayRender is! RenderBox) return;
 
     final buttonRect = Rect.fromPoints(
@@ -134,8 +153,10 @@ class PetSelector extends StatelessWidget {
         ancestor: overlayRender,
       ),
     );
-    final position =
-        RelativeRect.fromRect(buttonRect, Offset.zero & overlayRender.size);
+    final position = RelativeRect.fromRect(
+      buttonRect,
+      Offset.zero & overlayRender.size,
+    );
 
     // Empty selectedPetIds means "all"; expand to full set for a clear UI state.
     final draft = selectedPetIds.isEmpty
@@ -143,8 +164,10 @@ class PetSelector extends StatelessWidget {
         : selectedPetIds.toSet();
 
     const rowHeight = 52.0;
-    final listHeight =
-        (pets.length * rowHeight).clamp(rowHeight, rowHeight * 5);
+    final listHeight = (pets.length * rowHeight).clamp(
+      rowHeight,
+      rowHeight * 5,
+    );
 
     final result = await showMenu<List<int>>(
       context: context,
@@ -209,7 +232,9 @@ class PetSelector extends StatelessWidget {
                     const Divider(height: 1),
                     Padding(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
@@ -224,8 +249,8 @@ class PetSelector extends StatelessWidget {
                                     // API treats empty list as "all"; collapse when every pet is chosen.
                                     final committed =
                                         draft.length == pets.length
-                                            ? <int>[]
-                                            : draft.toList();
+                                        ? <int>[]
+                                        : draft.toList();
                                     Navigator.of(ctx).pop(committed);
                                   },
                             child: const Text('确定'),
@@ -260,15 +285,14 @@ class PetSelector extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              checked ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
+              checked
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
               size: 22,
               color: checked ? AppTheme.primaryColor : AppTheme.textSecondary,
             ),
             const SizedBox(width: 12),
-            if (leading != null) ...[
-              leading,
-              const SizedBox(width: 10),
-            ],
+            if (leading != null) ...[leading, const SizedBox(width: 10)],
             Expanded(
               child: Text(
                 label,

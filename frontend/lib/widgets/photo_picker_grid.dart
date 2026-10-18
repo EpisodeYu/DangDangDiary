@@ -55,11 +55,7 @@ class PhotoPickerGrid extends StatelessWidget {
       children: [
         ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.file(
-            file,
-            fit: BoxFit.cover,
-            cacheWidth: 300,
-          ),
+          child: Image.file(file, fit: BoxFit.cover, cacheWidth: 300),
         ),
         if (failureMsg != null)
           Positioned(
@@ -112,16 +108,16 @@ class PhotoPickerGrid extends StatelessWidget {
         decoration: BoxDecoration(
           color: Colors.grey.shade100,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+          border: Border.all(color: AppTheme.borderColor, width: 1.5),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add_rounded, size: 32, color: Colors.grey.shade500),
+            Icon(Icons.add_rounded, size: 32, color: AppTheme.textSecondary),
             const SizedBox(height: 4),
             Text(
               '添加照片',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+              style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
             ),
           ],
         ),

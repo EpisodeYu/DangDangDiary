@@ -49,11 +49,7 @@ class ShareQrCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              SvgPicture.asset(
-                'assets/brand/logo.svg',
-                width: 40,
-                height: 40,
-              ),
+              SvgPicture.asset('assets/brand/logo.svg', width: 40, height: 40),
               const SizedBox(width: 10),
               const Expanded(
                 child: Column(
@@ -97,7 +93,7 @@ class ShareQrCard extends StatelessWidget {
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
               border: Border.all(color: Colors.grey.shade200),
             ),
             child: QrImageView(
@@ -143,10 +139,7 @@ class ShareQrCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             '有效期至：${_formatExpiry(expiresAt)}',
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppTheme.textSecondary,
-            ),
+            style: const TextStyle(fontSize: 12, color: AppTheme.textSecondary),
           ),
         ],
       ),

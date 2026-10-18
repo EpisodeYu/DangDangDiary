@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_form_body.dart';
+
 import '../../providers/health_provider.dart';
 import '../../providers/pet_provider.dart';
 
@@ -23,10 +25,12 @@ class VaccinationRecordScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<VaccinationRecordScreen> createState() => _VaccinationRecordScreenState();
+  ConsumerState<VaccinationRecordScreen> createState() =>
+      _VaccinationRecordScreenState();
 }
 
-class _VaccinationRecordScreenState extends ConsumerState<VaccinationRecordScreen> {
+class _VaccinationRecordScreenState
+    extends ConsumerState<VaccinationRecordScreen> {
   final _typeCtl = TextEditingController();
   final _dateFormat = DateFormat('yyyy-MM-dd');
   DateTime _selectedDate = DateTime.now();
@@ -61,107 +65,116 @@ class _VaccinationRecordScreenState extends ConsumerState<VaccinationRecordScree
     final presetsAsync = ref.watch(vaccineTypesProvider(petType));
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? '编辑疫苗记录' : '记录疫苗'),
-      ),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            const Text('疫苗类型',
-                style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _typeCtl,
-              decoration: InputDecoration(
-                hintText: '请选择或输入疫苗类型',
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: Colors.grey.shade300),
+      appBar: AppBar(title: Text(_isEditing ? '编辑疫苗记录' : '记录疫苗')),
+      body: AppFormBody(
+        title: '健康的每一步',
+        subtitle: '记录疫苗类型与接种日期。',
+        icon: Icons.vaccines_rounded,
+        action: ElevatedButton(
+          onPressed: _submitting ? null : _submit,
+          child: _submitting
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                )
+              : const Text(
+                  '确认记录',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            presetsAsync.when(
-              loading: () => const SizedBox(
-                height: 32,
-                child: Center(child: SizedBox(
-                    width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2))),
-              ),
-              error: (_, _) => const SizedBox.shrink(),
-              data: (presets) => Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: presets.map((p) {
-                  return ActionChip(
-                    label: Text(p),
-                    backgroundColor: AppTheme.primaryColor.withValues(alpha: 0.12),
-                    labelStyle: const TextStyle(
-                      color: AppTheme.primaryColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: BorderSide.none,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _typeCtl.text = p;
-                      });
-                    },
-                  );
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 24),
-            const Text('接种日期',
-                style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: _pickDate,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: Row(
-                  children: [
-                    Text(_dateFormat.format(_selectedDate),
-                        style: const TextStyle(fontSize: 15)),
-                    const Spacer(),
-                    Icon(Icons.calendar_today_rounded, size: 18, color: AppTheme.textSecondary),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              height: 50,
-              child: ElevatedButton(
-                onPressed: _submitting ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: _submitting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5))
-                    : const Text('确认记录',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ],
         ),
+        children: [
+          const Text(
+            '疫苗类型',
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _typeCtl,
+            decoration: InputDecoration(
+              hintText: '请选择或输入疫苗类型',
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: AppTheme.borderColor),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          presetsAsync.when(
+            loading: () => const SizedBox(
+              height: 32,
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            ),
+            error: (_, _) => const SizedBox.shrink(),
+            data: (presets) => Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: presets.map((p) {
+                return ActionChip(
+                  label: Text(p),
+                  backgroundColor: AppTheme.primaryColor.withValues(
+                    alpha: 0.12,
+                  ),
+                  labelStyle: const TextStyle(
+                    color: AppTheme.accentColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide.none,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _typeCtl.text = p;
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            '接种日期',
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _pickDate,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.borderColor),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _dateFormat.format(_selectedDate),
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.calendar_today_rounded,
+                    size: 18,
+                    color: AppTheme.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

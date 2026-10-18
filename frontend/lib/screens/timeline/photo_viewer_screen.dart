@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
 
@@ -64,10 +65,14 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
   void _prefetchNeighbors() {
     final ids = ref.read(timelineProvider).orderedPhotoIds;
     if (ids.isEmpty) return;
-    final start =
-        (_currentIndex - _viewerPrefetchRadius).clamp(0, ids.length - 1);
-    final end =
-        (_currentIndex + _viewerPrefetchRadius).clamp(0, ids.length - 1);
+    final start = (_currentIndex - _viewerPrefetchRadius).clamp(
+      0,
+      ids.length - 1,
+    );
+    final end = (_currentIndex + _viewerPrefetchRadius).clamp(
+      0,
+      ids.length - 1,
+    );
     for (var i = start; i <= end; i++) {
       if (i == _currentIndex) continue;
       OriginalPhotoCache.instance.prefetch(ids[i]);
@@ -112,10 +117,7 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
             // "权限已更新，请重试" SnackBar).
             if (canDelete)
               ListTile(
-                leading: Icon(
-                  Icons.delete_rounded,
-                  color: AppTheme.errorColor,
-                ),
+                leading: Icon(Icons.delete_rounded, color: AppTheme.errorColor),
                 title: const Text(
                   '删除',
                   style: TextStyle(color: AppTheme.errorColor),
@@ -138,12 +140,12 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
         break;
       case 'save':
         _showSnack('正在保存...');
-        final result =
-            await savePhotoToGallery(photo.id, takenAt: photo.takenAt);
-        if (!mounted) return;
-        _showSnack(
-          result.success ? '已保存到相册' : (result.errorMessage ?? '保存失败'),
+        final result = await savePhotoToGallery(
+          photo.id,
+          takenAt: photo.takenAt,
         );
+        if (!mounted) return;
+        _showSnack(result.success ? '已保存到相册' : (result.errorMessage ?? '保存失败'));
         break;
       case 'delete':
         final confirmed = await _confirmDelete();
@@ -258,6 +260,9 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
       appBar: AppBar(
         backgroundColor: Colors.black.withValues(alpha: 0.4),
         foregroundColor: Colors.white,
+        iconTheme: const IconThemeData(color: Colors.white),
+        titleTextStyle: const TextStyle(color: Colors.white),
+        systemOverlayStyle: SystemUiOverlayStyle.light,
         elevation: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -316,8 +321,9 @@ class _PhotoViewerScreenState extends ConsumerState<PhotoViewerScreen> {
                   heroAttributes: PhotoViewHeroAttributes(tag: 'photo_$id'),
                   minScale: PhotoViewComputedScale.contained,
                   maxScale: PhotoViewComputedScale.covered * 3,
-                  backgroundDecoration:
-                      const BoxDecoration(color: Colors.black),
+                  backgroundDecoration: const BoxDecoration(
+                    color: Colors.black,
+                  ),
                   loadingBuilder: (ctx, event) => const Center(
                     child: CircularProgressIndicator(
                       strokeWidth: 2,

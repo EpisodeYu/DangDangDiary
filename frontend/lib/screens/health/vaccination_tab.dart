@@ -5,6 +5,8 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_page_intro.dart';
+import '../../widgets/app_empty_state.dart';
 import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
@@ -28,24 +30,23 @@ class VaccinationTab extends ConsumerWidget {
 
   Widget _buildError(BuildContext context, WidgetRef ref, Object err) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.error_outline_rounded, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 12),
-          Text('加载失败：${_friendlyError(err)}',
-              style: const TextStyle(color: AppTheme.textSecondary)),
-          const SizedBox(height: 12),
-          TextButton(
-            onPressed: () => ref.invalidate(vaccinationListProvider(pet.id)),
-            child: const Text('重试'),
-          ),
-        ],
+      child: AppEmptyState(
+        icon: Icons.cloud_off_rounded,
+        title: '暂时没能加载记录',
+        message: '加载失败：${_friendlyError(err)}',
+        action: TextButton(
+          onPressed: () => ref.invalidate(vaccinationListProvider(pet.id)),
+          child: const Text('重试'),
+        ),
       ),
     );
   }
 
-  Widget _buildContent(BuildContext context, WidgetRef ref, VaccinationListResult data) {
+  Widget _buildContent(
+    BuildContext context,
+    WidgetRef ref,
+    VaccinationListResult data,
+  ) {
     return RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(vaccinationListProvider(pet.id));
@@ -54,18 +55,7 @@ class VaccinationTab extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
         children: [
-          Row(
-            children: [
-              Icon(Icons.schedule_rounded, size: 16, color: AppTheme.textSecondary),
-              const SizedBox(width: 6),
-              const Text('疫苗记录',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ],
-          ),
+          const AppSectionTitle('疫苗记录'),
           const SizedBox(height: 12),
           if (data.vaccinations.isEmpty)
             _buildEmpty()
@@ -76,22 +66,11 @@ class VaccinationTab extends ConsumerWidget {
     );
   }
 
-  Widget _buildEmpty() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40),
-      child: Column(
-        children: [
-          Icon(Icons.vaccines_rounded, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 8),
-          const Text('还没有疫苗记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
-          const SizedBox(height: 4),
-          const Text('点击右下角加号添加第一条记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        ],
-      ),
-    );
-  }
+  Widget _buildEmpty() => const AppEmptyState(
+    icon: Icons.vaccines_rounded,
+    title: '还没有疫苗记录',
+    message: '点击右下角加号添加第一条记录',
+  );
 
   Widget _buildItem(BuildContext context, WidgetRef ref, VaccinationRecord v) {
     return Padding(
@@ -103,11 +82,11 @@ class VaccinationTab extends ConsumerWidget {
           children: [
             SlidableAction(
               onPressed: (_) => _edit(context, ref, v),
-              backgroundColor: Colors.blue.shade400,
+              backgroundColor: AppTheme.blueColor,
               foregroundColor: Colors.white,
               icon: Icons.edit_rounded,
               label: '编辑',
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
             ),
             SlidableAction(
               onPressed: (_) => _confirmDelete(context, ref, v),
@@ -115,34 +94,50 @@ class VaccinationTab extends ConsumerWidget {
               foregroundColor: Colors.white,
               icon: Icons.delete_rounded,
               label: '删除',
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
             ),
           ],
         ),
         child: Container(
+          width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderColor),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Icon(Icons.calendar_today_rounded, size: 16, color: AppTheme.textSecondary),
-              const SizedBox(width: 8),
-              Text(v.vaccinatedAt,
-                  style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
-              const Spacer(),
+              Icon(
+                Icons.calendar_today_rounded,
+                size: 16,
+                color: AppTheme.textSecondary,
+              ),
+              Text(
+                v.vaccinatedAt,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
                   v.vaccineType,
                   style: const TextStyle(
                     fontSize: 12,
-                    color: AppTheme.primaryColor,
+                    color: AppTheme.accentColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -156,8 +151,10 @@ class VaccinationTab extends ConsumerWidget {
 
   void _edit(BuildContext context, WidgetRef ref, VaccinationRecord v) {
     final encoded = Uri.encodeQueryComponent(v.vaccineType);
-    context.push('/health/vaccination/edit?petId=${pet.id}&vaccinationId=${v.id}'
-        '&type=$encoded&date=${v.vaccinatedAt}');
+    context.push(
+      '/health/vaccination/edit?petId=${pet.id}&vaccinationId=${v.id}'
+      '&type=$encoded&date=${v.vaccinatedAt}',
+    );
   }
 
   Future<void> _confirmDelete(
@@ -171,7 +168,10 @@ class VaccinationTab extends ConsumerWidget {
         title: const Text('删除疫苗记录'),
         content: Text('确认删除 ${v.vaccinatedAt} 的${v.vaccineType}记录？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('删除', style: TextStyle(color: Colors.red)),
@@ -185,7 +185,10 @@ class VaccinationTab extends ConsumerWidget {
       ref.invalidate(vaccinationListProvider(pet.id));
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已删除'), behavior: SnackBarBehavior.floating),
+          const SnackBar(
+            content: Text('已删除'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } catch (e) {

@@ -13,6 +13,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_empty_state.dart';
+import '../../widgets/app_page_intro.dart';
 import '../../models/pet.dart';
 import '../../models/photo.dart';
 import '../../models/voice_intake.dart';
@@ -31,8 +33,9 @@ import '../../widgets/voice_record_button.dart';
 
 final _photoServiceProvider = Provider<PhotoService>((ref) => PhotoService());
 final _voiceServiceProvider = Provider<VoiceService>((ref) => VoiceService());
-final _classifyServiceProvider =
-    Provider<ClassifyService>((ref) => ClassifyService());
+final _classifyServiceProvider = Provider<ClassifyService>(
+  (ref) => ClassifyService(),
+);
 
 class RecordScreen extends ConsumerStatefulWidget {
   const RecordScreen({super.key});
@@ -155,176 +158,145 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
     return Column(
       children: [
-        Expanded(flex: 4, child: body),
-        Expanded(flex: 1, child: _buildVoiceBar()),
+        Expanded(child: body),
+        _buildVoiceBar(),
       ],
     );
   }
 
   Widget _buildVoiceBar() {
-    // Disabled during photo upload to avoid overlapping multipart
-    // requests fighting over the progress HUD + cache bookkeeping.
     final disabled = _isUploading || _voiceProcessing;
-    final bottomInset = MediaQuery.of(context).padding.bottom;
+    // Do not clip this surface: the recorder HUD extends above the button.
     return Container(
       width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // Split the voice bar into three bands: vertical padding,
-          // the circular button itself, a small gap, and the hint
-          // text. Compute button diameter from whatever height is
-          // left so the column never overflows the 1/5 slot on small
-          // screens.
-          const double vPad = 12;
-          const double gap = 10;
-          const double hintReserve = 22;
-          final double available =
-              constraints.maxHeight - vPad * 2 - bottomInset - gap - hintReserve;
-          final double diameter = available.clamp(48.0, 88.0);
-          final double progressSize = (diameter * 0.32).clamp(18.0, 28.0);
-          return Padding(
-            padding: EdgeInsets.fromLTRB(16, vPad, 16, vPad + bottomInset),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    VoiceRecordButton(
-                      enabled: !disabled,
-                      diameter: diameter,
-                      onRecordComplete: _handleVoiceClipReady,
-                    ),
-                    if (_voiceProcessing)
-                      SizedBox(
-                        width: progressSize,
-                        height: progressSize,
-                        child: const CircularProgressIndicator(strokeWidth: 2.5),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: gap),
-                const Text(
-                  '试试按住说话记录宠物动态吧！',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.2,
-                    color: AppTheme.textSecondary,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.pets_rounded, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text('请先创建宠物档案',
-              style: TextStyle(fontSize: 16, color: AppTheme.textSecondary)),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: () => context.push('/profile/pets/new'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
-              foregroundColor: Colors.white,
-              shape:
-                  RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-            child: const Text('去创建'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildReadonlyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.visibility_rounded,
-                size: 64, color: Colors.grey.shade400),
-            const SizedBox(height: 16),
-            const Text(
-              '当前没有可编辑的宠物档案',
-              textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontSize: 16, color: AppTheme.textSecondary),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '只能查看的档案无法上传照片，请联系档案拥有者获取编辑权限，或自行创建档案。',
-              textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontSize: 13, color: Colors.grey.shade500),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildInitialState() {
-    return GestureDetector(
-      onTap: _showAddPhotoOptions,
-      child: SizedBox.expand(
-        child: Container(
-          color: AppTheme.secondaryColor.withValues(alpha: 0.15),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Stack(
+            alignment: Alignment.center,
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: AppTheme.secondaryColor.withValues(alpha: 0.4),
-                  shape: BoxShape.circle,
+              VoiceRecordButton(
+                enabled: !disabled,
+                diameter: 56,
+                onRecordComplete: _handleVoiceClipReady,
+              ),
+              if (_voiceProcessing)
+                const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
                 ),
-                child: Icon(Icons.add_a_photo_rounded,
-                    size: 36, color: AppTheme.primaryColor),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                '点击添加照片',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w500,
-                    color: AppTheme.textPrimary),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                '选完照片将自动识别归属的宠物，最多 9 张',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-              ),
             ],
           ),
-        ),
+          const SizedBox(height: 10),
+          const Text(
+            '试试按住说话记录宠物动态吧！',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+          ),
+        ],
       ),
     );
   }
+
+  Widget _buildEmptyState() => Center(
+    child: AppEmptyState(
+      icon: Icons.pets_rounded,
+      title: '请先创建宠物档案',
+      message: '为毛孩子留一个位置，开始记录你们的日常。',
+      action: ElevatedButton(
+        onPressed: () => context.push('/profile/pets/new'),
+        child: const Text('去创建'),
+      ),
+    ),
+  );
+
+  Widget _buildReadonlyState() => const Center(
+    child: AppEmptyState(
+      icon: Icons.visibility_rounded,
+      title: '当前没有可编辑的宠物档案',
+      message: '只能查看的档案无法上传照片，请联系档案拥有者获取编辑权限，或自行创建档案。',
+    ),
+  );
+
+  Widget _buildInitialState() => LayoutBuilder(
+    builder: (context, constraints) => SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AppPageIntro(title: '把今天，留在这里', subtitle: '一张照片，一件小事，都是相伴的日常。'),
+          Semantics(
+            button: true,
+            label: '点击添加照片',
+            child: AppCard(
+              onTap: _showAddPhotoOptions,
+              color: AppTheme.softPeach,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
+              child: Column(
+                children: [
+                  const AppIconBadge(
+                    icon: Icons.add_a_photo_rounded,
+                    size: 80,
+                    background: Colors.white,
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    '点击添加照片',
+                    style: TextStyle(
+                      fontSize: 19,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    '选完照片将自动识别归属的宠物，最多 9 张',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 13,
+                      height: 1.6,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: .7),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.photo_library_rounded,
+                          size: 16,
+                          color: AppTheme.accentColor,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          '相册 / 拍照',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: AppTheme.accentColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _buildPhotoListState() {
     return Column(
@@ -332,7 +304,8 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
-            itemCount: _selectedFiles.length +
+            itemCount:
+                _selectedFiles.length +
                 (_selectedFiles.length < _maxPhotosPerUpload && !_isUploading
                     ? 1
                     : 0),
@@ -386,8 +359,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           Stack(
             children: [
               ClipRRect(
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(16)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(16),
+                ),
                 child: AspectRatio(
                   aspectRatio: 16 / 9,
                   child: Image.file(file, fit: BoxFit.cover, cacheWidth: 600),
@@ -406,8 +380,11 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                         color: Colors.black.withValues(alpha: 0.5),
                         shape: BoxShape.circle,
                       ),
-                      child:
-                          Icon(Icons.close_rounded, size: 16, color: Colors.white),
+                      child: Icon(
+                        Icons.close_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      ),
                     ),
                   ),
                 ),
@@ -418,7 +395,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   right: 0,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     decoration: BoxDecoration(
                       color: AppTheme.errorColor.withValues(alpha: 0.85),
                     ),
@@ -435,28 +414,39 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           // Date + pet chip row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
+            child: Wrap(
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 12,
+              runSpacing: 8,
               children: [
                 GestureDetector(
                   onTap: _isUploading ? null : () => _pickDateForPhoto(index),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.calendar_today_rounded,
-                          size: 18, color: AppTheme.textSecondary),
+                      Icon(
+                        Icons.calendar_today_rounded,
+                        size: 18,
+                        color: AppTheme.textSecondary,
+                      ),
                       const SizedBox(width: 8),
                       Text(
                         _dateFormat.format(date),
                         style: const TextStyle(
-                            fontSize: 15, color: AppTheme.textPrimary),
+                          fontSize: 15,
+                          color: AppTheme.textPrimary,
+                        ),
                       ),
                       const SizedBox(width: 2),
-                      Icon(Icons.chevron_right_rounded,
-                          size: 20, color: Colors.grey.shade400),
+                      Icon(
+                        Icons.chevron_right_rounded,
+                        size: 20,
+                        color: AppTheme.textSecondary,
+                      ),
                     ],
                   ),
                 ),
-                const Spacer(),
                 PetChipDropdown(
                   pets: pets,
                   selected: selectedPet,
@@ -491,17 +481,17 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         height: 64,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.grey.shade300, width: 1.5),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.borderColor, width: 1.5),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.add_rounded, size: 22, color: Colors.grey.shade500),
+            Icon(Icons.add_rounded, size: 22, color: AppTheme.textSecondary),
             const SizedBox(width: 6),
             Text(
               '继续添加照片',
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
+              style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
             ),
           ],
         ),
@@ -531,13 +521,16 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
           onPressed: _isUploading ? null : _submit,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppTheme.primaryColor,
-            foregroundColor: Colors.white,
-            disabledBackgroundColor: Colors.grey.shade300,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            foregroundColor: AppTheme.primaryInk,
+            disabledBackgroundColor: AppTheme.borderColor,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
           ),
-          child: const Text('记录完成',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+          child: const Text(
+            '记录完成',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
         ),
       ),
     );
@@ -626,24 +619,19 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     // or shared with editor rights), there is nothing to classify —
     // skip the server round-trip and bind every photo to that pet.
     final editable = _editableCandidatePets;
-    final onlyPetId =
-        editable.length == 1 ? editable.first.id : null;
+    final onlyPetId = editable.length == 1 ? editable.first.id : null;
 
     final baseIdx = _selectedFiles.length;
     setState(() {
       _selectedFiles.addAll(files);
       _photoDates.addAll(dates);
       _pendingTokens.addAll(tokens);
-      _assignedPetIds
-          .addAll(List<int?>.filled(files.length, onlyPetId));
+      _assignedPetIds.addAll(List<int?>.filled(files.length, onlyPetId));
       _wasAutoAssigned.addAll(List<bool>.filled(files.length, true));
-      _isRecognizing
-          .addAll(List<bool>.filled(files.length, onlyPetId == null));
+      _isRecognizing.addAll(List<bool>.filled(files.length, onlyPetId == null));
       _userPicked.addAll(List<bool>.filled(files.length, false));
-      _originalAssignedPetIds
-          .addAll(List<int?>.filled(files.length, null));
-      _originalConfidences
-          .addAll(List<double?>.filled(files.length, null));
+      _originalAssignedPetIds.addAll(List<int?>.filled(files.length, null));
+      _originalConfidences.addAll(List<double?>.filled(files.length, null));
       _failureMessages = {};
     });
 
@@ -665,8 +653,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
 
     // Single-profile fast path — mirror the gallery flow.
     final editable = _editableCandidatePets;
-    final onlyPetId =
-        editable.length == 1 ? editable.first.id : null;
+    final onlyPetId = editable.length == 1 ? editable.first.id : null;
 
     final baseIdx = _selectedFiles.length;
     setState(() {
@@ -916,10 +903,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         final indices = entry.value;
         final files = [for (final i in indices) _selectedFiles[i]];
         final dates = [
-          for (final i in indices) _dateFormat.format(_photoDates[i])
+          for (final i in indices) _dateFormat.format(_photoDates[i]),
         ];
         final sources = [
-          for (final i in indices) _wasAutoAssigned[i] ? 'auto' : 'corrected'
+          for (final i in indices) _wasAutoAssigned[i] ? 'auto' : 'corrected',
         ];
         // Option A feedback plumbing: send the model's original guess
         // and its confidence alongside every file so the server can
@@ -934,9 +921,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
         ];
         final prevConfidences = [
           for (final i in indices)
-            i < _originalConfidences.length
-                ? _originalConfidences[i]
-                : null,
+            i < _originalConfidences.length ? _originalConfidences[i] : null,
         ];
 
         final response = await service.uploadPhotos(
@@ -1042,16 +1027,22 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                 content: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('正在处理上传...',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600)),
+                    const Text(
+                      '正在处理上传...',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     const LinearProgressIndicator(),
                     const SizedBox(height: 8),
                     Text(
                       '共 $fileCount 张，服务器正在保存',
                       style: const TextStyle(
-                          fontSize: 12, color: AppTheme.textSecondary),
+                        fontSize: 12,
+                        color: AppTheme.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -1064,22 +1055,27 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   content: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Text('正在上传照片...',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.w600)),
+                      const Text(
+                        '正在上传照片...',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       LinearProgressIndicator(value: progress),
                       const SizedBox(height: 8),
                       Text(
                         '${(progress * 100).toInt()}%',
-                        style:
-                            const TextStyle(color: AppTheme.textSecondary),
+                        style: const TextStyle(color: AppTheme.textSecondary),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '共 $fileCount 张，请勿关闭页面',
                         style: const TextStyle(
-                            fontSize: 12, color: AppTheme.textSecondary),
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
                       ),
                     ],
                   ),
@@ -1106,8 +1102,10 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       final token = _pendingTokens[absIdx];
       if (token.isEmpty) continue;
       try {
-        await OriginalPhotoCache.instance
-            .bindPendingToPhoto(token, success.photo.id);
+        await OriginalPhotoCache.instance.bindPendingToPhoto(
+          token,
+          success.photo.id,
+        );
       } catch (_) {
         // Best-effort.
       }
@@ -1170,9 +1168,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
       newRecog.add(false);
       newPicked.add(i < _userPicked.length ? _userPicked[i] : false);
       newOriginalAssigned.add(
-        i < _originalAssignedPetIds.length
-            ? _originalAssignedPetIds[i]
-            : null,
+        i < _originalAssignedPetIds.length ? _originalAssignedPetIds[i] : null,
       );
       newOriginalConfidence.add(
         i < _originalConfidences.length ? _originalConfidences[i] : null,
@@ -1218,8 +1214,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-          content: Text(msg), behavior: SnackBarBehavior.floating));
+      ..showSnackBar(
+        SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
+      );
   }
 
   // ------------------ Voice intake ------------------
@@ -1319,7 +1316,9 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
     }
   }
 
-  Future<void> _showTranscriptFallbackSheet(VoiceIntakeResponse response) async {
+  Future<void> _showTranscriptFallbackSheet(
+    VoiceIntakeResponse response,
+  ) async {
     final transcript = response.transcript ?? '';
     await showModalBottomSheet<void>(
       context: context,
@@ -1330,13 +1329,16 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const Text('没能识别出想记录的事',
-                  style: TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.w600)),
+              const Text(
+                '没能识别出想记录的事',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
               const SizedBox(height: 12),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFFFFF4EE),
                   borderRadius: BorderRadius.circular(10),
@@ -1349,8 +1351,7 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
               const SizedBox(height: 12),
               const Text(
                 '请换一种说法再试，例如："今天给咪咪做了体内驱虫"。',
-                style:
-                    TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
               ),
               const SizedBox(height: 16),
               SizedBox(
@@ -1359,13 +1360,15 @@ class _RecordScreenState extends ConsumerState<RecordScreen> {
                   onPressed: () => Navigator.pop(ctx),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
+                    foregroundColor: AppTheme.primaryInk,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
                   ),
-                  child: const Text('我再说一遍',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    '我再说一遍',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ],

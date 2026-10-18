@@ -10,6 +10,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_page_intro.dart';
+
 import '../../providers/auth_provider.dart';
 import '../../widgets/app_card.dart';
 
@@ -41,8 +43,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
+          const AppPageIntro(title: '相伴的日常', subtitle: '你的资料，和毛孩子的小世界。'),
           AppCard(
             lifted: true,
+            color: AppTheme.softPeach,
             padding: const EdgeInsets.all(20),
             child: Row(
               children: [
@@ -52,19 +56,24 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     children: [
                       CircleAvatar(
                         radius: 32,
-                        backgroundColor:
-                            AppTheme.secondaryColor.withValues(alpha: 0.3),
+                        backgroundColor: AppTheme.secondaryColor.withValues(
+                          alpha: 0.3,
+                        ),
                         backgroundImage: _pendingAvatarBytes != null
                             ? MemoryImage(_pendingAvatarBytes!)
                             : (user?.avatarUrl != null
-                                ? CachedNetworkImageProvider(user!.avatarUrl!)
-                                : null) as ImageProvider?,
-                        child: _pendingAvatarBytes == null &&
+                                      ? CachedNetworkImageProvider(
+                                          user!.avatarUrl!,
+                                        )
+                                      : null)
+                                  as ImageProvider?,
+                        child:
+                            _pendingAvatarBytes == null &&
                                 user?.avatarUrl == null
                             ? Icon(
                                 Icons.person_rounded,
                                 size: 32,
-                                color: AppTheme.primaryColor,
+                                color: AppTheme.accentColor,
                               )
                             : null,
                       ),
@@ -83,8 +92,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                                   value: _uploadProgress,
                                   strokeWidth: 2.5,
                                   color: Colors.white,
-                                  backgroundColor:
-                                      Colors.white.withValues(alpha: 0.3),
+                                  backgroundColor: Colors.white.withValues(
+                                    alpha: 0.3,
+                                  ),
                                 ),
                               ),
                             ),
@@ -97,7 +107,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                           child: Container(
                             padding: const EdgeInsets.all(3),
                             decoration: BoxDecoration(
-                              color: AppTheme.primaryColor,
+                              color: AppTheme.accentColor,
                               shape: BoxShape.circle,
                               border: Border.all(color: Colors.white, width: 2),
                             ),
@@ -118,7 +128,10 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                     children: [
                       GestureDetector(
                         onTap: () => _showEditNicknameDialog(
-                            context, ref, user?.nickname),
+                          context,
+                          ref,
+                          user?.nickname,
+                        ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
@@ -134,8 +147,11 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                               ),
                             ),
                             const SizedBox(width: 4),
-                            Icon(Icons.edit_rounded,
-                                size: 16, color: AppTheme.textSecondary),
+                            Icon(
+                              Icons.edit_rounded,
+                              size: 16,
+                              color: AppTheme.textSecondary,
+                            ),
                           ],
                         ),
                       ),
@@ -153,7 +169,8 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 28),
+          const AppSectionTitle('档案与设置'),
           AppCard(
             padding: EdgeInsets.zero,
             child: Column(
@@ -164,21 +181,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   title: '宠物档案管理',
                   onTap: () => context.push('/profile/pets'),
                 ),
-                const Divider(height: 1, indent: 56),
+                const Divider(height: 1, indent: 76, endIndent: 20),
                 _buildMenuItem(
                   context,
                   icon: Icons.ios_share_rounded,
                   title: '宠物档案分享',
                   onTap: () => context.push('/profile/pets/share'),
                 ),
-                const Divider(height: 1, indent: 56),
+                const Divider(height: 1, indent: 76, endIndent: 20),
                 _buildMenuItem(
                   context,
                   icon: Icons.logout_rounded,
                   title: '切换账号',
                   onTap: () => _showLogoutDialog(context, ref),
                 ),
-                const Divider(height: 1, indent: 56),
+                const Divider(height: 1, indent: 76, endIndent: 20),
                 _buildMenuItem(
                   context,
                   icon: Icons.info_outline_rounded,
@@ -200,15 +217,20 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     required VoidCallback onTap,
   }) {
     return ListTile(
-      leading: Icon(icon, color: AppTheme.primaryColor),
+      minVerticalPadding: 16,
+      leading: AppIconBadge(icon: icon, size: 40),
       title: Text(title, style: const TextStyle(color: AppTheme.textPrimary)),
-      trailing: Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary),
+      trailing: Icon(
+        Icons.chevron_right_rounded,
+        color: AppTheme.textSecondary,
+      ),
       onTap: onTap,
     );
   }
 
   Future<({Uint8List bytes, String filename})?> _compressAvatar(
-      XFile xfile) async {
+    XFile xfile,
+  ) async {
     final dir = await getTemporaryDirectory();
     final outPath =
         '${dir.path}/user_avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -241,15 +263,17 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       _uploadProgress = 0;
     });
 
-    final success = await ref.read(authProvider.notifier).uploadAvatar(
-      compressed.bytes,
-      compressed.filename,
-      onSendProgress: (sent, total) {
-        if (mounted && total > 0) {
-          setState(() => _uploadProgress = sent / total);
-        }
-      },
-    );
+    final success = await ref
+        .read(authProvider.notifier)
+        .uploadAvatar(
+          compressed.bytes,
+          compressed.filename,
+          onSendProgress: (sent, total) {
+            if (mounted && total > 0) {
+              setState(() => _uploadProgress = sent / total);
+            }
+          },
+        );
 
     if (!mounted) return;
     setState(() {
@@ -258,21 +282,21 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
     });
 
     if (!success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('头像上传失败，请重试')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('头像上传失败，请重试')));
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('头像上传成功'),
-          duration: Duration(seconds: 2),
-        ),
+        const SnackBar(content: Text('头像上传成功'), duration: Duration(seconds: 2)),
       );
     }
   }
 
   void _showEditNicknameDialog(
-      BuildContext context, WidgetRef ref, String? currentNickname) {
+    BuildContext context,
+    WidgetRef ref,
+    String? currentNickname,
+  ) {
     final controller = TextEditingController(text: currentNickname ?? '');
 
     showDialog(
@@ -298,12 +322,13 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
               final nickname = controller.text.trim();
               if (nickname.isEmpty) return;
               Navigator.of(ctx).pop();
-              final success =
-                  await ref.read(authProvider.notifier).updateNickname(nickname);
+              final success = await ref
+                  .read(authProvider.notifier)
+                  .updateNickname(nickname);
               if (!success && context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('昵称修改失败，请重试')),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('昵称修改失败，请重试')));
               }
             },
             child: const Text('保存'),

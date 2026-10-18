@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../config/theme.dart';
+import '../../../widgets/app_empty_state.dart';
+import '../../../widgets/app_page_intro.dart';
 import '../../../models/pet.dart';
 import '../../../providers/pet_provider.dart';
 import '../../../widgets/app_card.dart';
@@ -36,26 +38,11 @@ class PetShareListScreen extends ConsumerWidget {
         data: (result) {
           final ownedPets = result.pets.where((p) => p.isOwner).toList();
           if (ownedPets.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.ios_share_rounded,
-                        size: 64, color: AppTheme.textSecondary),
-                    const SizedBox(height: 16),
-                    const Text(
-                      '还没有自己创建的宠物档案',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 15),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      '分享功能仅对您拥有的宠物可用',
-                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 13),
-                    ),
-                  ],
-                ),
+            return const Center(
+              child: AppEmptyState(
+                icon: Icons.ios_share_rounded,
+                title: '还没有自己创建的宠物档案',
+                message: '分享功能仅对您拥有的宠物可用',
               ),
             );
           }
@@ -63,9 +50,14 @@ class PetShareListScreen extends ConsumerWidget {
             onRefresh: () => ref.read(petListProvider.notifier).refresh(),
             child: ListView.builder(
               padding: const EdgeInsets.all(16),
-              itemCount: ownedPets.length,
-              itemBuilder: (context, index) =>
-                  _buildPetCard(context, ownedPets[index]),
+              itemCount: ownedPets.length + 1,
+              itemBuilder: (context, index) => index == 0
+                  ? const AppPageIntro(
+                      title: '一起陪伴',
+                      subtitle: '把毛孩子的日常，分享给在意的人。',
+                      icon: Icons.ios_share_rounded,
+                    )
+                  : _buildPetCard(context, ownedPets[index - 1]),
             ),
           );
         },
@@ -98,10 +90,7 @@ class PetShareListScreen extends ConsumerWidget {
                   const SizedBox(height: 4),
                   const Text(
                     '当前有有效分享码',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.primaryColor,
-                    ),
+                    style: TextStyle(fontSize: 12, color: AppTheme.accentColor),
                   ),
                 ],
               ],
@@ -124,10 +113,7 @@ class PetShareListScreen extends ConsumerWidget {
     return CircleAvatar(
       radius: 24,
       backgroundColor: AppTheme.secondaryColor.withValues(alpha: 0.3),
-      child: Text(
-        isCat ? '🐱' : '🐶',
-        style: const TextStyle(fontSize: 22),
-      ),
+      child: Text(isCat ? '🐱' : '🐶', style: const TextStyle(fontSize: 22)),
     );
   }
 }

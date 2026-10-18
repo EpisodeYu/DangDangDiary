@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_empty_state.dart';
 import '../../models/pet.dart';
 import '../../models/timeline.dart';
 import '../../providers/pet_provider.dart';
@@ -104,8 +105,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     if (photos.isEmpty) return;
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cachePx = (110 * dpr).round().clamp(180, 420);
-    final end =
-        (startIndex + _calendarPrefetchAhead).clamp(0, photos.length);
+    final end = (startIndex + _calendarPrefetchAhead).clamp(0, photos.length);
     for (var i = startIndex; i < end; i++) {
       final photo = photos[i];
       if (!_prefetchedThumbIds.add(photo.id)) continue;
@@ -191,8 +191,9 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   }
 
   Future<void> _onJumpToMonth(String month) async {
-    final resolved =
-        await ref.read(timelineProvider.notifier).jumpToMonth(month);
+    final resolved = await ref
+        .read(timelineProvider.notifier)
+        .jumpToMonth(month);
     if (resolved == null || !mounted) return;
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
@@ -271,8 +272,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   /// (editable) pet, so the entry should still be reachable as long
   /// as *some* pet is editable somewhere in the timeline.
   bool get _hasAnyEditablePet {
-    final pets =
-        ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
+    final pets = ref.read(petListProvider).valueOrNull?.pets ?? const <Pet>[];
     for (final p in pets) {
       if (p.role == PetRole.owner || p.role == PetRole.editor) return true;
     }
@@ -340,10 +340,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
             // "权限已更新，请重试" felt broken to real users.
             if (allowDelete)
               ListTile(
-                leading: Icon(
-                  Icons.delete_rounded,
-                  color: AppTheme.errorColor,
-                ),
+                leading: Icon(Icons.delete_rounded, color: AppTheme.errorColor),
                 title: const Text(
                   '删除',
                   style: TextStyle(color: AppTheme.errorColor),
@@ -416,8 +413,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     final service = ref.read(_photoServiceProvider);
     // Capture which pet this photo belongs to *before* we ask the
     // server — the catch needs it to look up the post-refresh role.
-    final petId =
-        ref.read(timelineProvider).photoMap[photoId]?.petId;
+    final petId = ref.read(timelineProvider).photoMap[photoId]?.petId;
     try {
       await service.deletePhoto(photoId);
       if (!mounted) return;
@@ -491,8 +487,10 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
           if (r == PetRole.owner || r == PetRole.editor) break;
         }
       }
-      permissionMessage =
-          permissionErrorMessage(bestRole, deniedLabel: '无删除权限');
+      permissionMessage = permissionErrorMessage(
+        bestRole,
+        deniedLabel: '无删除权限',
+      );
     }
 
     _exitSelection();
@@ -583,27 +581,42 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     TimelineViewMode viewMode,
   ) {
     return AppBar(
-      titleSpacing: 16,
+      titleSpacing: 20,
       centerTitle: false,
       automaticallyImplyLeading: false,
-      title: Row(
-        children: [
-          PetSelector(
-            multiSelect: true,
-            pets: pets,
-            selectedPetIds: selectedPetIds,
-            onMultiChanged: (ids) {
-              ref.read(selectedTimelinePetIdsProvider.notifier).state = ids;
-            },
+      title: const Text(
+        '时间轴',
+        style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700),
+      ),
+      bottom: PreferredSize(
+        preferredSize: Size.fromHeight(
+          62 * MediaQuery.textScalerOf(context).scale(1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 16, 12),
+          child: Row(
+            children: [
+              Expanded(
+                child: PetSelector(
+                  multiSelect: true,
+                  pets: pets,
+                  selectedPetIds: selectedPetIds,
+                  onMultiChanged: (ids) {
+                    ref.read(selectedTimelinePetIdsProvider.notifier).state =
+                        ids;
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+              _ViewModeSwitcher(
+                current: viewMode,
+                onChanged: (mode) {
+                  ref.read(timelineViewModeProvider.notifier).state = mode;
+                },
+              ),
+            ],
           ),
-          const Spacer(),
-          _ViewModeSwitcher(
-            current: viewMode,
-            onChanged: (mode) {
-              ref.read(timelineViewModeProvider.notifier).state = mode;
-            },
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -653,10 +666,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     );
   }
 
-  Widget _buildBody(
-    TimelineState state,
-    TimelineViewMode viewMode,
-  ) {
+  Widget _buildBody(TimelineState state, TimelineViewMode viewMode) {
     if (state.isInitialLoading && state.orderedPhotoIds.isEmpty) {
       // Skeleton matches the active view so the placeholder layout
       // doesn't pop on first paint.
@@ -749,7 +759,7 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       child: ListView.builder(
         controller: _immersiveScrollController,
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         itemCount: photos.length + 1,
         itemBuilder: (context, index) {
           if (index == photos.length) {
@@ -785,10 +795,11 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
   /// The cache deduplicates concurrent requests, so calling this repeatedly
   /// as tiles enter the viewport is safe.
   void _prefetchAround(List<TimelinePhoto> photos, int index) {
-    final start =
-        (index - _immersivePrefetchBehind).clamp(0, photos.length - 1);
-    final end =
-        (index + _immersivePrefetchAhead).clamp(0, photos.length - 1);
+    final start = (index - _immersivePrefetchBehind).clamp(
+      0,
+      photos.length - 1,
+    );
+    final end = (index + _immersivePrefetchAhead).clamp(0, photos.length - 1);
     for (var i = start; i <= end; i++) {
       OriginalPhotoCache.instance.prefetch(photos[i].id);
     }
@@ -805,14 +816,13 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
     // user could scroll to the bottom of the immersive list while plenty
     // of tiles further up were still downloading their originals, and the
     // "end" marker felt jarring next to half-loaded tiles.
-    final allOriginalsReady = state.orderedPhotoIds
-        .every(OriginalPhotoCache.instance.isCachedSync);
+    final allOriginalsReady = state.orderedPhotoIds.every(
+      OriginalPhotoCache.instance.isCachedSync,
+    );
     final stillLoadingOriginals =
         !allOriginalsReady && state.orderedPhotoIds.isNotEmpty;
 
-    if (state.hasMoreOlder ||
-        state.isLoadingOlder ||
-        stillLoadingOriginals) {
+    if (state.hasMoreOlder || state.isLoadingOlder || stillLoadingOriginals) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(
@@ -904,56 +914,51 @@ class _TimelineScreenState extends ConsumerState<TimelineScreen> {
       SliverPadding(
         padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
         sliver: SliverGrid(
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            crossAxisSpacing: 4,
-            mainAxisSpacing: 4,
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 150,
+            crossAxisSpacing: 8,
+            mainAxisSpacing: 8,
             childAspectRatio: 1,
           ),
-          delegate: SliverChildBuilderDelegate(
-            (context, i) {
-              final photo = group.photos[i];
-              // Treat each laid-out tile as a "user is currently looking
-              // around here" hint and warm the next slab of upcoming
-              // tiles. Doing it from the builder keeps prefetch tied to
-              // actual scroll position without any extra listeners or
-              // viewport math.
-              final globalIdx = flatIndex[photo.id];
-              if (globalIdx != null) {
-                _prefetchCalendarThumbsFrom(
-                  context, flatPhotos, globalIdx + 1,
+          delegate: SliverChildBuilderDelegate((context, i) {
+            final photo = group.photos[i];
+            // Treat each laid-out tile as a "user is currently looking
+            // around here" hint and warm the next slab of upcoming
+            // tiles. Doing it from the builder keeps prefetch tied to
+            // actual scroll position without any extra listeners or
+            // viewport math.
+            final globalIdx = flatIndex[photo.id];
+            if (globalIdx != null) {
+              _prefetchCalendarThumbsFrom(context, flatPhotos, globalIdx + 1);
+            }
+            final tile = PhotoGridTile(
+              photo: photo,
+              showPetLabel: false,
+              selectionMode: _selectionMode,
+              selected: _selectedIds.contains(photo.id),
+              onTap: () => _onTapPhoto(photo),
+              onLongPress: () => _onLongPressCalendar(photo),
+            );
+            // Stagger only the first row or two within each group so
+            // a freshly-rendered day fades in instead of popping in.
+            // Skip animation for tiles beyond index 7 — long lists
+            // shouldn't run a thousand simultaneous tweens.
+            if (i > 7 || MediaQuery.disableAnimationsOf(context)) return tile;
+            return tile
+                .animate()
+                .fadeIn(
+                  duration: 240.ms,
+                  delay: (i * 24).ms,
+                  curve: Curves.easeOut,
+                )
+                .slideY(
+                  begin: 0.06,
+                  end: 0,
+                  duration: 280.ms,
+                  delay: (i * 24).ms,
+                  curve: Curves.easeOutCubic,
                 );
-              }
-              final tile = PhotoGridTile(
-                photo: photo,
-                showPetLabel: false,
-                selectionMode: _selectionMode,
-                selected: _selectedIds.contains(photo.id),
-                onTap: () => _onTapPhoto(photo),
-                onLongPress: () => _onLongPressCalendar(photo),
-              );
-              // Stagger only the first row or two within each group so
-              // a freshly-rendered day fades in instead of popping in.
-              // Skip animation for tiles beyond index 7 — long lists
-              // shouldn't run a thousand simultaneous tweens.
-              if (i > 7) return tile;
-              return tile
-                  .animate()
-                  .fadeIn(
-                    duration: 240.ms,
-                    delay: (i * 24).ms,
-                    curve: Curves.easeOut,
-                  )
-                  .slideY(
-                    begin: 0.06,
-                    end: 0,
-                    duration: 280.ms,
-                    delay: (i * 24).ms,
-                    curve: Curves.easeOutCubic,
-                  );
-            },
-            childCount: group.photos.length,
-          ),
+          }, childCount: group.photos.length),
         ),
       ),
     ];
@@ -964,10 +969,7 @@ class _ViewModeSwitcher extends StatelessWidget {
   final TimelineViewMode current;
   final ValueChanged<TimelineViewMode> onChanged;
 
-  const _ViewModeSwitcher({
-    required this.current,
-    required this.onChanged,
-  });
+  const _ViewModeSwitcher({required this.current, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -1006,31 +1008,21 @@ class _ModeIconButton extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: onTap,
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: selected
-                ? AppTheme.primaryColor.withValues(alpha: 0.15)
-                : Colors.transparent,
-            borderRadius: BorderRadius.circular(18),
-          ),
-          alignment: Alignment.center,
-          child: Icon(
-            icon,
-            size: 20,
-            color: selected ? AppTheme.primaryColor : AppTheme.textSecondary,
-          ),
-        ),
+  Widget build(BuildContext context) => Semantics(
+    selected: selected,
+    child: IconButton(
+      tooltip: tooltip,
+      onPressed: onTap,
+      style: IconButton.styleFrom(
+        backgroundColor: selected ? AppTheme.softPeach : Colors.transparent,
+        foregroundColor: selected
+            ? AppTheme.accentColor
+            : AppTheme.textSecondary,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
-    );
-  }
+      icon: Icon(icon, size: 22),
+    ),
+  );
 }
 
 class _EmptyView extends StatelessWidget {
@@ -1044,32 +1036,11 @@ class _EmptyView extends StatelessWidget {
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          SizedBox(height: MediaQuery.of(context).size.height * 0.25),
-          Icon(
-            Icons.photo_library_rounded,
-            size: 64,
-            color: AppTheme.textSecondary,
-          ),
-          const SizedBox(height: 16),
-          const Center(
-            child: Text(
-              '还没有照片哦',
-              style: TextStyle(
-                fontSize: 16,
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Center(
-            child: Text(
-              '去「记录」页面上传第一张吧',
-              style: TextStyle(
-                fontSize: 13,
-                color: AppTheme.textSecondary,
-              ),
-            ),
+          SizedBox(height: MediaQuery.sizeOf(context).height * 0.12),
+          const AppEmptyState(
+            icon: Icons.photo_library_rounded,
+            title: '还没有照片哦',
+            message: '去「记录」页面上传第一张吧',
           ),
         ],
       ),

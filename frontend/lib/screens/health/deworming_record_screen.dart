@@ -7,6 +7,8 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_form_body.dart';
+
 import '../../models/health.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
@@ -26,7 +28,8 @@ class DewormingRecordScreen extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<DewormingRecordScreen> createState() => _DewormingRecordScreenState();
+  ConsumerState<DewormingRecordScreen> createState() =>
+      _DewormingRecordScreenState();
 }
 
 class _DewormingRecordScreenState extends ConsumerState<DewormingRecordScreen> {
@@ -53,89 +56,104 @@ class _DewormingRecordScreenState extends ConsumerState<DewormingRecordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_isEditing ? '编辑驱虫记录' : '记录驱虫'),
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('驱虫类型',
-                  style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: DewormingTypeE.values.map((t) {
-                  final selected = t == _type;
-                  return ChoiceChip(
-                    label: Text(t.label),
-                    selected: selected,
-                    onSelected: (_) => setState(() => _type = t),
-                    selectedColor: AppTheme.primaryColor,
-                    labelStyle: TextStyle(
-                      color: selected ? Colors.white : AppTheme.textPrimary,
-                      fontWeight: FontWeight.w600,
+      appBar: AppBar(title: Text(_isEditing ? '编辑驱虫记录' : '记录驱虫')),
+      body: AppFormBody(
+        title: '安心守护',
+        subtitle: '记下驱虫日期，让每一次照顾有迹可循。',
+        icon: Icons.shield_rounded,
+        action: SizedBox(
+          height: 50,
+          child: ElevatedButton(
+            onPressed: _submitting ? null : _submit,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.primaryColor,
+              foregroundColor: AppTheme.primaryInk,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: _submitting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.5,
                     ),
-                    backgroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                      side: BorderSide(
-                        color: selected ? AppTheme.primaryColor : Colors.grey.shade300,
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 24),
-              const Text('驱虫日期',
-                  style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: _pickDate,
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300),
+                  )
+                : const Text(
+                    '确认记录',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
                   ),
-                  child: Row(
-                    children: [
-                      Text(_dateFormat.format(_selectedDate),
-                          style: const TextStyle(fontSize: 15)),
-                      const Spacer(),
-                      Icon(Icons.calendar_today_rounded, size: 18, color: AppTheme.textSecondary),
-                    ],
-                  ),
-                ),
-              ),
-              const Spacer(),
-              SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _submitting ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryColor,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: _submitting
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5))
-                      : const Text('确认记录',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-                ),
-              ),
-            ],
           ),
         ),
+        children: [
+          const Text(
+            '驱虫类型',
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: DewormingTypeE.values.map((t) {
+              final selected = t == _type;
+              return ChoiceChip(
+                label: Text(t.label),
+                selected: selected,
+                onSelected: (_) => setState(() => _type = t),
+                selectedColor: AppTheme.softPeach,
+                labelStyle: TextStyle(
+                  color: selected ? AppTheme.accentColor : AppTheme.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                  side: BorderSide(
+                    color: selected
+                        ? AppTheme.primaryColor
+                        : AppTheme.borderColor,
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            '驱虫日期',
+            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 8),
+          InkWell(
+            onTap: _pickDate,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.borderColor),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      _dateFormat.format(_selectedDate),
+                      style: const TextStyle(fontSize: 15),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.calendar_today_rounded,
+                    size: 18,
+                    color: AppTheme.textSecondary,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

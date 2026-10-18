@@ -10,6 +10,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_page_intro.dart';
+
+import '../../widgets/app_card.dart';
+
 import '../../models/pet.dart';
 import '../../providers/pet_provider.dart';
 import '../../providers/pet_export_provider.dart';
@@ -20,11 +24,30 @@ import '../../widgets/pet_export_dialog.dart';
 import 'share/share_scan_screen.dart';
 
 const _catBreeds = [
-  '中华田园猫', '英国短毛猫', '美国短毛猫', '布偶猫', '暹罗猫',
-  '异国短毛猫（加菲猫）', '缅因猫', '波斯猫', '曼基康矮脚猫', '斯芬克斯无毛猫',
-  '苏格兰折耳猫', '俄罗斯蓝猫', '孟加拉豹猫', '德文卷毛猫', '阿比西尼亚猫',
-  '挪威森林猫', '西伯利亚森林猫', '伯曼猫', '柯尼斯卷毛猫', '东方短毛猫',
-  '索马里猫', '埃及猫', '新加坡猫', '其他',
+  '中华田园猫',
+  '英国短毛猫',
+  '美国短毛猫',
+  '布偶猫',
+  '暹罗猫',
+  '异国短毛猫（加菲猫）',
+  '缅因猫',
+  '波斯猫',
+  '曼基康矮脚猫',
+  '斯芬克斯无毛猫',
+  '苏格兰折耳猫',
+  '俄罗斯蓝猫',
+  '孟加拉豹猫',
+  '德文卷毛猫',
+  '阿比西尼亚猫',
+  '挪威森林猫',
+  '西伯利亚森林猫',
+  '伯曼猫',
+  '柯尼斯卷毛猫',
+  '东方短毛猫',
+  '索马里猫',
+  '埃及猫',
+  '新加坡猫',
+  '其他',
 ];
 
 // Non-ASCII runes (CJK, emoji, etc.) weigh 2; ASCII weighs 1. Caps display
@@ -52,13 +75,40 @@ class _WeightedLengthFormatter extends TextInputFormatter {
 }
 
 const _dogBreeds = [
-  '贵宾犬（泰迪）', '中华田园犬', '威尔士柯基犬', '金毛寻回犬', '比熊犬',
-  '拉布拉多寻回犬', '博美犬', '西伯利亚雪橇犬（哈士奇）', '法国斗牛犬', '柴犬',
-  '边境牧羊犬', '萨摩耶犬', '雪纳瑞犬', '阿拉斯加雪橇犬', '吉娃娃',
-  '巴哥犬', '德国牧羊犬', '约克夏梗', '马尔济斯犬', '腊肠犬',
-  '罗威纳犬', '杜宾犬', '比格犬', '英国斗牛犬', '蝴蝶犬',
-  '西施犬', '松狮犬', '可卡犬', '牛头梗', '喜乐蒂牧羊犬',
-  '伯恩山犬', '大丹犬', '阿富汗猎犬', '其他',
+  '贵宾犬（泰迪）',
+  '中华田园犬',
+  '威尔士柯基犬',
+  '金毛寻回犬',
+  '比熊犬',
+  '拉布拉多寻回犬',
+  '博美犬',
+  '西伯利亚雪橇犬（哈士奇）',
+  '法国斗牛犬',
+  '柴犬',
+  '边境牧羊犬',
+  '萨摩耶犬',
+  '雪纳瑞犬',
+  '阿拉斯加雪橇犬',
+  '吉娃娃',
+  '巴哥犬',
+  '德国牧羊犬',
+  '约克夏梗',
+  '马尔济斯犬',
+  '腊肠犬',
+  '罗威纳犬',
+  '杜宾犬',
+  '比格犬',
+  '英国斗牛犬',
+  '蝴蝶犬',
+  '西施犬',
+  '松狮犬',
+  '可卡犬',
+  '牛头梗',
+  '喜乐蒂牧羊犬',
+  '伯恩山犬',
+  '大丹犬',
+  '阿富汗猎犬',
+  '其他',
 ];
 
 class PetEditScreen extends ConsumerStatefulWidget {
@@ -135,23 +185,34 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_appBarTitle()),
-      ),
+      appBar: AppBar(title: Text(_appBarTitle())),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            _buildAvatarSection(),
+            AppCard(
+              color: AppTheme.softPeach,
+              padding: const EdgeInsets.all(24),
+              child: _buildAvatarSection(),
+            ),
             const SizedBox(height: 24),
-            _buildPetTypeSection(),
-            const SizedBox(height: 20),
-            _buildNameField(),
-            const SizedBox(height: 16),
-            _buildBreedField(),
-            const SizedBox(height: 16),
-            _buildBirthdayField(),
+            AppCard(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const AppSectionTitle('基本资料'),
+                  _buildPetTypeSection(),
+                  const SizedBox(height: 20),
+                  _buildNameField(),
+                  const SizedBox(height: 16),
+                  _buildBreedField(),
+                  const SizedBox(height: 16),
+                  _buildBirthdayField(),
+                ],
+              ),
+            ),
             const SizedBox(height: 32),
             if (_canEdit) _buildSaveButton(),
             if (!_isEditing) ...[
@@ -182,26 +243,28 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   }
 
   Widget _buildExportButton() => OutlinedButton.icon(
-    onPressed: _isLoading || _existingPet == null ? null : () async {
-      final saved = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => PetExportDialog(
-          petId: widget.petId!,
-          service: ref.read(petExportServiceProvider),
-        ),
-      );
-      if (saved == true && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('档案压缩包已保存')),
-        );
-      }
-    },
+    onPressed: _isLoading || _existingPet == null
+        ? null
+        : () async {
+            final saved = await showDialog<bool>(
+              context: context,
+              barrierDismissible: false,
+              builder: (_) => PetExportDialog(
+                petId: widget.petId!,
+                service: ref.read(petExportServiceProvider),
+              ),
+            );
+            if (saved == true && mounted) {
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('档案压缩包已保存')));
+            }
+          },
     icon: const Icon(Icons.download_rounded),
     label: const Text('下载此档案全部数据', style: TextStyle(fontSize: 16)),
     style: OutlinedButton.styleFrom(
       minimumSize: const Size.fromHeight(48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     ),
   );
 
@@ -211,12 +274,13 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       child: OutlinedButton.icon(
         onPressed: _isLoading ? null : _showRedeemEntrySheet,
         icon: Icon(Icons.qr_code_rounded),
-        label:
-            const Text('通过分享码 / 二维码添加', style: TextStyle(fontSize: 16)),
+        label: const Text('通过分享码 / 二维码添加', style: TextStyle(fontSize: 16)),
         style: OutlinedButton.styleFrom(
-          foregroundColor: AppTheme.primaryColor,
+          foregroundColor: AppTheme.accentColor,
           side: const BorderSide(color: AppTheme.primaryColor),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
     );
@@ -326,7 +390,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                   const SizedBox(height: 8),
                   const Text(
                     '请输入对方分享的 8 位分享码',
-                    style: TextStyle(fontSize: 12, color: AppTheme.textSecondary),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textSecondary,
+                    ),
                   ),
                 ],
               ),
@@ -359,15 +426,15 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       ref.read(petListProvider.notifier).refresh();
       ref.read(selectedPetIdProvider.notifier).select(pet.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已添加共享档案：${pet.name}')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已添加共享档案：${pet.name}')));
       Navigator.of(context).pop(true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(shareErrorToMessage(e))),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(shareErrorToMessage(e))));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -389,10 +456,14 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
               backgroundImage: _avatarBytes != null
                   ? MemoryImage(_avatarBytes!)
                   : (_existingPet?.avatarUrl != null
-                      ? CachedNetworkImageProvider(_existingPet!.avatarUrl!)
-                      : null),
+                        ? CachedNetworkImageProvider(_existingPet!.avatarUrl!)
+                        : null),
               child: _avatarBytes == null && _existingPet?.avatarUrl == null
-                  ? Icon(Icons.camera_alt_rounded, size: 32, color: AppTheme.primaryColor)
+                  ? Icon(
+                      Icons.camera_alt_rounded,
+                      size: 32,
+                      color: AppTheme.primaryColor,
+                    )
                   : null,
             ),
             if (isUploading)
@@ -423,11 +494,15 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: AppTheme.primaryColor,
+                    color: AppTheme.accentColor,
                     shape: BoxShape.circle,
                     border: Border.all(color: Colors.white, width: 2),
                   ),
-                  child: Icon(Icons.edit_rounded, size: 14, color: Colors.white),
+                  child: Icon(
+                    Icons.edit_rounded,
+                    size: 14,
+                    color: Colors.white,
+                  ),
                 ),
               ),
           ],
@@ -440,17 +515,16 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('宠物类型', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500)),
+        const Text(
+          '宠物类型',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+        ),
         const SizedBox(height: 8),
         Row(
           children: [
-            Expanded(
-              child: _buildTypeButton('cat', '猫猫'),
-            ),
+            Expanded(child: _buildTypeButton('cat', '猫猫')),
             const SizedBox(width: 12),
-            Expanded(
-              child: _buildTypeButton('dog', '狗狗'),
-            ),
+            Expanded(child: _buildTypeButton('dog', '狗狗')),
           ],
         ),
         if (_isEditing)
@@ -469,10 +543,12 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     final isSelected = _petType == type;
     final isDisabled = _isEditing;
     return GestureDetector(
-      onTap: isDisabled ? null : () => setState(() {
-        _petType = type;
-        _breedController.clear();
-      }),
+      onTap: isDisabled
+          ? null
+          : () => setState(() {
+              _petType = type;
+              _breedController.clear();
+            }),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -480,9 +556,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           color: isSelected
               ? AppTheme.primaryColor.withValues(alpha: 0.12)
               : Colors.white,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
-            color: isSelected ? AppTheme.primaryColor : Colors.grey.shade300,
+            color: isSelected ? AppTheme.primaryColor : AppTheme.borderColor,
             width: isSelected ? 2 : 1,
           ),
         ),
@@ -510,7 +586,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       decoration: InputDecoration(
         labelText: '宠物名字 *',
         hintText: '最多 15 个汉字或 30 个字符',
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
         filled: true,
         fillColor: Colors.white,
       ),
@@ -545,7 +621,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           decoration: InputDecoration(
             labelText: '品种',
             hintText: '选择或输入品种',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
             filled: true,
             fillColor: Colors.white,
           ),
@@ -568,7 +644,10 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
                   return InkWell(
                     onTap: () => onSelected(option),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       child: Text(option, style: const TextStyle(fontSize: 15)),
                     ),
                   );
@@ -589,7 +668,7 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           decoration: InputDecoration(
             labelText: '生日',
             hintText: '点击选择日期',
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
             filled: true,
             fillColor: Colors.white,
             suffixIcon: Icon(Icons.calendar_today_rounded),
@@ -611,14 +690,19 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         onPressed: _isLoading ? null : _save,
         style: ElevatedButton.styleFrom(
           backgroundColor: AppTheme.primaryColor,
-          foregroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          foregroundColor: AppTheme.primaryInk,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
         child: _isLoading
             ? const SizedBox(
                 height: 20,
                 width: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
               )
             : const Text('保存', style: TextStyle(fontSize: 16)),
       ),
@@ -635,7 +719,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.errorColor,
           side: const BorderSide(color: AppTheme.errorColor),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
     );
@@ -651,7 +737,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         style: OutlinedButton.styleFrom(
           foregroundColor: AppTheme.errorColor,
           side: const BorderSide(color: AppTheme.errorColor),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
       ),
     );
@@ -694,9 +782,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(shareErrorToMessage(e))),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(shareErrorToMessage(e))));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -740,9 +828,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('删除失败: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('删除失败: $e')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -766,9 +854,12 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
   /// image_picker's default is quality 100, which produces ~300KB files even
   /// at maxWidth: 512 — way too large for a 96px CircleAvatar. This runs a
   /// second pass through flutter_image_compress to land at ~30–60KB.
-  Future<({Uint8List bytes, String filename})?> _compressAvatar(XFile xfile) async {
+  Future<({Uint8List bytes, String filename})?> _compressAvatar(
+    XFile xfile,
+  ) async {
     final dir = await getTemporaryDirectory();
-    final outPath = '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final outPath =
+        '${dir.path}/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final result = await FlutterImageCompress.compressAndGetFile(
       xfile.path,
       outPath,
@@ -813,16 +904,18 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
     if (widget.petId != null) {
       setState(() => _uploadProgress = 0);
       try {
-        await ref.read(petServiceProvider).uploadAvatar(
-          widget.petId!,
-          bytes,
-          compressed.filename,
-          onSendProgress: (sent, total) {
-            if (mounted && total > 0) {
-              setState(() => _uploadProgress = sent / total);
-            }
-          },
-        );
+        await ref
+            .read(petServiceProvider)
+            .uploadAvatar(
+              widget.petId!,
+              bytes,
+              compressed.filename,
+              onSendProgress: (sent, total) {
+                if (mounted && total > 0) {
+                  setState(() => _uploadProgress = sent / total);
+                }
+              },
+            );
         ref.read(petListProvider.notifier).refresh();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -834,9 +927,9 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('头像上传失败: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('头像上传失败: $e')));
         }
       } finally {
         if (mounted) setState(() => _uploadProgress = null);
@@ -858,14 +951,18 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
         await service.updatePet(
           widget.petId!,
           name: _nameController.text.trim(),
-          breed: _breedController.text.trim().isEmpty ? null : _breedController.text.trim(),
+          breed: _breedController.text.trim().isEmpty
+              ? null
+              : _breedController.text.trim(),
           birthday: birthdayStr,
         );
       } else {
         final created = await service.createPet(
           name: _nameController.text.trim(),
           petType: _petType,
-          breed: _breedController.text.trim().isEmpty ? null : _breedController.text.trim(),
+          breed: _breedController.text.trim().isEmpty
+              ? null
+              : _breedController.text.trim(),
           birthday: birthdayStr,
         );
 
@@ -920,15 +1017,13 @@ class _PetEditScreenState extends ConsumerState<PetEditScreen> {
           }
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                permissionErrorMessage(role, deniedLabel: '无编辑权限'),
-              ),
+              content: Text(permissionErrorMessage(role, deniedLabel: '无编辑权限')),
             ),
           );
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('保存失败: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('保存失败: $e')));
         }
       }
     } finally {

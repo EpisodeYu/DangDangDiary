@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../config/theme.dart';
 import '../../providers/pet_provider.dart';
 import '../../widgets/pet_selector.dart';
+import '../../widgets/app_empty_state.dart';
 import 'deworming_tab.dart';
 import 'routine_tab.dart';
 import 'vaccination_tab.dart';
@@ -30,7 +31,8 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
   }
 
   void _onTabAnimation() {
-    final value = _tabController.animation?.value ?? _tabController.index.toDouble();
+    final value =
+        _tabController.animation?.value ?? _tabController.index.toDouble();
     final next = value.round().clamp(0, _tabController.length - 1);
     if (next != _highlightedIndex && mounted) {
       setState(() => _highlightedIndex = next);
@@ -57,18 +59,32 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
         automaticallyImplyLeading: false,
         title: Row(
           children: [
-            PetSelector(
-              pets: pets,
-              selectedPet: selectedPet,
-              onSingleChanged: (pet) {
-                if (pet != null) {
-                  ref.read(selectedPetIdProvider.notifier).select(pet.id);
-                }
-              },
+            Expanded(
+              child: PetSelector(
+                pets: pets,
+                selectedPet: selectedPet,
+                onSingleChanged: (pet) {
+                  if (pet != null) {
+                    ref.read(selectedPetIdProvider.notifier).select(pet.id);
+                  }
+                },
+              ),
             ),
-            const Spacer(),
-            _buildTopTabs(),
+            const SizedBox(width: 16),
+            const Text(
+              '健康',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+            ),
           ],
+        ),
+        bottom: PreferredSize(
+          preferredSize: Size.fromHeight(
+            64 * MediaQuery.textScalerOf(context).scale(1),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: _buildTopTabs(),
+          ),
         ),
       ),
       body: selectedPet == null
@@ -85,6 +101,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
       floatingActionButton: selectedPet == null
           ? null
           : FloatingActionButton(
+              tooltip: '添加记录',
               onPressed: () => _openRecordPage(selectedPet.id),
               child: Icon(Icons.add_rounded),
             ),
@@ -93,37 +110,52 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
 
   Widget _buildTopTabs() {
     const labels = ['体重', '日常', '驱虫', '疫苗'];
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(labels.length, (i) {
-        final selected = _highlightedIndex == i;
-        return Padding(
-          padding: const EdgeInsets.only(left: 4),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () {
-              _tabController.animateTo(i);
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: selected
-                    ? AppTheme.primaryColor.withValues(alpha: 0.15)
-                    : Colors.transparent,
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppTheme.borderColor.withValues(alpha: .45),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: List.generate(labels.length, (i) {
+          final selected = _highlightedIndex == i;
+          return Expanded(
+            child: Semantics(
+              selected: selected,
+              button: true,
+              child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text(
-                labels[i],
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected ? AppTheme.primaryColor : AppTheme.textSecondary,
+                onTap: () {
+                  _tabController.animateTo(i);
+                },
+                child: AnimatedContainer(
+                  duration: AppTheme.motionDuration(context),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: selected ? Colors.white : Colors.transparent,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    labels[i],
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                      color: selected
+                          ? AppTheme.accentColor
+                          : AppTheme.textSecondary,
+                    ),
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      }),
+          );
+        }),
+      ),
     );
   }
 
@@ -146,26 +178,21 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
 
   Widget _buildEmptyPetsState() {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.pets_rounded, size: 64, color: Colors.grey.shade400),
-          const SizedBox(height: 16),
-          const Text(
-            '请先创建宠物档案',
-            style: TextStyle(fontSize: 16, color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: () => context.push('/profile/pets/new'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: AppEmptyState(
+        icon: Icons.pets_rounded,
+        title: '请先创建宠物档案',
+        message: '从第一份档案开始，陪伴毛孩子健康成长。',
+        action: ElevatedButton(
+          onPressed: () => context.push('/profile/pets/new'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.primaryColor,
+            foregroundColor: AppTheme.primaryInk,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
             ),
-            child: const Text('去创建'),
           ),
-        ],
+          child: const Text('去创建'),
+        ),
       ),
     );
   }

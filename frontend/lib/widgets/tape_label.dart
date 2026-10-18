@@ -80,7 +80,7 @@ class _TapePainter extends CustomPainter {
 
     final rrect = RRect.fromRectAndRadius(
       Rect.fromLTWH(0, 0, size.width, size.height),
-      const Radius.circular(2),
+      const Radius.circular(10),
     );
     canvas.save();
     canvas.clipRRect(rrect);

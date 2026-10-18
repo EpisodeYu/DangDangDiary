@@ -37,7 +37,9 @@ def main():
     command = [
         flutter, 'drive', '--driver=test_driver/pet_export_driver.dart',
         '--target=integration_test/pet_export_test.dart',
-        '-d', device, '--no-pub', '--no-dds',
+        # Regenerate Android plugin registration when switching from release
+        # back to a test build (integration_test is a dev-only plugin).
+        '-d', device, '--no-dds',
     ]
     process = subprocess.Popen(command, cwd=root, stdout=log, stderr=subprocess.STDOUT)
     deadline = time.monotonic() + 1200

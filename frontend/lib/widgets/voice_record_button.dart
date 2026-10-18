@@ -87,15 +87,16 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
           behavior: HitTestBehavior.opaque,
           onLongPressStart: disabled ? null : (_) => _startRecording(),
           onLongPressMoveUpdate: disabled ? null : _onDragUpdate,
-          onLongPressEnd: disabled ? null : (_) => _stopRecording(cancelled: _willCancel),
-          onLongPressCancel: disabled ? null : () => _stopRecording(cancelled: true),
+          onLongPressEnd: disabled
+              ? null
+              : (_) => _stopRecording(cancelled: _willCancel),
+          onLongPressCancel: disabled
+              ? null
+              : () => _stopRecording(cancelled: true),
           child: _buildButton(disabled),
         ),
         if (_recording)
-          Positioned(
-            top: -220,
-            child: IgnorePointer(child: _buildHud()),
-          ),
+          Positioned(top: -220, child: IgnorePointer(child: _buildHud())),
       ],
     );
   }
@@ -103,15 +104,13 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
   Widget _buildButton(bool disabled) {
     final color = _recording
         ? (_willCancel ? AppTheme.errorColor : AppTheme.primaryColor)
-        : (disabled ? Colors.grey.shade300 : AppTheme.primaryColor);
+        : (disabled ? AppTheme.borderColor : AppTheme.primaryColor);
     final diameter = widget.diameter;
     final iconSize = (diameter * 0.42).clamp(20.0, 40.0);
     return Semantics(
       button: true,
       enabled: !disabled,
-      label: _recording
-          ? (_willCancel ? '松开取消录音' : '松开发送录音')
-          : '按住说话',
+      label: _recording ? (_willCancel ? '松开取消录音' : '松开发送录音') : '按住说话',
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         width: diameter,
@@ -166,17 +165,16 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
             const SizedBox(height: 10),
             Text(
               '${_elapsedSeconds}s / ${_maxSeconds}s',
-              style: TextStyle(
-                fontSize: 13,
-                color: Colors.grey.shade600,
-              ),
+              style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
             ),
             const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
-                  _willCancel ? Icons.close_rounded : Icons.keyboard_arrow_up_rounded,
+                  _willCancel
+                      ? Icons.close_rounded
+                      : Icons.keyboard_arrow_up_rounded,
                   size: 18,
                   color: hintColor,
                 ),
@@ -264,13 +262,13 @@ class _VoiceRecordButtonState extends State<VoiceRecordButton> {
     _ampSub = _recorder
         .onAmplitudeChanged(const Duration(milliseconds: 120))
         .listen((amp) {
-      // `amp.current` is in dBFS roughly in [-60, 0]; map to [0, 1].
-      final db = amp.current;
-      final norm = ((db + 60) / 60).clamp(0.0, 1.0);
-      if (mounted && _recording) {
-        setState(() => _amplitudeNorm = norm);
-      }
-    });
+          // `amp.current` is in dBFS roughly in [-60, 0]; map to [0, 1].
+          final db = amp.current;
+          final norm = ((db + 60) / 60).clamp(0.0, 1.0);
+          if (mounted && _recording) {
+            setState(() => _amplitudeNorm = norm);
+          }
+        });
   }
 
   Future<void> _stopRecording({required bool cancelled}) async {
@@ -354,7 +352,7 @@ class _WaveformPulse extends StatelessWidget {
         width: 6,
         height: h.toDouble(),
         decoration: BoxDecoration(
-          color: AppTheme.primaryColor,
+          color: AppTheme.accentColor,
           borderRadius: BorderRadius.circular(3),
         ),
       );

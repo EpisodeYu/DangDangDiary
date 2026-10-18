@@ -7,6 +7,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_page_intro.dart';
+
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
@@ -60,13 +62,16 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
     _initFromPet();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('设置日常周期与提醒'),
-      ),
+      appBar: AppBar(title: const Text('设置日常周期与提醒')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            const AppPageIntro(
+              title: '照顾，也有节奏',
+              subtitle: '设置日常周期，按需开启提醒。',
+              icon: Icons.spa_rounded,
+            ),
             _buildSection(
               title: '洗澡',
               reminderEnabled: _bathReminder,
@@ -94,17 +99,27 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
                 onPressed: _submitting ? null : _submit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  foregroundColor: AppTheme.primaryInk,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: _submitting
                     ? const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2.5))
-                    : const Text('保存设置',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                          color: Colors.white,
+                          strokeWidth: 2.5,
+                        ),
+                      )
+                    : const Text(
+                        '保存设置',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
               ),
             ),
           ],
@@ -123,18 +138,21 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Text(title,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textPrimary,
-                  )),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
               const Spacer(),
               Switch(
                 value: reminderEnabled,
@@ -143,10 +161,15 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
               ),
             ],
           ),
-          Row(
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              const Text('周期：',
-                  style: TextStyle(fontSize: 14, color: AppTheme.textSecondary)),
+              const Text(
+                '周期：',
+                style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+              ),
               SizedBox(
                 width: 80,
                 child: TextField(
@@ -156,18 +179,23 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
                     isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 8,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: Colors.grey.shade300),
+                      borderSide: BorderSide(color: AppTheme.borderColor),
                     ),
                   ),
                 ),
               ),
               const Padding(
                 padding: EdgeInsets.only(left: 8),
-                child: Text('天 (1-365)',
-                    style: TextStyle(fontSize: 13, color: AppTheme.textSecondary)),
+                child: Text(
+                  '天 (1-365)',
+                  style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+                ),
               ),
             ],
           ),

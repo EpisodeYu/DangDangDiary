@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:dangdang_diary/config/theme.dart';
 import 'package:dangdang_diary/models/pet.dart';
 import 'package:dangdang_diary/providers/pet_provider.dart';
 import 'package:dangdang_diary/screens/profile/pet_edit_screen.dart';
@@ -90,7 +91,10 @@ void main() {
             ProviderScope(
               key: ValueKey(role),
               overrides: [petListProvider.overrideWith(() => _PetList(role))],
-              child: const MaterialApp(home: PetEditScreen(petId: 7)),
+              child: MaterialApp(
+                theme: AppTheme.lightTheme,
+                home: const PetEditScreen(petId: 7),
+              ),
             ),
           );
           await tester.pumpAndSettle();

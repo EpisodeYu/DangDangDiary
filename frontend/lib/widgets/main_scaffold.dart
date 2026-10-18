@@ -4,41 +4,30 @@ import 'package:go_router/go_router.dart';
 
 import '../config/theme.dart';
 
-/// Bottom navigation host for the four top-level tabs.
-///
-/// UI polish notes:
-///   * Material icons replaced with Phosphor (regular for inactive, fill
-///     for active) — gives a noticeably warmer, less generic feel.
-///   * Selected item gets a soft brand-tinted pill behind the icon and a
-///     subtle scale bump so the tap registers physically.
-///   * Light haptic on every tab change (matches iOS-class polish).
+/// Persistent navigation; tabs and branch restoration remain unchanged.
 class MainScaffold extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
   const MainScaffold({super.key, required this.navigationShell});
 
   static List<_TabSpec> get _tabs => [
-        _TabSpec(
-          label: '记录',
-          regular: Icons.camera_alt_rounded,
-          fill: Icons.camera_alt_rounded,
-        ),
-        _TabSpec(
-          label: '健康',
-          regular: Icons.pets_rounded,
-          fill: Icons.pets,
-        ),
-        _TabSpec(
-          label: '时间轴',
-          regular: Icons.menu_book_rounded,
-          fill: Icons.menu_book_rounded,
-        ),
-        _TabSpec(
-          label: '我的',
-          regular: Icons.account_circle_outlined,
-          fill: Icons.account_circle_rounded,
-        ),
-      ];
+    _TabSpec(
+      label: '记录',
+      regular: Icons.camera_alt_rounded,
+      fill: Icons.camera_alt_rounded,
+    ),
+    _TabSpec(label: '健康', regular: Icons.pets_rounded, fill: Icons.pets),
+    _TabSpec(
+      label: '时间轴',
+      regular: Icons.menu_book_rounded,
+      fill: Icons.menu_book_rounded,
+    ),
+    _TabSpec(
+      label: '我的',
+      regular: Icons.account_circle_outlined,
+      fill: Icons.account_circle_rounded,
+    ),
+  ];
 
   void _onTap(int index) {
     HapticFeedback.selectionClick();
@@ -58,6 +47,7 @@ class MainScaffold extends StatelessWidget {
       bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(
           color: Colors.white,
+          border: const Border(top: BorderSide(color: AppTheme.borderColor)),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.04),
@@ -70,7 +60,8 @@ class MainScaffold extends StatelessWidget {
           top: false,
           minimum: EdgeInsets.only(bottom: bottomInset > 0 ? 0.0 : 6.0),
           child: SizedBox(
-            height: 60,
+            height:
+                68 * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 1.6),
             child: Row(
               children: [
                 for (int i = 0; i < _tabs.length; i++)
@@ -115,49 +106,52 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = selected ? AppTheme.primaryColor : AppTheme.textSecondary;
-    return InkResponse(
-      onTap: onTap,
-      radius: 36,
-      highlightShape: BoxShape.circle,
-      splashColor: AppTheme.primaryColor.withValues(alpha: 0.10),
-      highlightColor: AppTheme.primaryColor.withValues(alpha: 0.06),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutBack,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-            decoration: BoxDecoration(
-              color: selected
-                  ? AppTheme.primaryColor.withValues(alpha: 0.14)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(18),
+    final color = selected ? AppTheme.accentColor : AppTheme.textSecondary;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 36,
+        highlightShape: BoxShape.circle,
+        splashColor: AppTheme.primaryColor.withValues(alpha: 0.10),
+        highlightColor: AppTheme.primaryColor.withValues(alpha: 0.06),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: AppTheme.motionDuration(context),
+              curve: Curves.easeOutCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              decoration: BoxDecoration(
+                color: selected
+                    ? AppTheme.primaryColor.withValues(alpha: 0.14)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: AnimatedScale(
+                scale: selected ? 1.08 : 1.0,
+                duration: AppTheme.motionDuration(context),
+                curve: Curves.easeOutCubic,
+                child: Icon(
+                  selected ? spec.fill : spec.regular,
+                  size: 22,
+                  color: color,
+                ),
+              ),
             ),
-            child: AnimatedScale(
-              scale: selected ? 1.08 : 1.0,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutBack,
-              child: Icon(
-                selected ? spec.fill : spec.regular,
-                size: 22,
+            const SizedBox(height: 2),
+            Text(
+              spec.label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
                 color: color,
               ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            spec.label,
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-              color: color,
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 }
-

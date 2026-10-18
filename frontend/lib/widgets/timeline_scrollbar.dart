@@ -35,47 +35,50 @@ class _TimelineScrollbarState extends State<TimelineScrollbar> {
   Widget build(BuildContext context) {
     if (widget.months.isEmpty) return const SizedBox.shrink();
 
-    return LayoutBuilder(builder: (context, constraints) {
-      final height = constraints.maxHeight;
-      return SizedBox(
-        width: 56,
-        height: height,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Positioned(
-              right: 8,
-              top: 12,
-              bottom: 12,
-              width: 24,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onVerticalDragStart: (d) => _onDragStart(d.localPosition, height),
-                onVerticalDragUpdate: (d) =>
-                    _onDragUpdate(d.localPosition, height),
-                onVerticalDragEnd: (_) => _onDragEnd(),
-                onVerticalDragCancel: _onDragEnd,
-                onTapDown: (d) => _onDragStart(d.localPosition, height),
-                onTapUp: (_) => _onDragEnd(),
-                child: CustomPaint(
-                  painter: _TrackPainter(
-                    months: widget.months,
-                    activeMonth: widget.activeMonth,
-                    hoverIndex: _hoverIndex,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final height = constraints.maxHeight;
+        return SizedBox(
+          width: 56,
+          height: height,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                right: 8,
+                top: 12,
+                bottom: 12,
+                width: 24,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragStart: (d) =>
+                      _onDragStart(d.localPosition, height),
+                  onVerticalDragUpdate: (d) =>
+                      _onDragUpdate(d.localPosition, height),
+                  onVerticalDragEnd: (_) => _onDragEnd(),
+                  onVerticalDragCancel: _onDragEnd,
+                  onTapDown: (d) => _onDragStart(d.localPosition, height),
+                  onTapUp: (_) => _onDragEnd(),
+                  child: CustomPaint(
+                    painter: _TrackPainter(
+                      months: widget.months,
+                      activeMonth: widget.activeMonth,
+                      hoverIndex: _hoverIndex,
+                    ),
                   ),
                 ),
               ),
-            ),
-            if (_dragging && _hoverIndex != null)
-              Positioned(
-                right: 40,
-                top: _bubbleTop(height),
-                child: _Bubble(label: widget.months[_hoverIndex!].label),
-              ),
-          ],
-        ),
-      );
-    });
+              if (_dragging && _hoverIndex != null)
+                Positioned(
+                  right: 40,
+                  top: _bubbleTop(height),
+                  child: _Bubble(label: widget.months[_hoverIndex!].label),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   double _bubbleTop(double height) {
@@ -155,8 +158,8 @@ class _TrackPainter extends CustomPainter {
       final color = isHover
           ? AppTheme.primaryColor
           : (isActive
-              ? AppTheme.primaryColor.withValues(alpha: 0.85)
-              : AppTheme.textSecondary.withValues(alpha: 0.55));
+                ? AppTheme.primaryColor.withValues(alpha: 0.85)
+                : AppTheme.textSecondary.withValues(alpha: 0.55));
       final paint = Paint()
         ..color = color
         ..strokeWidth = isActive || isHover ? 2.2 : 1.4;
@@ -184,7 +187,7 @@ class _Bubble extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       elevation: 3,
-      color: AppTheme.primaryColor,
+      color: AppTheme.accentColor,
       borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),

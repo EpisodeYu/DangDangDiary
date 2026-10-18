@@ -24,14 +24,11 @@ class SkeletonBox extends StatelessWidget {
     this.shape = BoxShape.rectangle,
   });
 
-  const SkeletonBox.circle({
-    super.key,
-    required double size,
-    this.margin,
-  })  : width = size,
-        height = size,
-        radius = 0,
-        shape = BoxShape.circle;
+  const SkeletonBox.circle({super.key, required double size, this.margin})
+    : width = size,
+      height = size,
+      radius = 0,
+      shape = BoxShape.circle;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +38,9 @@ class SkeletonBox extends StatelessWidget {
       margin: margin,
       decoration: BoxDecoration(
         color: _kBase,
-        borderRadius: shape == BoxShape.circle ? null : BorderRadius.circular(radius),
+        borderRadius: shape == BoxShape.circle
+            ? null
+            : BorderRadius.circular(radius),
         shape: shape,
       ),
     );
@@ -56,18 +55,14 @@ class SkeletonShimmer extends StatelessWidget {
   final Widget child;
   final bool enabled;
 
-  const SkeletonShimmer({
-    super.key,
-    required this.child,
-    this.enabled = true,
-  });
+  const SkeletonShimmer({super.key, required this.child, this.enabled = true});
 
   @override
   Widget build(BuildContext context) {
     return Shimmer.fromColors(
       baseColor: _kBase,
       highlightColor: _kHighlight,
-      enabled: enabled,
+      enabled: enabled && !MediaQuery.disableAnimationsOf(context),
       period: const Duration(milliseconds: 1400),
       child: child,
     );
@@ -116,13 +111,13 @@ class SkeletonListRow extends StatelessWidget {
 class SkeletonPhotoGrid extends StatelessWidget {
   final int groups;
   final int tilesPerGroup;
-  final int crossAxisCount;
+  final int? crossAxisCount;
 
   const SkeletonPhotoGrid({
     super.key,
     this.groups = 3,
-    this.tilesPerGroup = 8,
-    this.crossAxisCount = 4,
+    this.tilesPerGroup = 6,
+    this.crossAxisCount,
   });
 
   @override
@@ -142,9 +137,13 @@ class SkeletonPhotoGrid extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               itemCount: tilesPerGroup,
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 4,
-                mainAxisSpacing: 4,
+                crossAxisCount:
+                    crossAxisCount ??
+                    ((MediaQuery.sizeOf(context).width - 24) / 150)
+                        .ceil()
+                        .clamp(1, 20),
+                crossAxisSpacing: 8,
+                mainAxisSpacing: 8,
               ),
               itemBuilder: (_, _) => const SkeletonBox(radius: 6),
             ),
@@ -253,4 +252,3 @@ class SkeletonGenericList extends StatelessWidget {
     );
   }
 }
-

@@ -37,12 +37,12 @@ class ImmersivePhotoTile extends StatelessWidget {
         .round()
         .clamp(720, 1440);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 8),
       child: GestureDetector(
         onTap: onTap,
         onLongPress: onLongPress,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(20),
           child: Stack(
             alignment: Alignment.bottomLeft,
             children: [
@@ -60,7 +60,7 @@ class ImmersivePhotoTile extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
-                      vertical: 4,
+                      vertical: 8,
                     ),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),

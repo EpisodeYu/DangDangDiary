@@ -4,7 +4,7 @@ Covers:
   * create/decode access token round-trip
   * create/decode refresh token round-trip
   * expired token → None
-  * tampered payload → None
+  * tampered signature → None
   * wrong algorithm → None
   * type distinction (access vs refresh)
 """
@@ -57,11 +57,12 @@ def test_expired_token_returns_none():
     assert decode_token(expired) is None
 
 
-def test_tampered_payload_returns_none():
+def test_tampered_signature_returns_none():
     token = create_access_token(7)
-    # Flip the last character of the signature segment.
+    # The final base64url character includes unused padding bits, so changing
+    # it can preserve the decoded signature. The first character cannot.
     header, body, signature = token.split(".")
-    tampered_sig = signature[:-1] + ("A" if signature[-1] != "A" else "B")
+    tampered_sig = ("A" if signature[0] != "A" else "B") + signature[1:]
     tampered = f"{header}.{body}.{tampered_sig}"
     assert decode_token(tampered) is None
 

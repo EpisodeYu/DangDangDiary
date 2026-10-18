@@ -11,7 +11,7 @@ import '../config/theme.dart';
 /// is the *sum* of two diffuse layers, not a single dark one.
 final List<BoxShadow> kAppSoftShadow = [
   BoxShadow(
-    color: Colors.black.withValues(alpha: 0.04),
+    color: AppTheme.textPrimary.withValues(alpha: 0.035),
     blurRadius: 12,
     offset: const Offset(0, 2),
   ),
@@ -42,7 +42,7 @@ final List<BoxShadow> kAppLiftedShadow = [
 /// blocks scattered across screens, so the radius / shadow / background
 /// can evolve in one place.
 ///
-/// Use [AppCard] when the content needs a default 16px radius + the
+/// Use [AppCard] when the content needs a default 22px radius + the
 /// shared soft shadow. Pass [lifted] = true for "hero" surfaces.
 class AppCard extends StatelessWidget {
   final Widget child;
@@ -61,7 +61,7 @@ class AppCard extends StatelessWidget {
     this.padding,
     this.margin,
     this.color,
-    this.radius = 16,
+    this.radius = AppTheme.cardRadius,
     this.lifted = false,
     this.border,
     this.onTap,
@@ -76,25 +76,20 @@ class AppCard extends StatelessWidget {
       color: bg,
       borderRadius: br,
       boxShadow: lifted ? kAppLiftedShadow : kAppSoftShadow,
-      border: border,
+      border:
+          border ??
+          Border.all(color: AppTheme.borderColor.withValues(alpha: 0.65)),
     );
 
-    Widget body = Padding(
-      padding: padding ?? EdgeInsets.zero,
-      child: child,
-    );
+    Widget body = Padding(padding: padding ?? EdgeInsets.zero, child: child);
 
-    if (onTap != null) {
-      body = Material(
-        color: Colors.transparent,
-        borderRadius: br,
-        child: InkWell(
-          borderRadius: br,
-          onTap: onTap,
-          child: body,
-        ),
-      );
-    }
+    body = Material(
+      color: Colors.transparent,
+      borderRadius: br,
+      child: onTap == null
+          ? body
+          : InkWell(borderRadius: br, onTap: onTap, child: body),
+    );
 
     return Container(
       margin: margin,

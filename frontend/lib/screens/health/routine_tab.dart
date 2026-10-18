@@ -7,6 +7,8 @@ import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
+import '../../widgets/app_page_intro.dart';
+import '../../widgets/app_empty_state.dart';
 import '../../models/health.dart';
 import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
@@ -48,25 +50,16 @@ class RoutineTab extends ConsumerWidget {
             data: (status) => _buildStatusCard(context, ref, status),
           ),
           const SizedBox(height: 20),
-          Row(
-            children: [
-              Icon(Icons.schedule_rounded, size: 16, color: AppTheme.textSecondary),
-              const SizedBox(width: 6),
-              const Text('日常记录',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: AppTheme.textSecondary,
-                    fontWeight: FontWeight.w600,
-                  )),
-            ],
-          ),
+          const AppSectionTitle('日常记录'),
           const SizedBox(height: 12),
           asyncList.when(
             loading: () => const SkeletonGenericList(rows: 4),
             error: (err, _) => Padding(
               padding: const EdgeInsets.symmetric(vertical: 20),
-              child: Text('加载失败：${_friendlyError(err)}',
-                  style: const TextStyle(color: AppTheme.textSecondary)),
+              child: Text(
+                '加载失败：${_friendlyError(err)}',
+                style: const TextStyle(color: AppTheme.textSecondary),
+              ),
             ),
             data: (data) => data.routines.isEmpty
                 ? _buildEmpty()
@@ -85,39 +78,62 @@ class RoutineTab extends ConsumerWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 40),
       child: Center(
-        child: Text('状态加载失败：${_friendlyError(err)}',
-            style: const TextStyle(color: AppTheme.textSecondary)),
+        child: Text(
+          '状态加载失败：${_friendlyError(err)}',
+          style: const TextStyle(color: AppTheme.textSecondary),
+        ),
       ),
     );
   }
 
-  Widget _buildStatusCard(BuildContext context, WidgetRef ref, RoutineStatus status) {
+  Widget _buildStatusCard(
+    BuildContext context,
+    WidgetRef ref,
+    RoutineStatus status,
+  ) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
+        border: Border.all(color: AppTheme.borderColor),
         borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildStatusRow(context, ref, RoutineTypeE.bath, status.bath,
-              pet.bathReminderEnabled),
+          _buildStatusRow(
+            context,
+            ref,
+            RoutineTypeE.bath,
+            status.bath,
+            pet.bathReminderEnabled,
+          ),
           const Divider(height: 20),
-          _buildStatusRow(context, ref, RoutineTypeE.nailTrim, status.nailTrim,
-              pet.nailTrimReminderEnabled),
+          _buildStatusRow(
+            context,
+            ref,
+            RoutineTypeE.nailTrim,
+            status.nailTrim,
+            pet.nailTrimReminderEnabled,
+          ),
           const Divider(height: 20),
-          _buildStatusRow(context, ref, RoutineTypeE.grooming, status.grooming,
-              pet.groomingReminderEnabled),
+          _buildStatusRow(
+            context,
+            ref,
+            RoutineTypeE.grooming,
+            status.grooming,
+            pet.groomingReminderEnabled,
+          ),
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
-              onPressed: () => context.push('/health/routine/cycle?petId=${pet.id}'),
+              onPressed: () =>
+                  context.push('/health/routine/cycle?petId=${pet.id}'),
               icon: Icon(Icons.settings_rounded, size: 16),
               label: const Text('设置周期'),
               style: TextButton.styleFrom(
-                foregroundColor: AppTheme.primaryColor,
+                foregroundColor: AppTheme.accentColor,
               ),
             ),
           ),
@@ -147,12 +163,14 @@ class RoutineTab extends ConsumerWidget {
         const SizedBox(width: 6),
         SizedBox(
           width: 72,
-          child: Text(type.label,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
-                color: AppTheme.textPrimary,
-              )),
+          child: Text(
+            type.label,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
         ),
         Expanded(child: subtitle),
       ],
@@ -161,28 +179,38 @@ class RoutineTab extends ConsumerWidget {
 
   Widget _buildSubtitle(RoutineTypeE type, RoutineStatusItem item) {
     if (!item.reminderEnabled) {
-      return const Text('已关闭提醒',
-          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary));
+      return const Text(
+        '已关闭提醒',
+        style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+      );
     }
     if (item.lastPerformedAt == null) {
-      return const Text('请先记录日常日期',
-          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary));
+      return const Text(
+        '请先记录日常日期',
+        style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+      );
     }
     if (item.cycleDays == null) {
-      return const Text('请先设置日常周期',
-          style: TextStyle(fontSize: 13, color: AppTheme.textSecondary));
+      return const Text(
+        '请先设置日常周期',
+        style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
+      );
     }
     final days = item.daysRemaining ?? 0;
     if (item.isOverdue == true) {
-      return Text('距离${type.label}提醒日期已过 ${days.abs()} 天',
-          style: const TextStyle(
-            fontSize: 13,
-            color: AppTheme.errorColor,
-            fontWeight: FontWeight.w600,
-          ));
+      return Text(
+        '距离${type.label}提醒日期已过 ${days.abs()} 天',
+        style: const TextStyle(
+          fontSize: 13,
+          color: AppTheme.errorColor,
+          fontWeight: FontWeight.w600,
+        ),
+      );
     }
-    return Text('距离下次${type.label} $days 天',
-        style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary));
+    return Text(
+      '距离下次${type.label} $days 天',
+      style: const TextStyle(fontSize: 13, color: AppTheme.textPrimary),
+    );
   }
 
   Future<void> _toggleReminder(
@@ -205,28 +233,20 @@ class RoutineTab extends ConsumerWidget {
     } on DioException catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(_friendlyError(e)), behavior: SnackBarBehavior.floating),
+          SnackBar(
+            content: Text(_friendlyError(e)),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     }
   }
 
-  Widget _buildEmpty() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 40),
-      child: Column(
-        children: [
-          Icon(Icons.pets_rounded, size: 48, color: Colors.grey.shade400),
-          const SizedBox(height: 8),
-          const Text('还没有日常记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 14)),
-          const SizedBox(height: 4),
-          const Text('点击右下角加号添加第一条记录',
-              style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-        ],
-      ),
-    );
-  }
+  Widget _buildEmpty() => const AppEmptyState(
+    icon: Icons.spa_rounded,
+    title: '还没有日常记录',
+    message: '点击右下角加号添加第一条记录',
+  );
 
   Widget _buildItem(BuildContext context, WidgetRef ref, RoutineRecord r) {
     return Padding(
@@ -238,11 +258,11 @@ class RoutineTab extends ConsumerWidget {
           children: [
             SlidableAction(
               onPressed: (_) => _edit(context, ref, r),
-              backgroundColor: Colors.blue.shade400,
+              backgroundColor: AppTheme.blueColor,
               foregroundColor: Colors.white,
               icon: Icons.edit_rounded,
               label: '编辑',
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
             ),
             SlidableAction(
               onPressed: (_) => _confirmDelete(context, ref, r),
@@ -250,34 +270,50 @@ class RoutineTab extends ConsumerWidget {
               foregroundColor: Colors.white,
               icon: Icons.delete_rounded,
               label: '删除',
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(16),
             ),
           ],
         ),
         child: Container(
+          width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderColor),
+            borderRadius: BorderRadius.circular(16),
           ),
-          child: Row(
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              Icon(Icons.calendar_today_rounded, size: 16, color: AppTheme.textSecondary),
-              const SizedBox(width: 8),
-              Text(r.performedAt,
-                  style: const TextStyle(fontSize: 14, color: AppTheme.textPrimary)),
-              const Spacer(),
+              Icon(
+                Icons.calendar_today_rounded,
+                size: 16,
+                color: AppTheme.textSecondary,
+              ),
+              Text(
+                r.performedAt,
+                style: const TextStyle(
+                  fontSize: 14,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.primaryColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
                   r.routineType.label,
                   style: const TextStyle(
                     fontSize: 12,
-                    color: AppTheme.primaryColor,
+                    color: AppTheme.accentColor,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -290,8 +326,10 @@ class RoutineTab extends ConsumerWidget {
   }
 
   void _edit(BuildContext context, WidgetRef ref, RoutineRecord r) {
-    context.push('/health/routine/edit?petId=${pet.id}&routineId=${r.id}'
-        '&type=${r.routineType.apiValue}&date=${r.performedAt}');
+    context.push(
+      '/health/routine/edit?petId=${pet.id}&routineId=${r.id}'
+      '&type=${r.routineType.apiValue}&date=${r.performedAt}',
+    );
   }
 
   Future<void> _confirmDelete(
@@ -305,7 +343,10 @@ class RoutineTab extends ConsumerWidget {
         title: const Text('删除日常记录'),
         content: Text('确认删除 ${r.performedAt} 的${r.routineType.label}记录？'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('删除', style: TextStyle(color: Colors.red)),
@@ -321,7 +362,10 @@ class RoutineTab extends ConsumerWidget {
       unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已删除'), behavior: SnackBarBehavior.floating),
+          const SnackBar(
+            content: Text('已删除'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
     } catch (e) {

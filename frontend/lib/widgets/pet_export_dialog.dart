@@ -98,6 +98,7 @@ class _PetExportDialogState extends State<PetExportDialog> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('照片'),
+              subtitle: const Text('该档案下的全部原图'),
               value: _photos,
               onChanged: _busy
                   ? null
@@ -106,11 +107,17 @@ class _PetExportDialogState extends State<PetExportDialog> {
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('记录'),
+              subtitle: const Text('全部健康记录，保存为 JSON 文件'),
               value: _records,
               onChanged: _busy
                   ? null
                   : (value) => setState(() => _records = value!),
             ),
+            if (!_busy)
+              const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: Text('至少选择一项，打包完成后选择保存位置。'),
+              ),
             if (_busy) ...[
               const SizedBox(height: 12),
               LinearProgressIndicator(

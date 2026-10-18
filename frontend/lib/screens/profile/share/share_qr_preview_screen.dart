@@ -64,9 +64,7 @@ class _ShareQrPreviewScreenState extends State<ShareQrPreviewScreen> {
         _toast('已保存到相册');
       } else {
         final reason = result.errorMessage;
-        _toast(
-          (reason != null && reason.isNotEmpty) ? reason : '保存失败，请重试',
-        );
+        _toast((reason != null && reason.isNotEmpty) ? reason : '保存失败，请重试');
       }
     } catch (e, st) {
       if (kDebugMode) debugPrint('[shareQrPreview] save failed: $e\n$st');
@@ -136,9 +134,9 @@ class _ShareQrPreviewScreenState extends State<ShareQrPreviewScreen> {
                 label: Text(_saving ? '保存中...' : '保存到相册'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: Colors.white,
+                  foregroundColor: AppTheme.primaryInk,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                 ),
               ),
