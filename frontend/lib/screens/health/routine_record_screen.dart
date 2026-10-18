@@ -12,6 +12,8 @@ import '../../widgets/app_form_body.dart';
 import '../../models/health.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
+import '../../providers/pet_provider.dart';
+import '../../models/pet.dart';
 
 class RoutineRecordScreen extends ConsumerStatefulWidget {
   final int petId;
@@ -55,105 +57,141 @@ class _RoutineRecordScreenState extends ConsumerState<RoutineRecordScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final status = ref.watch(routineStatusProvider(widget.petId));
+    final pet = ref
+        .watch(petListProvider)
+        .valueOrNull
+        ?.pets
+        .where((p) => p.id == widget.petId)
+        .firstOrNull;
+    final canEdit = pet != null && pet.role != PetRole.viewer;
+    final types =
+        status.valueOrNull?.items.map((i) => i.type).toList() ??
+        <RoutineTypeE>[];
+    if (_isEditing &&
+        widget.initialType != null &&
+        !types.contains(widget.initialType)) {
+      types.add(widget.initialType!);
+    }
     return Scaffold(
       appBar: AppBar(title: Text(_isEditing ? '编辑日常记录' : '记录日常')),
-      body: AppFormBody(
-        title: '照顾好每一天',
-        subtitle: '洗澡、剪指甲、梳毛，都是日常的小关心。',
-        icon: Icons.spa_rounded,
-        action: SizedBox(
-          height: 50,
-          child: ElevatedButton(
-            onPressed: _submitting ? null : _submit,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppTheme.primaryColor,
-              foregroundColor: AppTheme.primaryInk,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-            ),
-            child: _submitting
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                : const Text(
-                    '确认记录',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
+      body: status.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: TextButton(
+            onPressed: () =>
+                ref.invalidate(routineStatusProvider(widget.petId)),
+            child: const Text('事项加载失败，点击重试'),
           ),
         ),
-        children: [
-          const Text(
-            '日常类型',
-            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: RoutineTypeE.values.map((t) {
-              final selected = t == _type;
-              return ChoiceChip(
-                label: Text(t.label),
-                selected: selected,
-                onSelected: (_) => setState(() => _type = t),
-                selectedColor: AppTheme.softPeach,
-                labelStyle: TextStyle(
-                  color: selected ? AppTheme.accentColor : AppTheme.textPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-                backgroundColor: Colors.white,
+        data: (_) => AppFormBody(
+          title: '照顾好每一天',
+          subtitle: '选择事项，记录完成日期。',
+          icon: Icons.spa_rounded,
+          action: SizedBox(
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _submitting || !canEdit ? null : _submit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryColor,
+                foregroundColor: AppTheme.primaryInk,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                  side: BorderSide(
-                    color: selected
-                        ? AppTheme.primaryColor
-                        : AppTheme.borderColor,
-                  ),
+                  borderRadius: BorderRadius.circular(16),
                 ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            '日常日期',
-            style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-          ),
-          const SizedBox(height: 8),
-          InkWell(
-            onTap: _pickDate,
-            borderRadius: BorderRadius.circular(16),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: AppTheme.borderColor),
               ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _dateFormat.format(_selectedDate),
-                      style: const TextStyle(fontSize: 15),
+              child: _submitting
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2.5,
+                      ),
+                    )
+                  : const Text(
+                      '确认记录',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.calendar_today_rounded,
-                    size: 18,
-                    color: AppTheme.textSecondary,
-                  ),
-                ],
-              ),
             ),
           ),
-        ],
+          children: [
+            const Text(
+              '日常类型',
+              style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: types.map((t) {
+                final selected = t == _type;
+                return ChoiceChip(
+                  label: Text(t.label),
+                  selected: selected,
+                  onSelected: !canEdit
+                      ? null
+                      : (_) => setState(() => _type = t),
+                  selectedColor: AppTheme.softPeach,
+                  labelStyle: TextStyle(
+                    color: selected
+                        ? AppTheme.accentColor
+                        : AppTheme.textPrimary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  backgroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    side: BorderSide(
+                      color: selected
+                          ? AppTheme.primaryColor
+                          : AppTheme.borderColor,
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              '日常日期',
+              style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
+            ),
+            const SizedBox(height: 8),
+            InkWell(
+              onTap: canEdit && !_submitting ? _pickDate : null,
+              borderRadius: BorderRadius.circular(16),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppTheme.borderColor),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _dateFormat.format(_selectedDate),
+                        style: const TextStyle(fontSize: 15),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.calendar_today_rounded,
+                      size: 18,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

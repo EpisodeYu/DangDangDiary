@@ -8,7 +8,7 @@ from app.exceptions import AppException
 from app.utils.time import today_cn, utcnow
 from app.models.deworming import Deworming, DewormingType
 from app.models.pet import MemberRole, Pet
-from app.models.routine import Routine, RoutineType
+from app.models.routine import Routine
 from app.models.vaccination import Vaccination
 from app.models.weight import Weight
 from app.schemas.health import (
@@ -26,6 +26,7 @@ from app.schemas.health import (
     RoutineListResponse,
     RoutineResponse,
     RoutineStatusItem,
+    RoutineItemStatus,
     RoutineStatusResponse,
     RoutineUpdate,
     VaccinationCreate,
@@ -38,6 +39,7 @@ from app.schemas.health import (
     WeightUpdate,
 )
 from app.services.pet import get_pet_membership
+from app.services import routine_items
 
 
 # ===================== Weight =====================
@@ -481,7 +483,8 @@ async def create_routine(
     user_id: int,
     data: RoutineCreate,
 ) -> RoutineResponse:
-    await get_pet_membership(pet_id, user_id, db, require_role=MemberRole.EDITOR)
+    await routine_items.lock_pet(db, pet_id, user_id)
+    await routine_items.require_item(db, pet_id, data.routine_type)
 
     routine = Routine(
         pet_id=pet_id,
@@ -494,7 +497,7 @@ async def create_routine(
     await db.flush()
     await db.commit()
     await db.refresh(routine)
-    return RoutineResponse.model_validate(routine)
+    return (await routine_items.serialize_records(db, pet_id, [routine]))[0]
 
 
 async def list_routines(
@@ -527,7 +530,7 @@ async def list_routines(
     routines = result.scalars().all()
 
     return RoutineListResponse(
-        routines=[RoutineResponse.model_validate(r) for r in routines],
+        routines=await routine_items.serialize_records(db, pet_id, routines),
         total=total,
         page=page,
         page_size=page_size,
@@ -546,14 +549,18 @@ async def update_routine(
     if routine is None:
         raise AppException(404, "ROUTINE_NOT_FOUND", "日常记录不存在")
 
-    await get_pet_membership(routine.pet_id, user_id, db, require_role=MemberRole.EDITOR)
+    await routine_items.lock_pet(db, routine.pet_id, user_id)
+    await routine_items.require_item(
+        db, routine.pet_id, data.routine_type,
+        allow_deleted=data.routine_type == routine.routine_type,
+    )
 
     routine.routine_type = data.routine_type
     routine.performed_at = data.performed_at
     await db.flush()
     await db.commit()
     await db.refresh(routine)
-    return RoutineResponse.model_validate(routine)
+    return (await routine_items.serialize_records(db, routine.pet_id, [routine]))[0]
 
 
 async def delete_routine(
@@ -579,19 +586,23 @@ async def update_routine_cycle(
     user_id: int,
     data: RoutineCycleUpdate,
 ) -> RoutineCycleResponse:
-    pet, _ = await get_pet_membership(
-        pet_id, user_id, db, require_role=MemberRole.EDITOR,
-    )
-
-    update_data = data.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(pet, key, value)
-
-    await db.flush()
-    await db.commit()
-    await db.refresh(pet)
-
-    return RoutineCycleResponse(
+    pet = await routine_items.lock_pet(db, pet_id, user_id)
+    update_data = data.model_dump(exclude_unset=True, exclude={"items"})
+    if data.items is not None:
+        if len({i.routine_type for i in data.items}) != len(data.items):
+            raise AppException(400, "ROUTINE_ITEM_DUPLICATE", "周期设置中存在重复事项")
+        for item in data.items:
+            await routine_items.apply_settings(
+                db, pet, item.routine_type, item.model_dump(exclude={"routine_type"}),
+            )
+    for key in ("bath", "nail_trim", "grooming"):
+        values = {field: update_data[f"{key}_{field}"]
+                  for field in ("cycle_days", "reminder_enabled")
+                  if f"{key}_{field}" in update_data}
+        if values:
+            await routine_items.apply_settings(db, pet, key, values)
+    result = RoutineCycleResponse(
+        items=await routine_items.definitions(db, pet),
         bath_cycle_days=pet.bath_cycle_days,
         nail_trim_cycle_days=pet.nail_trim_cycle_days,
         grooming_cycle_days=pet.grooming_cycle_days,
@@ -599,6 +610,8 @@ async def update_routine_cycle(
         nail_trim_reminder_enabled=pet.nail_trim_reminder_enabled,
         grooming_reminder_enabled=pet.grooming_reminder_enabled,
     )
+    await db.commit()
+    return result
 
 
 async def get_routine_status(
@@ -608,44 +621,45 @@ async def get_routine_status(
 ) -> RoutineStatusResponse:
     pet, _ = await get_pet_membership(pet_id, user_id, db)
 
-    bath = await _calc_routine_status(
-        db, pet_id, RoutineType.BATH,
+    # One aggregate query covers both presets and all custom items.
+    latest = dict((await db.execute(
+        select(Routine.routine_type, func.max(Routine.performed_at))
+        .where(Routine.pet_id == pet_id).group_by(Routine.routine_type)
+    )).all())
+    bath = _calc_routine_status(
+        latest.get("bath"),
         pet.bath_cycle_days, pet.bath_reminder_enabled,
     )
-    nail_trim = await _calc_routine_status(
-        db, pet_id, RoutineType.NAIL_TRIM,
+    nail_trim = _calc_routine_status(
+        latest.get("nail_trim"),
         pet.nail_trim_cycle_days, pet.nail_trim_reminder_enabled,
     )
-    grooming = await _calc_routine_status(
-        db, pet_id, RoutineType.GROOMING,
+    grooming = _calc_routine_status(
+        latest.get("grooming"),
         pet.grooming_cycle_days, pet.grooming_reminder_enabled,
     )
+    items = []
+    for definition in await routine_items.definitions(db, pet):
+        state = _calc_routine_status(
+            latest.get(definition.routine_type), definition.cycle_days, definition.reminder_enabled,
+        )
+        items.append(RoutineItemStatus(
+            **state.model_dump(), routine_type=definition.routine_type,
+            name=definition.name, is_preset=definition.is_preset,
+        ))
     return RoutineStatusResponse(
+        items=items,
         bath=bath,
         nail_trim=nail_trim,
         grooming=grooming,
     )
 
 
-async def _calc_routine_status(
-    db: AsyncSession,
-    pet_id: int,
-    routine_type: RoutineType,
+def _calc_routine_status(
+    last_date: date | None,
     cycle_days: int | None,
     reminder_enabled: bool,
 ) -> RoutineStatusItem:
-    result = await db.execute(
-        select(Routine)
-        .where(
-            Routine.pet_id == pet_id,
-            Routine.routine_type == routine_type,
-        )
-        .order_by(Routine.performed_at.desc(), Routine.id.desc())
-        .limit(1)
-    )
-    last = result.scalar_one_or_none()
-    last_date = last.performed_at if last else None
-
     if not reminder_enabled:
         return RoutineStatusItem(
             reminder_enabled=False,

@@ -77,7 +77,9 @@ async def test_export_allowed_for_every_member(client, test_engine, role):
                            headers={'Authorization': f'Bearer {member_token}'})
     assert response.status_code == 200
     assert response.json()['photos'] == []
-    assert all(rows == [] for rows in response.json()['records'].values())
+    records = response.json()['records']
+    assert all(records[key] == [] for key in ('weights', 'dewormings', 'vaccinations', 'routines'))
+    assert [i['routine_type'] for i in records['routine_items']] == ['bath', 'nail_trim']
 
 
 async def test_export_selection_and_access(client):

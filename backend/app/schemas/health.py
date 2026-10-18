@@ -1,10 +1,9 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.deworming import DewormingType
-from app.models.routine import RoutineType
 from app.utils.time import today_cn
 
 
@@ -189,7 +188,7 @@ class VaccineTypePresetResponse(BaseModel):
 # ---------------- Routine ----------------
 
 class RoutineCreate(BaseModel):
-    routine_type: RoutineType
+    routine_type: str = Field(min_length=1, max_length=64)
     performed_at: date
 
     @field_validator("performed_at")
@@ -208,7 +207,9 @@ class RoutineResponse(BaseModel):
     id: int
     pet_id: int
     user_id: int
-    routine_type: RoutineType
+    routine_type: str
+    routine_name: str | None = None
+    routine_deleted: bool = False
     performed_at: date
     created_at: datetime
 
@@ -223,7 +224,35 @@ class RoutineListResponse(BaseModel):
     total_pages: int
 
 
+class RoutineItemSettings(BaseModel):
+    routine_type: str = Field(min_length=1, max_length=64)
+    cycle_days: int | None = Field(default=None, ge=1, le=365)
+    reminder_enabled: bool
+
+
+class RoutineItemCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=20)
+
+
+class RoutineItemUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=20)
+    cycle_days: int | None = Field(default=None, ge=1, le=365)
+    reminder_enabled: bool | None = None
+
+
+class RoutineItemResponse(BaseModel):
+    routine_type: str
+    name: str
+    is_preset: bool = False
+    cycle_days: int | None
+    reminder_enabled: bool
+    deleted_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class RoutineCycleUpdate(BaseModel):
+    items: list[RoutineItemSettings] | None = Field(default=None, max_length=12)
     bath_cycle_days: int | None = None
     nail_trim_cycle_days: int | None = None
     grooming_cycle_days: int | None = None
@@ -244,6 +273,7 @@ class RoutineCycleUpdate(BaseModel):
 
 
 class RoutineCycleResponse(BaseModel):
+    items: list[RoutineItemResponse] = Field(default_factory=list)
     bath_cycle_days: int | None
     nail_trim_cycle_days: int | None
     grooming_cycle_days: int | None
@@ -261,7 +291,14 @@ class RoutineStatusItem(BaseModel):
     is_overdue: bool | None
 
 
+class RoutineItemStatus(RoutineStatusItem):
+    routine_type: str
+    name: str
+    is_preset: bool
+
+
 class RoutineStatusResponse(BaseModel):
+    items: list[RoutineItemStatus] = Field(default_factory=list)
     bath: RoutineStatusItem
     nail_trim: RoutineStatusItem
     grooming: RoutineStatusItem

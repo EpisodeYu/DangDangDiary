@@ -4,6 +4,8 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../providers/health_provider.dart';
 
 import '../config/theme.dart';
 import '../models/health.dart';
@@ -27,7 +29,7 @@ import '../services/voice_service.dart';
 /// Pops with:
 ///  * `VoiceIntakeConfirmResult` on success
 ///  * `null` on cancel (already cleaned up server-side when possible)
-class VoiceIntakeSheet extends StatefulWidget {
+class VoiceIntakeSheet extends ConsumerStatefulWidget {
   final VoiceIntakeResponse response;
   final List<Pet> pets;
   final VoiceService service;
@@ -40,10 +42,10 @@ class VoiceIntakeSheet extends StatefulWidget {
   });
 
   @override
-  State<VoiceIntakeSheet> createState() => _VoiceIntakeSheetState();
+  ConsumerState<VoiceIntakeSheet> createState() => _VoiceIntakeSheetState();
 }
 
-class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
+class _VoiceIntakeSheetState extends ConsumerState<VoiceIntakeSheet> {
   final _dateFormat = DateFormat('yyyy-MM-dd');
   bool _submitting = false;
 
@@ -470,6 +472,18 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
   }
 
   Widget _buildRoutineTypePicker() {
+    if (_petId == null) return const Text('请先选择宠物');
+    final state = ref.watch(routineStatusProvider(_petId!));
+    if (state.isLoading) return const LinearProgressIndicator();
+    if (state.hasError) {
+      return TextButton(
+        onPressed: () => ref.invalidate(routineStatusProvider(_petId!)),
+        child: const Text('日常事项加载失败，点击重试'),
+      );
+    }
+    final types =
+        state.valueOrNull?.items.map((i) => i.type).toList() ??
+        <RoutineTypeE>[];
     return _fieldShell(
       label: '日常类型',
       missing: _missing.contains('routine_type') && _routineType == null,
@@ -477,7 +491,7 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         padding: const EdgeInsets.all(10),
         child: Wrap(
           spacing: 8,
-          children: RoutineTypeE.values.map((t) {
+          children: types.map((t) {
             final sel = t == _routineType;
             return ChoiceChip(
               label: Text(t.label),
@@ -562,7 +576,12 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         ),
       ),
     );
-    if (picked != null) setState(() => _petId = picked);
+    if (picked != null && picked != _petId) {
+      setState(() {
+        _petId = picked;
+        _routineType = null;
+      });
+    }
   }
 
   Future<void> _pickDate() async {
@@ -610,6 +629,9 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
 
   String? _validate() {
     if (_petId == null) return '请选择宠物';
+    if (!widget.pets.any((p) => p.id == _petId && p.role != PetRole.viewer)) {
+      return '没有该档案的编辑权限';
+    }
     switch (_intent) {
       case VoiceIntent.deworming:
         if (_dewormingType == null) return '请选择驱虫类型';
@@ -622,7 +644,15 @@ class _VoiceIntakeSheetState extends State<VoiceIntakeSheet> {
         if (w == null || w <= 0 || w > 200) return '请填写 0-200kg 之间的体重';
         break;
       case VoiceIntent.routine:
-        if (_routineType == null) return '请选择日常类型';
+        final items = ref
+            .read(routineStatusProvider(_petId!))
+            .valueOrNull
+            ?.items;
+        if (_routineType == null ||
+            items == null ||
+            !items.any((i) => i.type == _routineType)) {
+          return '请选择该宠物的有效日常事项';
+        }
         break;
       case VoiceIntent.unknown:
         return '无法识别意图，请重新录音';

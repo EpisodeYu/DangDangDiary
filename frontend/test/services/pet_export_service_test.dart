@@ -107,6 +107,36 @@ void main() {
     expect(saved.single.files.map((f) => f.name), ['当当.json']);
   });
 
+  test(
+    'ZIP preserves custom definitions and deleted routine history',
+    () async {
+      final records = manifest['records'] as Map<String, dynamic>;
+      records['routine_items'] = [
+        {
+          'routine_type': 'custom_1',
+          'name': '清洁牙齿',
+          'is_preset': false,
+          'cycle_days': 7,
+          'reminder_enabled': false,
+          'deleted_at': '2026-10-18T00:00:00',
+        },
+      ];
+      (records['routines'] as List).add({
+        'id': 9,
+        'pet_id': 7,
+        'routine_type': 'custom_1',
+        'routine_name': '清洁牙齿',
+        'routine_deleted': true,
+        'performed_at': '2026-10-01',
+      });
+      expect(await run(photos: false), isTrue);
+      final json = jsonDecode(
+        utf8.decode(saved.single.findFile('当当.json')!.content),
+      );
+      expect(json['records'], records);
+    },
+  );
+
   test('photos only does not include JSON or request health records', () async {
     manifest['records'] = null;
     expect(await run(records: false), isTrue);

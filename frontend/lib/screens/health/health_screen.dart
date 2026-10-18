@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
 import '../../providers/pet_provider.dart';
+import '../../models/pet.dart';
 import '../../widgets/pet_selector.dart';
 import '../../widgets/app_empty_state.dart';
 import 'deworming_tab.dart';
@@ -98,7 +99,8 @@ class _HealthScreenState extends ConsumerState<HealthScreen>
                 VaccinationTab(pet: selectedPet),
               ],
             ),
-      floatingActionButton: selectedPet == null
+      floatingActionButton:
+          selectedPet == null || selectedPet.role == PetRole.viewer
           ? null
           : FloatingActionButton(
               tooltip: '添加记录',

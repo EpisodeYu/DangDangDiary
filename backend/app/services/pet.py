@@ -286,10 +286,10 @@ async def delete_pet(
     from app.models.weight import Weight
     from app.models.deworming import Deworming
     from app.models.vaccination import Vaccination
-    from app.models.routine import Routine
+    from app.models.routine import Routine, RoutineItem
 
     for model in [
-        Photo, Weight, Deworming, Vaccination, Routine,
+        Photo, Weight, Deworming, Vaccination, Routine, RoutineItem,
         PetShareCode, PetMember,
     ]:
         await db.execute(

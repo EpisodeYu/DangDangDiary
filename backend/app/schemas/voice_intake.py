@@ -43,7 +43,8 @@ class VoiceIntakeDraft(BaseModel):
     weighed_at: date | None = None
 
     # routine
-    routine_type: Literal["bath", "nail_trim", "grooming"] | None = None
+    routine_type: str | None = None
+    routine_name: str | None = None
     routine_at: date | None = None
 
 

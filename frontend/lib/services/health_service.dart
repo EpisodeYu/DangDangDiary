@@ -8,7 +8,11 @@ class HealthService {
 
   // ---------------- Weight ----------------
 
-  Future<WeightListResult> getWeights(int petId, {int page = 1, int pageSize = 50}) async {
+  Future<WeightListResult> getWeights(
+    int petId, {
+    int page = 1,
+    int pageSize = 50,
+  }) async {
     final resp = await _dio.get(
       '/pets/$petId/weights',
       queryParameters: {'page': page, 'page_size': pageSize},
@@ -16,30 +20,26 @@ class HealthService {
     return WeightListResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<WeightRecord> createWeight(int petId, {
+  Future<WeightRecord> createWeight(
+    int petId, {
     required double weightKg,
     required String recordedAt,
   }) async {
     final resp = await _dio.post(
       '/pets/$petId/weights',
-      data: {
-        'weight_kg': weightKg,
-        'recorded_at': recordedAt,
-      },
+      data: {'weight_kg': weightKg, 'recorded_at': recordedAt},
     );
     return WeightRecord.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<WeightRecord> updateWeight(int weightId, {
+  Future<WeightRecord> updateWeight(
+    int weightId, {
     required double weightKg,
     required String recordedAt,
   }) async {
     final resp = await _dio.put(
       '/weights/$weightId',
-      data: {
-        'weight_kg': weightKg,
-        'recorded_at': recordedAt,
-      },
+      data: {'weight_kg': weightKg, 'recorded_at': recordedAt},
     );
     return WeightRecord.fromJson(resp.data as Map<String, dynamic>);
   }
@@ -50,7 +50,11 @@ class HealthService {
 
   // ---------------- Deworming ----------------
 
-  Future<DewormingListResult> getDewormings(int petId, {int page = 1, int pageSize = 50}) async {
+  Future<DewormingListResult> getDewormings(
+    int petId, {
+    int page = 1,
+    int pageSize = 50,
+  }) async {
     final resp = await _dio.get(
       '/pets/$petId/dewormings',
       queryParameters: {'page': page, 'page_size': pageSize},
@@ -58,7 +62,8 @@ class HealthService {
     return DewormingListResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<DewormingRecord> createDeworming(int petId, {
+  Future<DewormingRecord> createDeworming(
+    int petId, {
     required DewormingTypeE dewormingType,
     required String dewormedAt,
   }) async {
@@ -72,7 +77,8 @@ class HealthService {
     return DewormingRecord.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<DewormingRecord> updateDeworming(int dewormingId, {
+  Future<DewormingRecord> updateDeworming(
+    int dewormingId, {
     required DewormingTypeE dewormingType,
     required String dewormedAt,
   }) async {
@@ -90,7 +96,8 @@ class HealthService {
     await _dio.delete('/dewormings/$dewormingId');
   }
 
-  Future<DewormingCycleConfig> updateDewormingCycle(int petId, {
+  Future<DewormingCycleConfig> updateDewormingCycle(
+    int petId, {
     int? internalCycleDays,
     int? externalCycleDays,
     int? combinedCycleDays,
@@ -99,12 +106,24 @@ class HealthService {
     bool? combinedReminderEnabled,
   }) async {
     final body = <String, dynamic>{};
-    if (internalCycleDays != null) body['internal_cycle_days'] = internalCycleDays;
-    if (externalCycleDays != null) body['external_cycle_days'] = externalCycleDays;
-    if (combinedCycleDays != null) body['combined_cycle_days'] = combinedCycleDays;
-    if (internalReminderEnabled != null) body['internal_reminder_enabled'] = internalReminderEnabled;
-    if (externalReminderEnabled != null) body['external_reminder_enabled'] = externalReminderEnabled;
-    if (combinedReminderEnabled != null) body['combined_reminder_enabled'] = combinedReminderEnabled;
+    if (internalCycleDays != null) {
+      body['internal_cycle_days'] = internalCycleDays;
+    }
+    if (externalCycleDays != null) {
+      body['external_cycle_days'] = externalCycleDays;
+    }
+    if (combinedCycleDays != null) {
+      body['combined_cycle_days'] = combinedCycleDays;
+    }
+    if (internalReminderEnabled != null) {
+      body['internal_reminder_enabled'] = internalReminderEnabled;
+    }
+    if (externalReminderEnabled != null) {
+      body['external_reminder_enabled'] = externalReminderEnabled;
+    }
+    if (combinedReminderEnabled != null) {
+      body['combined_reminder_enabled'] = combinedReminderEnabled;
+    }
 
     final resp = await _dio.put('/pets/$petId/deworming-cycle', data: body);
     return DewormingCycleConfig.fromJson(resp.data as Map<String, dynamic>);
@@ -117,7 +136,11 @@ class HealthService {
 
   // ---------------- Vaccination ----------------
 
-  Future<VaccinationListResult> getVaccinations(int petId, {int page = 1, int pageSize = 50}) async {
+  Future<VaccinationListResult> getVaccinations(
+    int petId, {
+    int page = 1,
+    int pageSize = 50,
+  }) async {
     final resp = await _dio.get(
       '/pets/$petId/vaccinations',
       queryParameters: {'page': page, 'page_size': pageSize},
@@ -125,30 +148,26 @@ class HealthService {
     return VaccinationListResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<VaccinationRecord> createVaccination(int petId, {
+  Future<VaccinationRecord> createVaccination(
+    int petId, {
     required String vaccineType,
     required String vaccinatedAt,
   }) async {
     final resp = await _dio.post(
       '/pets/$petId/vaccinations',
-      data: {
-        'vaccine_type': vaccineType,
-        'vaccinated_at': vaccinatedAt,
-      },
+      data: {'vaccine_type': vaccineType, 'vaccinated_at': vaccinatedAt},
     );
     return VaccinationRecord.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<VaccinationRecord> updateVaccination(int vaccinationId, {
+  Future<VaccinationRecord> updateVaccination(
+    int vaccinationId, {
     required String vaccineType,
     required String vaccinatedAt,
   }) async {
     final resp = await _dio.put(
       '/vaccinations/$vaccinationId',
-      data: {
-        'vaccine_type': vaccineType,
-        'vaccinated_at': vaccinatedAt,
-      },
+      data: {'vaccine_type': vaccineType, 'vaccinated_at': vaccinatedAt},
     );
     return VaccinationRecord.fromJson(resp.data as Map<String, dynamic>);
   }
@@ -163,12 +182,45 @@ class HealthService {
       queryParameters: {'pet_type': petType},
     );
     final data = resp.data as Map<String, dynamic>;
-    return (data['preset_types'] as List<dynamic>).map((e) => e as String).toList();
+    return (data['preset_types'] as List<dynamic>)
+        .map((e) => e as String)
+        .toList();
   }
 
   // ---------------- Routine ----------------
 
-  Future<RoutineListResult> getRoutines(int petId, {int page = 1, int pageSize = 50}) async {
+  Future<void> createRoutineItem(int petId, String name) async {
+    await _dio.post('/pets/$petId/routine-items', data: {'name': name});
+  }
+
+  Future<void> updateRoutineItem(
+    int petId,
+    RoutineTypeE type, {
+    String? name,
+    bool? reminderEnabled,
+  }) async {
+    await _dio.put(
+      '/pets/$petId/routine-items/${type.apiValue}',
+      data: {'name': ?name, 'reminder_enabled': ?reminderEnabled},
+    );
+  }
+
+  Future<void> deleteRoutineItem(int petId, RoutineTypeE type) async {
+    await _dio.delete('/pets/$petId/routine-items/${type.apiValue}');
+  }
+
+  Future<void> saveRoutineItems(
+    int petId,
+    List<Map<String, dynamic>> items,
+  ) async {
+    await _dio.put('/pets/$petId/routine-cycle', data: {'items': items});
+  }
+
+  Future<RoutineListResult> getRoutines(
+    int petId, {
+    int page = 1,
+    int pageSize = 50,
+  }) async {
     final resp = await _dio.get(
       '/pets/$petId/routines',
       queryParameters: {'page': page, 'page_size': pageSize},
@@ -176,30 +228,26 @@ class HealthService {
     return RoutineListResult.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<RoutineRecord> createRoutine(int petId, {
+  Future<RoutineRecord> createRoutine(
+    int petId, {
     required RoutineTypeE routineType,
     required String performedAt,
   }) async {
     final resp = await _dio.post(
       '/pets/$petId/routines',
-      data: {
-        'routine_type': routineType.apiValue,
-        'performed_at': performedAt,
-      },
+      data: {'routine_type': routineType.apiValue, 'performed_at': performedAt},
     );
     return RoutineRecord.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  Future<RoutineRecord> updateRoutine(int routineId, {
+  Future<RoutineRecord> updateRoutine(
+    int routineId, {
     required RoutineTypeE routineType,
     required String performedAt,
   }) async {
     final resp = await _dio.put(
       '/routines/$routineId',
-      data: {
-        'routine_type': routineType.apiValue,
-        'performed_at': performedAt,
-      },
+      data: {'routine_type': routineType.apiValue, 'performed_at': performedAt},
     );
     return RoutineRecord.fromJson(resp.data as Map<String, dynamic>);
   }
@@ -208,7 +256,8 @@ class HealthService {
     await _dio.delete('/routines/$routineId');
   }
 
-  Future<RoutineCycleConfig> updateRoutineCycle(int petId, {
+  Future<RoutineCycleConfig> updateRoutineCycle(
+    int petId, {
     int? bathCycleDays,
     int? nailTrimCycleDays,
     int? groomingCycleDays,
@@ -218,11 +267,21 @@ class HealthService {
   }) async {
     final body = <String, dynamic>{};
     if (bathCycleDays != null) body['bath_cycle_days'] = bathCycleDays;
-    if (nailTrimCycleDays != null) body['nail_trim_cycle_days'] = nailTrimCycleDays;
-    if (groomingCycleDays != null) body['grooming_cycle_days'] = groomingCycleDays;
-    if (bathReminderEnabled != null) body['bath_reminder_enabled'] = bathReminderEnabled;
-    if (nailTrimReminderEnabled != null) body['nail_trim_reminder_enabled'] = nailTrimReminderEnabled;
-    if (groomingReminderEnabled != null) body['grooming_reminder_enabled'] = groomingReminderEnabled;
+    if (nailTrimCycleDays != null) {
+      body['nail_trim_cycle_days'] = nailTrimCycleDays;
+    }
+    if (groomingCycleDays != null) {
+      body['grooming_cycle_days'] = groomingCycleDays;
+    }
+    if (bathReminderEnabled != null) {
+      body['bath_reminder_enabled'] = bathReminderEnabled;
+    }
+    if (nailTrimReminderEnabled != null) {
+      body['nail_trim_reminder_enabled'] = nailTrimReminderEnabled;
+    }
+    if (groomingReminderEnabled != null) {
+      body['grooming_reminder_enabled'] = groomingReminderEnabled;
+    }
 
     final resp = await _dio.put('/pets/$petId/routine-cycle', data: body);
     return RoutineCycleConfig.fromJson(resp.data as Map<String, dynamic>);

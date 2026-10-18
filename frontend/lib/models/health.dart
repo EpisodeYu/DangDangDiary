@@ -118,7 +118,9 @@ class DewormingRecord {
       id: json['id'] as int,
       petId: json['pet_id'] as int,
       userId: json['user_id'] as int,
-      dewormingType: DewormingTypeX.fromString(json['deworming_type'] as String),
+      dewormingType: DewormingTypeX.fromString(
+        json['deworming_type'] as String,
+      ),
       dewormedAt: json['dewormed_at'] as String,
       createdAt: json['created_at'] as String,
     );
@@ -224,9 +226,15 @@ class DewormingStatus {
 
   factory DewormingStatus.fromJson(Map<String, dynamic> json) {
     return DewormingStatus(
-      internal: DewormingStatusItem.fromJson(json['internal'] as Map<String, dynamic>),
-      external: DewormingStatusItem.fromJson(json['external'] as Map<String, dynamic>),
-      combined: DewormingStatusItem.fromJson(json['combined'] as Map<String, dynamic>),
+      internal: DewormingStatusItem.fromJson(
+        json['internal'] as Map<String, dynamic>,
+      ),
+      external: DewormingStatusItem.fromJson(
+        json['external'] as Map<String, dynamic>,
+      ),
+      combined: DewormingStatusItem.fromJson(
+        json['combined'] as Map<String, dynamic>,
+      ),
     );
   }
 
@@ -299,32 +307,27 @@ class VaccinationListResult {
   }
 }
 
-enum RoutineTypeE { bath, nailTrim, grooming }
+class RoutineTypeE {
+  final String apiValue;
+  final String label;
+  const RoutineTypeE(this.apiValue, this.label);
+
+  static const bath = RoutineTypeE('bath', '洗澡');
+  static const nailTrim = RoutineTypeE('nail_trim', '剪指甲');
+  static const grooming = RoutineTypeE('grooming', '梳毛');
+  static const values = [bath, nailTrim];
+  bool get isPreset => apiValue == 'bath' || apiValue == 'nail_trim';
+
+  @override
+  bool operator ==(Object other) =>
+      other is RoutineTypeE && other.apiValue == apiValue;
+  @override
+  int get hashCode => apiValue.hashCode;
+}
 
 extension RoutineTypeX on RoutineTypeE {
-  String get apiValue {
-    switch (this) {
-      case RoutineTypeE.bath:
-        return 'bath';
-      case RoutineTypeE.nailTrim:
-        return 'nail_trim';
-      case RoutineTypeE.grooming:
-        return 'grooming';
-    }
-  }
-
-  String get label {
-    switch (this) {
-      case RoutineTypeE.bath:
-        return '洗澡';
-      case RoutineTypeE.nailTrim:
-        return '剪指甲';
-      case RoutineTypeE.grooming:
-        return '梳毛';
-    }
-  }
-
-  static RoutineTypeE fromString(String raw) {
+  static RoutineTypeE fromString(String raw, {String? name}) {
+    if (name != null) return RoutineTypeE(raw, name);
     switch (raw) {
       case 'bath':
         return RoutineTypeE.bath;
@@ -333,7 +336,7 @@ extension RoutineTypeX on RoutineTypeE {
       case 'grooming':
         return RoutineTypeE.grooming;
       default:
-        throw ArgumentError('Unknown routine type: $raw');
+        return RoutineTypeE(raw, '日常事项');
     }
   }
 }
@@ -345,6 +348,7 @@ class RoutineRecord {
   final RoutineTypeE routineType;
   final String performedAt;
   final String createdAt;
+  final bool routineDeleted;
 
   const RoutineRecord({
     required this.id,
@@ -353,6 +357,7 @@ class RoutineRecord {
     required this.routineType,
     required this.performedAt,
     required this.createdAt,
+    this.routineDeleted = false,
   });
 
   factory RoutineRecord.fromJson(Map<String, dynamic> json) {
@@ -360,7 +365,11 @@ class RoutineRecord {
       id: json['id'] as int,
       petId: json['pet_id'] as int,
       userId: json['user_id'] as int,
-      routineType: RoutineTypeX.fromString(json['routine_type'] as String),
+      routineType: RoutineTypeX.fromString(
+        json['routine_type'] as String,
+        name: json['routine_name'] as String?,
+      ),
+      routineDeleted: json['routine_deleted'] as bool? ?? false,
       performedAt: json['performed_at'] as String,
       createdAt: json['created_at'] as String,
     );
@@ -454,11 +463,13 @@ class RoutineStatusItem {
 }
 
 class RoutineStatus {
+  final List<RoutineItem>? entries;
   final RoutineStatusItem bath;
   final RoutineStatusItem nailTrim;
   final RoutineStatusItem grooming;
 
   const RoutineStatus({
+    this.entries,
     required this.bath,
     required this.nailTrim,
     required this.grooming,
@@ -466,20 +477,40 @@ class RoutineStatus {
 
   factory RoutineStatus.fromJson(Map<String, dynamic> json) {
     return RoutineStatus(
+      entries: (json['items'] as List<dynamic>?)
+          ?.map((e) => RoutineItem.fromJson(e as Map<String, dynamic>))
+          .toList(),
       bath: RoutineStatusItem.fromJson(json['bath'] as Map<String, dynamic>),
-      nailTrim: RoutineStatusItem.fromJson(json['nail_trim'] as Map<String, dynamic>),
-      grooming: RoutineStatusItem.fromJson(json['grooming'] as Map<String, dynamic>),
+      nailTrim: RoutineStatusItem.fromJson(
+        json['nail_trim'] as Map<String, dynamic>,
+      ),
+      grooming: RoutineStatusItem.fromJson(
+        json['grooming'] as Map<String, dynamic>,
+      ),
     );
   }
 
-  RoutineStatusItem itemOf(RoutineTypeE type) {
-    switch (type) {
-      case RoutineTypeE.bath:
-        return bath;
-      case RoutineTypeE.nailTrim:
-        return nailTrim;
-      case RoutineTypeE.grooming:
-        return grooming;
-    }
-  }
+  List<RoutineItem> get items =>
+      entries ??
+      [
+        RoutineItem(type: RoutineTypeE.bath, status: bath),
+        RoutineItem(type: RoutineTypeE.nailTrim, status: nailTrim),
+        RoutineItem(type: RoutineTypeE.grooming, status: grooming),
+      ];
+
+  RoutineStatusItem itemOf(RoutineTypeE type) =>
+      items.firstWhere((i) => i.type == type).status;
+}
+
+class RoutineItem {
+  final RoutineTypeE type;
+  final RoutineStatusItem status;
+  const RoutineItem({required this.type, required this.status});
+  factory RoutineItem.fromJson(Map<String, dynamic> json) => RoutineItem(
+    type: RoutineTypeX.fromString(
+      json['routine_type'] as String,
+      name: json['name'] as String,
+    ),
+    status: RoutineStatusItem.fromJson(json),
+  );
 }

@@ -15,11 +15,13 @@ import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
 import '../../widgets/skeleton.dart';
+import '../../widgets/routine_item_dialog.dart';
 
 class RoutineTab extends ConsumerWidget {
   final Pet pet;
 
   const RoutineTab({super.key, required this.pet});
+  bool get _canEdit => pet.role != PetRole.viewer;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -101,35 +103,38 @@ class RoutineTab extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildStatusRow(
-            context,
-            ref,
-            RoutineTypeE.bath,
-            status.bath,
-            pet.bathReminderEnabled,
-          ),
-          const Divider(height: 20),
-          _buildStatusRow(
-            context,
-            ref,
-            RoutineTypeE.nailTrim,
-            status.nailTrim,
-            pet.nailTrimReminderEnabled,
-          ),
-          const Divider(height: 20),
-          _buildStatusRow(
-            context,
-            ref,
-            RoutineTypeE.grooming,
-            status.grooming,
-            pet.groomingReminderEnabled,
-          ),
+          for (final (index, item) in status.items.indexed) ...[
+            if (index > 0) const Divider(height: 20),
+            _buildStatusRow(
+              context,
+              ref,
+              item.type,
+              item.status,
+              item.status.reminderEnabled,
+            ),
+          ],
+          if (_canEdit) ...[
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed:
+                  status.items.where((i) => !i.type.isPreset).length >= 10
+                  ? null
+                  : () => _editItem(context, ref),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(
+                status.items.where((i) => !i.type.isPreset).length >= 10
+                    ? '自定义日常已达 10 项上限'
+                    : '新增日常事项',
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           Align(
             alignment: Alignment.centerRight,
             child: TextButton.icon(
-              onPressed: () =>
-                  context.push('/health/routine/cycle?petId=${pet.id}'),
+              onPressed: !_canEdit
+                  ? null
+                  : () => context.push('/health/routine/cycle?petId=${pet.id}'),
               icon: Icon(Icons.settings_rounded, size: 16),
               label: const Text('设置周期'),
               style: TextButton.styleFrom(
@@ -156,23 +161,41 @@ class RoutineTab extends ConsumerWidget {
           width: 28,
           child: Checkbox(
             value: reminderEnabled,
-            onChanged: (v) => _toggleReminder(context, ref, type, v ?? false),
+            onChanged: !_canEdit
+                ? null
+                : (v) => _toggleReminder(context, ref, type, v ?? false),
             materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
         ),
         const SizedBox(width: 6),
-        SizedBox(
-          width: 72,
-          child: Text(
-            type.label,
-            style: const TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.w600,
-              color: AppTheme.textPrimary,
-            ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                type.label,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 4),
+              subtitle,
+            ],
           ),
         ),
-        Expanded(child: subtitle),
+        if (_canEdit && !type.isPreset)
+          PopupMenuButton<String>(
+            tooltip: '管理${type.label}',
+            onSelected: (value) => value == 'rename'
+                ? _editItem(context, ref, type: type)
+                : _deleteItem(context, ref, type),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'rename', child: Text('重命名')),
+              PopupMenuItem(value: 'delete', child: Text('删除事项')),
+            ],
+          ),
       ],
     );
   }
@@ -221,12 +244,7 @@ class RoutineTab extends ConsumerWidget {
   ) async {
     final service = ref.read(healthServiceProvider);
     try {
-      await service.updateRoutineCycle(
-        pet.id,
-        bathReminderEnabled: type == RoutineTypeE.bath ? enabled : null,
-        nailTrimReminderEnabled: type == RoutineTypeE.nailTrim ? enabled : null,
-        groomingReminderEnabled: type == RoutineTypeE.grooming ? enabled : null,
-      );
+      await service.updateRoutineItem(pet.id, type, reminderEnabled: enabled);
       ref.invalidate(routineStatusProvider(pet.id));
       await ref.read(petListProvider.notifier).refresh();
       unawaited(ref.read(healthReminderSchedulerProvider).refresh());
@@ -253,27 +271,29 @@ class RoutineTab extends ConsumerWidget {
       padding: const EdgeInsets.only(bottom: 8),
       child: Slidable(
         key: ValueKey('routine-${r.id}'),
-        endActionPane: ActionPane(
-          motion: const BehindMotion(),
-          children: [
-            SlidableAction(
-              onPressed: (_) => _edit(context, ref, r),
-              backgroundColor: AppTheme.blueColor,
-              foregroundColor: Colors.white,
-              icon: Icons.edit_rounded,
-              label: '编辑',
-              borderRadius: BorderRadius.circular(16),
-            ),
-            SlidableAction(
-              onPressed: (_) => _confirmDelete(context, ref, r),
-              backgroundColor: AppTheme.errorColor,
-              foregroundColor: Colors.white,
-              icon: Icons.delete_rounded,
-              label: '删除',
-              borderRadius: BorderRadius.circular(16),
-            ),
-          ],
-        ),
+        endActionPane: !_canEdit
+            ? null
+            : ActionPane(
+                motion: const BehindMotion(),
+                children: [
+                  SlidableAction(
+                    onPressed: (_) => _edit(context, ref, r),
+                    backgroundColor: AppTheme.blueColor,
+                    foregroundColor: Colors.white,
+                    icon: Icons.edit_rounded,
+                    label: '编辑',
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  SlidableAction(
+                    onPressed: (_) => _confirmDelete(context, ref, r),
+                    backgroundColor: AppTheme.errorColor,
+                    foregroundColor: Colors.white,
+                    icon: Icons.delete_rounded,
+                    label: '删除',
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ],
+              ),
         child: Container(
           width: double.infinity,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -310,7 +330,7 @@ class RoutineTab extends ConsumerWidget {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 child: Text(
-                  r.routineType.label,
+                  '${r.routineType.label}${r.routineDeleted ? '（已删除）' : ''}',
                   style: const TextStyle(
                     fontSize: 12,
                     color: AppTheme.accentColor,
@@ -328,7 +348,7 @@ class RoutineTab extends ConsumerWidget {
   void _edit(BuildContext context, WidgetRef ref, RoutineRecord r) {
     context.push(
       '/health/routine/edit?petId=${pet.id}&routineId=${r.id}'
-      '&type=${r.routineType.apiValue}&date=${r.performedAt}',
+      '&type=${r.routineType.apiValue}&name=${Uri.encodeQueryComponent(r.routineType.label)}&date=${r.performedAt}',
     );
   }
 
@@ -388,5 +408,67 @@ class RoutineTab extends ConsumerWidget {
       }
     }
     return '请稍后重试';
+  }
+
+  void _refreshItems(WidgetRef ref) {
+    ref.invalidate(routineStatusProvider(pet.id));
+    ref.invalidate(routineListProvider(pet.id));
+    unawaited(ref.read(petListProvider.notifier).refresh());
+    unawaited(ref.read(healthReminderSchedulerProvider).refresh());
+  }
+
+  Future<void> _editItem(
+    BuildContext context,
+    WidgetRef ref, {
+    RoutineTypeE? type,
+  }) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => RoutineItemDialog(
+        initialName: type?.label,
+        onSave: (name) => type == null
+            ? ref.read(healthServiceProvider).createRoutineItem(pet.id, name)
+            : ref
+                  .read(healthServiceProvider)
+                  .updateRoutineItem(pet.id, type, name: name),
+      ),
+    );
+    if (saved == true && context.mounted) _refreshItems(ref);
+  }
+
+  Future<void> _deleteItem(
+    BuildContext context,
+    WidgetRef ref,
+    RoutineTypeE type,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('删除“${type.label}”？'),
+        content: const Text('删除后停止提醒，已有历史记录仍会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      await ref.read(healthServiceProvider).deleteRoutineItem(pet.id, type);
+      if (context.mounted) _refreshItems(ref);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(_friendlyError(e))));
+      }
+    }
   }
 }

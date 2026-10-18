@@ -13,6 +13,7 @@ from app.schemas.pet_export import (
     ExportPet, ExportPhoto, ExportRecords, PetExportResponse,
 )
 from app.services.pet import get_pet_membership
+from app.services import routine_items
 
 
 async def get_pet_export(
@@ -44,9 +45,10 @@ async def get_pet_export(
                          for row in await rows(Photo, Photo.taken_at)]
     if records:
         result.records = ExportRecords(
+            routine_items=await routine_items.definitions(db, pet, include_deleted=True),
             weights=await rows(Weight, Weight.recorded_at),
             dewormings=await rows(Deworming, Deworming.dewormed_at),
             vaccinations=await rows(Vaccination, Vaccination.vaccinated_at),
-            routines=await rows(Routine, Routine.performed_at),
+            routines=await routine_items.serialize_records(db, pet_id, await rows(Routine, Routine.performed_at)),
         )
     return result

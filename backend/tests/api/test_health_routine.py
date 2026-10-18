@@ -35,7 +35,9 @@ async def test_routine_crud_all_types(client):
     today = date.today()
     created_ids = []
 
-    for routine_type, offset_days in (("bath", 3), ("nail_trim", 10), ("grooming", 20)):
+    custom = await c.post(f"/pets/{pet_id}/routine-items", json={"name": "梳毛"}, headers=headers)
+    assert custom.status_code == 201
+    for routine_type, offset_days in (("bath", 3), ("nail_trim", 10), (custom.json()["routine_type"], 20)):
         resp = await c.post(
             f"/pets/{pet_id}/routines",
             json={
@@ -127,10 +129,8 @@ async def test_routine_cycle_update_and_status_enabled(client):
         json={
             "bath_cycle_days": 30,
             "nail_trim_cycle_days": 20,
-            "grooming_cycle_days": 60,
             "bath_reminder_enabled": True,
             "nail_trim_reminder_enabled": True,
-            "grooming_reminder_enabled": False,
         },
         headers=headers,
     )
@@ -169,7 +169,7 @@ async def test_routine_status_disabled_all(client):
     pet_id = await _create_pet(c, headers)
 
     today = date.today()
-    for rt in ("bath", "nail_trim", "grooming"):
+    for rt in ("bath", "nail_trim"):
         await c.post(
             f"/pets/{pet_id}/routines",
             json={"routine_type": rt, "performed_at": (today - timedelta(days=1)).isoformat()},
@@ -179,7 +179,8 @@ async def test_routine_status_disabled_all(client):
     # Default reminder_enabled should be False; verify status returns Nones.
     resp = await c.get(f"/pets/{pet_id}/routine-status", headers=headers)
     st = resp.json()
-    for key in ("bath", "nail_trim", "grooming"):
+    assert [i['routine_type'] for i in st['items']] == ['bath', 'nail_trim']
+    for key in ("bath", "nail_trim"):
         assert st[key]["reminder_enabled"] is False
         assert st[key]["next_due_at"] is None
         assert st[key]["days_remaining"] is None

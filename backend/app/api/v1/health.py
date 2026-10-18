@@ -20,6 +20,9 @@ from app.schemas.health import (
     RoutineResponse,
     RoutineStatusResponse,
     RoutineUpdate,
+    RoutineItemCreate,
+    RoutineItemUpdate,
+    RoutineItemResponse,
     VaccinationCreate,
     VaccinationListResponse,
     VaccinationResponse,
@@ -31,6 +34,7 @@ from app.schemas.health import (
     WeightUpdate,
 )
 from app.services import health as health_service
+from app.services import routine_items
 from app.services.health import VACCINE_PRESETS
 
 router = APIRouter(tags=["health"])
@@ -199,6 +203,39 @@ async def get_vaccine_types(
 
 
 # ================= Routines =================
+
+
+@router.post("/pets/{pet_id}/routine-items", response_model=RoutineItemResponse, status_code=201)
+async def create_routine_item(
+    pet_id: int,
+    data: RoutineItemCreate,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return await routine_items.create_item(db, pet_id, user_id, data)
+
+
+@router.put("/pets/{pet_id}/routine-items/{routine_type}", response_model=RoutineItemResponse)
+async def update_routine_item(
+    pet_id: int,
+    routine_type: str,
+    data: RoutineItemUpdate,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    return await routine_items.update_item(db, pet_id, user_id, routine_type, data)
+
+
+@router.delete("/pets/{pet_id}/routine-items/{routine_type}", status_code=204)
+async def delete_routine_item(
+    pet_id: int,
+    routine_type: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+):
+    await routine_items.delete_item(db, pet_id, user_id, routine_type)
+    return Response(status_code=204)
+
 
 @router.post("/pets/{pet_id}/routines", response_model=RoutineResponse, status_code=201)
 async def create_routine(

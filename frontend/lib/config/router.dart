@@ -63,10 +63,7 @@ final routerProvider = Provider<GoRouter>((ref) {
         parentNavigatorKey: _rootNavigatorKey,
         builder: (context, state) => const SplashScreen(),
       ),
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
       GoRoute(
         path: '/profile/pets',
         parentNavigatorKey: _rootNavigatorKey,
@@ -172,7 +169,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           RoutineTypeE? type;
           if (qp['type'] != null) {
             try {
-              type = RoutineTypeX.fromString(qp['type']!);
+              type = RoutineTypeX.fromString(qp['type']!, name: qp['name']);
             } catch (_) {}
           }
           return RoutineRecordScreen(
@@ -218,30 +215,38 @@ final routerProvider = Provider<GoRouter>((ref) {
           return MainScaffold(navigationShell: navigationShell);
         },
         branches: [
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/record',
-              builder: (context, state) => const RecordScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/health',
-              builder: (context, state) => const HealthScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/timeline',
-              builder: (context, state) => const TimelineScreen(),
-            ),
-          ]),
-          StatefulShellBranch(routes: [
-            GoRoute(
-              path: '/profile',
-              builder: (context, state) => const ProfileScreen(),
-            ),
-          ]),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/record',
+                builder: (context, state) => const RecordScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/health',
+                builder: (context, state) => const HealthScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/timeline',
+                builder: (context, state) => const TimelineScreen(),
+              ),
+            ],
+          ),
+          StatefulShellBranch(
+            routes: [
+              GoRoute(
+                path: '/profile',
+                builder: (context, state) => const ProfileScreen(),
+              ),
+            ],
+          ),
         ],
       ),
     ],

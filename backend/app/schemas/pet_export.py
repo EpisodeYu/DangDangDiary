@@ -2,10 +2,10 @@
 
 from datetime import date, datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.health import (
-    DewormingResponse, RoutineResponse, VaccinationResponse, WeightResponse,
+    DewormingResponse, RoutineItemResponse, RoutineResponse, VaccinationResponse, WeightResponse,
 )
 
 
@@ -46,6 +46,7 @@ class ExportPhoto(BaseModel):
 
 
 class ExportRecords(BaseModel):
+    routine_items: list[RoutineItemResponse] = Field(default_factory=list)
     weights: list[WeightResponse]
     dewormings: list[DewormingResponse]
     vaccinations: list[VaccinationResponse]

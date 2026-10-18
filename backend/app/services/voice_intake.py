@@ -33,7 +33,7 @@ from app.config import settings
 from app.exceptions import AppException
 from app.models.deworming import DewormingType
 from app.models.pet import MemberRole, Pet, PetMember
-from app.models.routine import RoutineType
+from app.services import routine_items
 from app.models.voice_intake import VoiceIntakeLog, VoiceIntakeStatus
 from app.schemas.health import (
     DewormingCreate,
@@ -167,11 +167,15 @@ def _parse_deworming_type(value: Any) -> str | None:
     return None
 
 
-def _parse_routine_type(value: Any) -> str | None:
+def _parse_routine_type(value: Any, known_routines: dict[str, str] | None = None) -> str | None:
     if isinstance(value, str):
         v = value.strip().lower()
-        if v in {"bath", "nail_trim", "grooming"}:
+        choices = known_routines if known_routines is not None else {"bath": "洗澡", "nail_trim": "剪指甲", "grooming": "梳毛"}
+        if v in choices:
             return v
+        matches = [key for key, name in choices.items() if name.casefold() == v.casefold()]
+        if len(matches) == 1:
+            return matches[0]
     return None
 
 
@@ -253,6 +257,7 @@ def _normalize_draft(
     pet_id: int | None,
     pet_display_name: str | None,
     today: date,
+    known_routines: dict[str, str] | None = None,
 ) -> tuple[VoiceIntakeDraft, str, int, str | None]:
     """Flatten the raw LLM dict into a ``VoiceIntakeDraft`` plus metadata.
 
@@ -283,9 +288,11 @@ def _normalize_draft(
         vaccinated_at=_parse_date(llm_output.get("vaccinated_at"), today=today),
         weight_kg=_parse_weight_kg(llm_output.get("weight_kg")),
         weighed_at=_parse_date(llm_output.get("weighed_at"), today=today),
-        routine_type=_parse_routine_type(llm_output.get("routine_type")),
+        routine_type=_parse_routine_type(llm_output.get("routine_type"), known_routines),
         routine_at=_parse_date(llm_output.get("routine_at"), today=today),
     )
+    if known_routines is not None:
+        draft.routine_name = known_routines.get(draft.routine_type)
     return draft, intent, confidence, note
 
 
@@ -477,6 +484,12 @@ async def intake(
                 break
     dt_pets = time.perf_counter() - t_stage
 
+    routine_choices = {}
+    for pet in user_pets:
+        routine_choices[pet.id] = await routine_items.definitions(db, pet)
+    known_routines = [{"pet_name": pet.name, "routine_type": item.routine_type, "name": item.name}
+                      for pet in user_pets for item in routine_choices[pet.id]]
+
     # ---------- LLM ----------
     t_stage = time.perf_counter()
     try:
@@ -485,6 +498,7 @@ async def intake(
             known_pet_names=[p.name for p in user_pets],
             default_pet_name=default_pet_name,
             today=today,
+            known_routines=known_routines,
         )
     except _llm.LlmUnavailableError as e:
         logger.info("llm failed: %s", e)
@@ -515,6 +529,7 @@ async def intake(
         pet_id=pet_id,
         pet_display_name=pet_display_name,
         today=today,
+        known_routines={i.routine_type: i.name for i in routine_choices.get(pet_id, [])},
     )
 
     if intent == "unknown":
@@ -653,12 +668,14 @@ async def llm_extract_intent(
     known_pet_names: list[str] | None = None,
     default_pet_name: str | None = None,
     today: date | None = None,
+    known_routines: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return await _llm.extract_intent(
         transcript,
         known_pet_names=known_pet_names,
         default_pet_name=default_pet_name,
         today=today,
+        known_routines=known_routines,
     )
 
 
@@ -798,7 +815,7 @@ async def _confirm_routine(db, user_id, pet_id, payload):
     rtype = payload.get("routine_type")
     try:
         data = RoutineCreate(
-            routine_type=RoutineType(rtype),
+            routine_type=rtype,
             performed_at=_coerce_date(
                 payload.get("routine_at") or payload.get("performed_at"),
             ),

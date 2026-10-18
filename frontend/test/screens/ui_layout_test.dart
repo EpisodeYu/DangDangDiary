@@ -241,7 +241,7 @@ void main() {
           longName: size.width == 320,
         );
         expect(tester.takeException(), isNull, reason: page.key);
-        if (page.key.endsWith('-cycle')) {
+        if (page.key == 'deworming-cycle') {
           final fields = tester.widgetList<TextField>(find.byType(TextField));
           expect(fields, hasLength(3));
           expect(

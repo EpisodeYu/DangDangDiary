@@ -1,10 +1,6 @@
 // Phase 2 Step 2 — voice intake models (docs/phase2-step2-voice-intake.md §3).
 
-enum VoiceIntakeStatus {
-  sttFailed,
-  intentUnknown,
-  draftPending,
-}
+enum VoiceIntakeStatus { sttFailed, intentUnknown, draftPending }
 
 VoiceIntakeStatus _statusFromString(String s) {
   switch (s) {
@@ -18,13 +14,7 @@ VoiceIntakeStatus _statusFromString(String s) {
   throw ArgumentError('Unknown voice intake status: $s');
 }
 
-enum VoiceIntent {
-  deworming,
-  vaccination,
-  weight,
-  routine,
-  unknown,
-}
+enum VoiceIntent { deworming, vaccination, weight, routine, unknown }
 
 VoiceIntent? voiceIntentFromString(String? s) {
   if (s == null) return null;
@@ -85,7 +75,7 @@ class VoiceIntakeDraft {
 
   // deworming
   final String? dewormingType; // internal | external | combined
-  final String? dewormedAt;    // YYYY-MM-DD
+  final String? dewormedAt; // YYYY-MM-DD
 
   // vaccination
   final String? vaccineName;
@@ -96,7 +86,8 @@ class VoiceIntakeDraft {
   final String? weighedAt;
 
   // routine
-  final String? routineType; // bath | nail_trim | grooming
+  final String? routineType; // preset key or pet-scoped custom key
+  final String? routineName;
   final String? routineAt;
 
   const VoiceIntakeDraft({
@@ -110,6 +101,7 @@ class VoiceIntakeDraft {
     this.weightKg,
     this.weighedAt,
     this.routineType,
+    this.routineName,
     this.routineAt,
   });
 
@@ -132,6 +124,7 @@ class VoiceIntakeDraft {
       weightKg: weight,
       weighedAt: json['weighed_at'] as String?,
       routineType: json['routine_type'] as String?,
+      routineName: json['routine_name'] as String?,
       routineAt: json['routine_at'] as String?,
     );
   }

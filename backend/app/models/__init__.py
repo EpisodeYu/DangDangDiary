@@ -4,7 +4,7 @@ from app.models.photo import Photo
 from app.models.weight import Weight
 from app.models.deworming import Deworming, DewormingType
 from app.models.vaccination import Vaccination
-from app.models.routine import Routine, RoutineType
+from app.models.routine import Routine, RoutineType, RoutineItem
 from app.models.voice_intake import VoiceIntakeLog, VoiceIntakeStatus
 from app.models.pet_photo_embedding import PetPhotoEmbedding, EmbeddingSource
 from app.models.classify_feedback import ClassifyFeedback
@@ -16,7 +16,7 @@ __all__ = [
     "Weight",
     "Deworming", "DewormingType",
     "Vaccination",
-    "Routine", "RoutineType",
+    "Routine", "RoutineType", "RoutineItem",
     "VoiceIntakeLog", "VoiceIntakeStatus",
     "PetPhotoEmbedding", "EmbeddingSource",
     "ClassifyFeedback",

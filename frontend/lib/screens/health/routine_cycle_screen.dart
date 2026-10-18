@@ -7,190 +7,130 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../config/theme.dart';
-
+import '../../models/health.dart';
+import '../../models/pet.dart';
 import '../../providers/health_provider.dart';
 import '../../providers/notification_provider.dart';
 import '../../providers/pet_provider.dart';
 
 class RoutineCycleScreen extends ConsumerStatefulWidget {
   final int petId;
-
   const RoutineCycleScreen({super.key, required this.petId});
-
   @override
   ConsumerState<RoutineCycleScreen> createState() => _RoutineCycleScreenState();
 }
 
 class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
-  final _bathCtl = TextEditingController();
-  final _nailTrimCtl = TextEditingController();
-  final _groomingCtl = TextEditingController();
-
-  bool _bathReminder = false;
-  bool _nailTrimReminder = false;
-  bool _groomingReminder = false;
-
-  bool _initialized = false;
+  final _controllers = <String, TextEditingController>{};
+  final _enabled = <String, bool>{};
   bool _submitting = false;
 
   @override
   void dispose() {
-    _bathCtl.dispose();
-    _nailTrimCtl.dispose();
-    _groomingCtl.dispose();
+    for (final controller in _controllers.values) {
+      controller.dispose();
+    }
     super.dispose();
-  }
-
-  void _initFromPet() {
-    if (_initialized) return;
-    final pets = ref.read(petListProvider).valueOrNull?.pets ?? [];
-    final pet = pets.where((p) => p.id == widget.petId).toList();
-    if (pet.isEmpty) return;
-    final p = pet.first;
-    _bathCtl.text = p.bathCycleDays?.toString() ?? '14';
-    _nailTrimCtl.text = p.nailTrimCycleDays?.toString() ?? '30';
-    _groomingCtl.text = p.groomingCycleDays?.toString() ?? '7';
-    _bathReminder = p.bathReminderEnabled;
-    _nailTrimReminder = p.nailTrimReminderEnabled;
-    _groomingReminder = p.groomingReminderEnabled;
-    _initialized = true;
   }
 
   @override
   Widget build(BuildContext context) {
-    _initFromPet();
-
+    final state = ref.watch(routineStatusProvider(widget.petId));
+    final pet = ref
+        .watch(petListProvider)
+        .valueOrNull
+        ?.pets
+        .where((p) => p.id == widget.petId)
+        .firstOrNull;
+    final editable = pet != null && pet.role != PetRole.viewer && !_submitting;
     return Scaffold(
       appBar: AppBar(title: const Text('设置日常周期与提醒')),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(20),
-          children: [
-            _buildSection(
-              title: '洗澡',
-              reminderEnabled: _bathReminder,
-              onReminderChanged: (v) => setState(() => _bathReminder = v),
-              controller: _bathCtl,
+        child: state.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(
+            child: TextButton(
+              onPressed: () =>
+                  ref.invalidate(routineStatusProvider(widget.petId)),
+              child: const Text('事项加载失败，点击重试'),
             ),
-            const SizedBox(height: 12),
-            _buildSection(
-              title: '剪指甲',
-              reminderEnabled: _nailTrimReminder,
-              onReminderChanged: (v) => setState(() => _nailTrimReminder = v),
-              controller: _nailTrimCtl,
-            ),
-            const SizedBox(height: 12),
-            _buildSection(
-              title: '梳毛',
-              reminderEnabled: _groomingReminder,
-              onReminderChanged: (v) => setState(() => _groomingReminder = v),
-              controller: _groomingCtl,
-            ),
-            const SizedBox(height: 32),
-            SizedBox(
-              height: 50,
-              child: ElevatedButton(
-                onPressed: _submitting ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primaryColor,
-                  foregroundColor: AppTheme.primaryInk,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                ),
-                child: _submitting
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2.5,
-                        ),
-                      )
-                    : const Text(
-                        '保存设置',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+          ),
+          data: (status) => ListView(
+            padding: const EdgeInsets.all(20),
+            children: [
+              for (final item in status.items) ...[
+                _section(item, editable),
+                const SizedBox(height: 12),
+              ],
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: editable ? () => _submit(status.items) : null,
+                child: Text(_submitting ? '保存中…' : '保存设置'),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildSection({
-    required String title,
-    required bool reminderEnabled,
-    required ValueChanged<bool> onReminderChanged,
-    required TextEditingController controller,
-  }) {
+  Widget _section(RoutineItem item, bool editable) {
+    final key = item.type.apiValue;
+    final controller = _controllers.putIfAbsent(
+      key,
+      () =>
+          TextEditingController(text: item.status.cycleDays?.toString() ?? ''),
+    );
+    _enabled.putIfAbsent(key, () => item.status.reminderEnabled);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: AppTheme.borderColor),
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.borderColor),
       ),
       child: Column(
         children: [
           Row(
             children: [
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textPrimary,
+              Expanded(
+                child: Text(
+                  item.type.label,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-              const Spacer(),
               Switch(
-                value: reminderEnabled,
-                onChanged: onReminderChanged,
-                activeThumbColor: AppTheme.primaryColor,
+                value: _enabled[key]!,
+                onChanged: editable
+                    ? (value) => setState(() => _enabled[key] = value)
+                    : null,
               ),
             ],
           ),
           Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
             spacing: 8,
             runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text(
-                '周期：',
-                style: TextStyle(fontSize: 14, color: AppTheme.textSecondary),
-              ),
+              const Text('周期：'),
               SizedBox(
-                width: 80,
+                width: 110,
                 child: TextField(
                   controller: controller,
+                  enabled: editable,
                   textAlign: TextAlign.center,
                   keyboardType: TextInputType.number,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
+                    hintText: '未设置',
                     isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 8,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppTheme.borderColor),
-                    ),
                   ),
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(left: 8),
-                child: Text(
-                  '天 (1-365)',
-                  style: TextStyle(fontSize: 13, color: AppTheme.textSecondary),
-                ),
-              ),
+              const Text('天 (1-365)'),
             ],
           ),
         ],
@@ -198,58 +138,49 @@ class _RoutineCycleScreenState extends ConsumerState<RoutineCycleScreen> {
     );
   }
 
-  Future<void> _submit() async {
-    final bath = int.tryParse(_bathCtl.text.trim());
-    final nailTrim = int.tryParse(_nailTrimCtl.text.trim());
-    final grooming = int.tryParse(_groomingCtl.text.trim());
-
-    for (final v in [bath, nailTrim, grooming]) {
-      if (v != null && (v < 1 || v > 365)) {
-        _showSnack('日常周期必须在 1-365 天之间');
+  Future<void> _submit(List<RoutineItem> items) async {
+    final updates = <Map<String, dynamic>>[];
+    for (final item in items) {
+      final key = item.type.apiValue;
+      final raw = _controllers[key]!.text.trim();
+      final days = int.tryParse(raw);
+      if (raw.isNotEmpty && (days == null || days < 1 || days > 365)) {
+        _show('${item.type.label}周期须为 1–365 天，或留空');
         return;
       }
+      updates.add({
+        'routine_type': key,
+        'cycle_days': days,
+        'reminder_enabled': _enabled[key],
+      });
     }
-
     setState(() => _submitting = true);
     try {
-      final service = ref.read(healthServiceProvider);
-      await service.updateRoutineCycle(
-        widget.petId,
-        bathCycleDays: bath,
-        nailTrimCycleDays: nailTrim,
-        groomingCycleDays: grooming,
-        bathReminderEnabled: _bathReminder,
-        nailTrimReminderEnabled: _nailTrimReminder,
-        groomingReminderEnabled: _groomingReminder,
-      );
+      await ref
+          .read(healthServiceProvider)
+          .saveRoutineItems(widget.petId, updates);
       ref.invalidate(routineStatusProvider(widget.petId));
-      unawaited(ref.read(petListProvider.notifier).refresh());
+      await ref.read(petListProvider.notifier).refresh();
       unawaited(ref.read(healthReminderSchedulerProvider).refresh());
       if (mounted) {
-        _showSnack('已保存');
+        _show('已保存');
         context.pop();
       }
-    } on DioException catch (e) {
-      _showSnack(_friendlyError(e));
-    } catch (_) {
-      _showSnack('保存失败，请稍后重试');
+    } catch (e) {
+      final data = e is DioException ? e.response?.data : null;
+      if (mounted) {
+        _show(
+          data is Map && data['message'] is String
+              ? data['message'] as String
+              : '保存失败，请重试',
+        );
+      }
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
   }
 
-  String _friendlyError(DioException e) {
-    final data = e.response?.data;
-    if (data is Map && data['message'] is String) {
-      return data['message'] as String;
-    }
-    return '保存失败，请稍后重试';
-  }
-
-  void _showSnack(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), behavior: SnackBarBehavior.floating),
-    );
-  }
+  void _show(String message) => ScaffoldMessenger.of(
+    context,
+  ).showSnackBar(SnackBar(content: Text(message)));
 }

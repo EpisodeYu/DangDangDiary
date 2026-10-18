@@ -13,10 +13,7 @@ import 'pet_service.dart';
 ///   * `0..2`  — inside the pre-reminder window.
 ///   * `< 0`   — overdue; normalised to `0` when building the schedule.
 class _ReminderItem {
-  _ReminderItem({
-    required this.label,
-    required this.daysRemaining,
-  });
+  _ReminderItem({required this.label, required this.daysRemaining});
 
   final String label;
   final int daysRemaining;
@@ -39,9 +36,10 @@ class HealthReminderScheduler {
     required PetService petService,
     required HealthService healthService,
     NotificationService? notificationService,
-  })  : _petService = petService,
-        _healthService = healthService,
-        _notificationService = notificationService ?? NotificationService.instance;
+  }) : _petService = petService,
+       _healthService = healthService,
+       _notificationService =
+           notificationService ?? NotificationService.instance;
 
   final PetService _petService;
   final HealthService _healthService;
@@ -103,8 +101,9 @@ class HealthReminderScheduler {
 
     if (items.isEmpty) return;
 
-    items.sort((a, b) =>
-        a.triggerDaysFromToday.compareTo(b.triggerDaysFromToday));
+    items.sort(
+      (a, b) => a.triggerDaysFromToday.compareTo(b.triggerDaysFromToday),
+    );
     final soonestDay = items.first.triggerDaysFromToday;
     final sameDay = items
         .where((it) => it.triggerDaysFromToday <= soonestDay)
@@ -146,9 +145,9 @@ class HealthReminderScheduler {
       out.add(_ReminderItem(label: label, daysRemaining: item.daysRemaining!));
     }
 
-    add(status.bath, RoutineTypeE.bath.label);
-    add(status.nailTrim, RoutineTypeE.nailTrim.label);
-    add(status.grooming, RoutineTypeE.grooming.label);
+    for (final item in status.items) {
+      add(item.status, item.type.label);
+    }
   }
 
   /// Anchor all aggregated reminders to 09:00 on the trigger date.
@@ -158,8 +157,11 @@ class HealthReminderScheduler {
   /// in-app and the health screen itself surfaces the overdue state.
   DateTime _computeScheduledTime(int daysFromToday) {
     final now = DateTime.now();
-    final baseDay = DateTime(now.year, now.month, now.day)
-        .add(Duration(days: daysFromToday));
+    final baseDay = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).add(Duration(days: daysFromToday));
     DateTime scheduled = DateTime(baseDay.year, baseDay.month, baseDay.day, 9);
     while (!scheduled.isAfter(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
